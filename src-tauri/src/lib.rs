@@ -1,0 +1,89 @@
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, WindowEvent,
+};
+use tauri_plugin_positioner::{Position, WindowExt};
+
+/// When the popover was last hidden because it lost focus. Clicking the tray
+/// icon while the popover is open first blurs (and hides) it, then delivers
+/// the click; without this timestamp the click would instantly re-show the
+/// window, turning "click to dismiss" into a no-op.
+struct LastAutoHide(Mutex<Option<Instant>>);
+
+fn toggle_popover(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        return;
+    }
+    let recently_auto_hidden = app
+        .state::<LastAutoHide>()
+        .0
+        .lock()
+        .unwrap()
+        .is_some_and(|t| t.elapsed() < Duration::from_millis(300));
+    if recently_auto_hidden {
+        return;
+    }
+    let _ = window.move_window(Position::TrayBottomCenter);
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(LastAutoHide(Mutex::new(None)))
+        .on_window_event(|window, event| {
+            if let WindowEvent::Focused(false) = event {
+                if window.hide().is_ok() {
+                    *window.state::<LastAutoHide>().0.lock().unwrap() = Some(Instant::now());
+                }
+            }
+        })
+        .setup(|app| {
+            // Menubar-only app: no Dock icon, no app switcher entry.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            let quit = MenuItemBuilder::with_id("quit", "Quit Grapevine").build(app)?;
+            let menu = MenuBuilder::new(app).item(&quit).build()?;
+
+            TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().unwrap().clone())
+                .icon_as_template(true)
+                .menu(&menu)
+                // Left click toggles the popover; the menu stays on right click.
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    if event.id() == "quit" {
+                        app.exit(0);
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        toggle_popover(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
