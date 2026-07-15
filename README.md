@@ -11,6 +11,15 @@ clicking away dismisses it. It replaces the slice of
   setup and popover window toggling (`src-tauri/src/lib.rs`)
 - React + TypeScript + Vite frontend in the popover window
 
+## Prerequisites
+
+- macOS with Xcode Command Line Tools (`xcode-select --install`)
+- [mise](https://mise.jdx.dev) — installs the pinned Node and Rust toolchains:
+
+```sh
+mise install
+```
+
 ## Development
 
 ```sh
