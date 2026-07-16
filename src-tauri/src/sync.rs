@@ -47,7 +47,12 @@ async fn sync_once(app: &AppHandle) {
     let snapshot = {
         let mut snapshot = state.snapshot.lock().unwrap();
         match result {
-            Ok(Some(prs)) => *snapshot = Snapshot { prs, has_synced: true },
+            Ok(Some(prs)) => {
+                *snapshot = Snapshot {
+                    prs,
+                    has_synced: true,
+                }
+            }
             // Unconfigured: clear any list left over from previous settings.
             Ok(None) => *snapshot = Snapshot::default(),
             Err(e) => {
@@ -70,4 +75,58 @@ async fn fetch(app: &AppHandle) -> Result<Option<Vec<PullRequest>>, String> {
         return Ok(None);
     }
     github::fetch_open_prs(&token, &repos).await.map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::github::Section;
+    use serde_json::json;
+
+    /// The `Snapshot` interface in `src/PrList.tsx` consumes this JSON
+    /// verbatim: field names and section values are the wire contract, so a
+    /// rename or a `rename_all` attribute here silently breaks the popover.
+    #[test]
+    fn snapshot_serializes_to_the_shape_the_frontend_expects() {
+        let snapshot = Snapshot {
+            prs: vec![PullRequest {
+                number: 7,
+                title: "Fix the thing".into(),
+                url: "https://github.com/acme/widgets/pull/7".into(),
+                repo: "acme/widgets".into(),
+                author: "someone".into(),
+                created_at: "2026-07-10T12:00:00Z".into(),
+                section: Section::Mine,
+            }],
+            has_synced: true,
+        };
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap(),
+            json!({
+                "prs": [{
+                    "number": 7,
+                    "title": "Fix the thing",
+                    "url": "https://github.com/acme/widgets/pull/7",
+                    "repo": "acme/widgets",
+                    "author": "someone",
+                    "created_at": "2026-07-10T12:00:00Z",
+                    "section": "mine"
+                }],
+                "has_synced": true
+            })
+        );
+    }
+
+    /// `PrList.tsx` filters rows with `pr.section === key`; a mismatched
+    /// value drops PRs from the popover without any error.
+    #[test]
+    fn every_section_variant_serializes_to_its_frontend_key() {
+        for (section, expected) in [
+            (Section::Mine, "mine"),
+            (Section::Participated, "participated"),
+            (Section::All, "all"),
+        ] {
+            assert_eq!(serde_json::to_value(section).unwrap(), json!(expected));
+        }
+    }
 }
