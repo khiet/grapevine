@@ -14,6 +14,7 @@ mod commands;
 mod github;
 mod keychain;
 mod settings;
+mod sync;
 
 /// When the popover was last hidden because it lost focus. Clicking the tray
 /// icon while the popover is open first blurs (and hides) it, then delivers
@@ -49,6 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
         .manage(LastAutoHide(Mutex::new(None)))
+        .manage(sync::SyncState::default())
         .invoke_handler(tauri::generate_handler![
             commands::token_status,
             commands::save_token,
@@ -56,6 +58,7 @@ pub fn run() {
             commands::list_repos,
             commands::add_repo,
             commands::remove_repo,
+            commands::get_prs,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {
@@ -95,6 +98,8 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            sync::start(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -1,7 +1,18 @@
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
-use crate::{github, keychain, settings};
+use crate::{github, keychain, settings, sync};
+
+/// Settings changes should show up in the PR list right away, not after the
+/// remainder of the current poll interval.
+fn request_sync(app: &AppHandle) {
+    app.state::<sync::SyncState>().wake.notify_one();
+}
+
+#[tauri::command]
+pub fn get_prs(state: tauri::State<'_, sync::SyncState>) -> sync::Snapshot {
+    state.snapshot.lock().unwrap().clone()
+}
 
 #[derive(Serialize)]
 pub struct TokenStatus {
@@ -31,6 +42,7 @@ pub async fn save_token(app: AppHandle, token: String) -> Result<String, String>
     let mut current = settings::load(&app)?;
     current.github_login = Some(login.clone());
     settings::save(&app, &current)?;
+    request_sync(&app);
     Ok(login)
 }
 
@@ -39,7 +51,9 @@ pub async fn clear_token(app: AppHandle) -> Result<(), String> {
     keychain::clear()?;
     let mut current = settings::load(&app)?;
     current.github_login = None;
-    settings::save(&app, &current)
+    settings::save(&app, &current)?;
+    request_sync(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -64,6 +78,7 @@ pub async fn add_repo(app: AppHandle, name: String) -> Result<Vec<String>, Strin
     }
     current.repos.push(canonical);
     settings::save(&app, &current)?;
+    request_sync(&app);
     Ok(current.repos)
 }
 
@@ -72,6 +87,7 @@ pub async fn remove_repo(app: AppHandle, name: String) -> Result<Vec<String>, St
     let mut current = settings::load(&app)?;
     current.repos.retain(|r| !r.eq_ignore_ascii_case(&name));
     settings::save(&app, &current)?;
+    request_sync(&app);
     Ok(current.repos)
 }
 
