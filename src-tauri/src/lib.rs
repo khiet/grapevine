@@ -10,6 +10,11 @@ use tauri::{
 };
 use tauri_plugin_positioner::{Position, WindowExt};
 
+mod commands;
+mod github;
+mod keychain;
+mod settings;
+
 /// When the popover was last hidden because it lost focus. Clicking the tray
 /// icon while the popover is open first blurs (and hides) it, then delivers
 /// the click; without this timestamp the click would instantly re-show the
@@ -44,6 +49,14 @@ pub fn run() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
         .manage(LastAutoHide(Mutex::new(None)))
+        .invoke_handler(tauri::generate_handler![
+            commands::token_status,
+            commands::save_token,
+            commands::clear_token,
+            commands::list_repos,
+            commands::add_repo,
+            commands::remove_repo,
+        ])
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {
                 if window.hide().is_ok() {
