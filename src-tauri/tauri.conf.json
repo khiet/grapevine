@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "Grapevine",
-        "width": 360,
-        "height": 440,
+        "width": 440,
+        "height": 560,
         "visible": false,
         "decorations": false,
         "resizable": false,

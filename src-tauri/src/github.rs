@@ -31,7 +31,12 @@ pub struct PullRequest {
     pub url: String,
     pub repo: String,
     pub author: String,
+    /// Author's GitHub avatar URL; empty when the account was deleted. The
+    /// frontend loads it directly (no local cache) and falls back to a
+    /// placeholder on failure.
+    pub avatar_url: String,
     pub created_at: String,
+    pub updated_at: String,
     pub section: Section,
     /// Comments/reviews newer than the PR's last-read watermark; computed by
     /// the unread engine after fetch, always 0 straight out of this module.
@@ -215,8 +220,8 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
                         orderBy: {{field: CREATED_AT, direction: DESC}}) {{ \
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
-               number title url createdAt viewerDidAuthor \
-               author {{ login }} \
+               number title url createdAt updatedAt viewerDidAuthor \
+               author {{ login avatarUrl }} \
                participants(first: 50) {{ nodes {{ login }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
                comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} \
@@ -261,8 +266,18 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .and_then(Value::as_str)
                 .unwrap_or("ghost")
                 .to_string(),
+            avatar_url: node
+                .pointer("/author/avatarUrl")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             created_at: node
                 .get("createdAt")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            updated_at: node
+                .get("updatedAt")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
@@ -364,8 +379,9 @@ mod tests {
             "title": "Fix the thing",
             "url": "https://github.com/acme/widgets/pull/7",
             "createdAt": "2026-07-10T12:00:00Z",
+            "updatedAt": "2026-07-11T09:30:00Z",
             "viewerDidAuthor": false,
-            "author": { "login": "someone" },
+            "author": { "login": "someone", "avatarUrl": "https://avatars.example/someone" },
             "participants": { "nodes": [{ "login": "someone" }] },
             "reviewRequests": { "nodes": [] }
         });
@@ -430,7 +446,9 @@ mod tests {
         assert_eq!(out[0].repo, "acme/widgets");
         assert_eq!(out[0].number, 7);
         assert_eq!(out[0].author, "someone");
+        assert_eq!(out[0].avatar_url, "https://avatars.example/someone");
         assert_eq!(out[0].created_at, "2026-07-10T12:00:00Z");
+        assert_eq!(out[0].updated_at, "2026-07-11T09:30:00Z");
     }
 
     #[test]
@@ -461,6 +479,7 @@ mod tests {
         let mut out = Vec::new();
         collect_repo_prs(&repo, "khiet", &mut out);
         assert_eq!(out[0].author, "ghost");
+        assert_eq!(out[0].avatar_url, "");
     }
 
     #[test]

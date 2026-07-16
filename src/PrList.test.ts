@@ -1,38 +1,30 @@
 import { expect, test } from "vitest";
-import { formatAge, totalUnread, PullRequest } from "./PrList";
+import { formatUpdated, totalUnread, PullRequest } from "./PrList";
 
-const NOW = Date.parse("2026-07-16T00:00:00Z");
-const secondsAgo = (seconds: number) =>
-  new Date(NOW - seconds * 1000).toISOString();
+// formatUpdated works in local calendar days, so fixtures are built in local
+// time; the expectations then hold in any timezone.
+const at = (y: number, month: number, d: number, h = 0, m = 0) =>
+  new Date(y, month - 1, d, h, m);
+const NOW = at(2026, 7, 16, 15, 30);
 
-const MINUTE = 60;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-const WEEK = 7 * DAY;
-
-test("ages under a minute render as now", () => {
-  expect(formatAge(secondsAgo(0), NOW)).toBe("now");
-  expect(formatAge(secondsAgo(59), NOW)).toBe("now");
+test("updates from today render as a 24-hour clock time", () => {
+  expect(formatUpdated(at(2026, 7, 16, 14, 59).toISOString(), NOW)).toBe("14:59");
+  expect(formatUpdated(at(2026, 7, 16, 9, 5).toISOString(), NOW)).toBe("09:05");
 });
 
-test("timestamps slightly in the future render as now, not negative", () => {
-  expect(formatAge(secondsAgo(-30), NOW)).toBe("now");
+test("timestamps slightly in the future still render as a time", () => {
+  expect(formatUpdated(at(2026, 7, 17, 0, 10).toISOString(), NOW)).toBe("00:10");
 });
 
-test("each unit takes over at its boundary", () => {
-  expect(formatAge(secondsAgo(MINUTE), NOW)).toBe("1m");
-  expect(formatAge(secondsAgo(59 * MINUTE), NOW)).toBe("59m");
-  expect(formatAge(secondsAgo(HOUR), NOW)).toBe("1h");
-  expect(formatAge(secondsAgo(23 * HOUR), NOW)).toBe("23h");
-  expect(formatAge(secondsAgo(DAY), NOW)).toBe("1d");
-  expect(formatAge(secondsAgo(6 * DAY), NOW)).toBe("6d");
-  expect(formatAge(secondsAgo(WEEK), NOW)).toBe("1w");
-  expect(formatAge(secondsAgo(51 * WEEK), NOW)).toBe("51w");
+test("yesterday is a calendar-day split, not a 24-hour window", () => {
+  expect(formatUpdated(at(2026, 7, 15, 23, 59).toISOString(), NOW)).toBe("Yesterday");
+  expect(formatUpdated(at(2026, 7, 15, 0, 0).toISOString(), NOW)).toBe("Yesterday");
 });
 
-test("52 weeks rounds to a year rather than 0y", () => {
-  expect(formatAge(secondsAgo(52 * WEEK), NOW)).toBe("1y");
-  expect(formatAge(secondsAgo(104 * WEEK), NOW)).toBe("2y");
+test("older dates render as day and short month", () => {
+  expect(formatUpdated(at(2026, 7, 14, 12, 0).toISOString(), NOW)).toBe("14 Jul");
+  expect(formatUpdated(at(2026, 1, 22, 8, 0).toISOString(), NOW)).toBe("22 Jan");
+  expect(formatUpdated(at(2025, 12, 31, 8, 0).toISOString(), NOW)).toBe("31 Dec");
 });
 
 const prWithUnread = (unread_count: number): PullRequest => ({
@@ -41,7 +33,9 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   url: "https://github.com/acme/widgets/pull/7",
   repo: "acme/widgets",
   author: "someone",
+  avatar_url: "https://avatars.example/someone",
   created_at: "2026-07-10T12:00:00Z",
+  updated_at: "2026-07-11T09:30:00Z",
   section: "all",
   unread_count,
 });
