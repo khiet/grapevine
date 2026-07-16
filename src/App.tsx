@@ -9,6 +9,7 @@ function App() {
   const [view, setView] = useState<"list" | "settings">("list");
   const [snapshot, setSnapshot] = useState<Snapshot>({
     prs: [],
+    merged: [],
     has_synced: false,
   });
   const inSettings = view === "settings";
@@ -50,8 +51,8 @@ function App() {
       </header>
       {inSettings ? (
         <SettingsView />
-      ) : snapshot.prs.length > 0 ? (
-        <PrList prs={snapshot.prs} />
+      ) : snapshot.prs.length > 0 || snapshot.merged.length > 0 ? (
+        <PrList prs={snapshot.prs} merged={snapshot.merged} />
       ) : (
         <main className="popover-body">
           <p className="placeholder-heading">

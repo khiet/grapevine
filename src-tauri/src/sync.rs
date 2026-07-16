@@ -1,10 +1,10 @@
-use std::{sync::Mutex, time::Duration};
+use std::{collections::HashSet, sync::Mutex, time::Duration};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
-use crate::{github, github::PullRequest, keychain, settings, unread};
+use crate::{github, github::PullRequest, keychain, merged, settings, unread};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(180);
 
@@ -13,6 +13,8 @@ const POLL_INTERVAL: Duration = Duration::from_secs(180);
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct Snapshot {
     pub prs: Vec<PullRequest>,
+    /// Merged-but-not-dismissed PRs, rendered as the Merged section.
+    pub merged: Vec<merged::MergedPr>,
     /// False until a sync has completed while configured; the UI uses this
     /// to tell "not set up yet" apart from "no open PRs".
     pub has_synced: bool,
@@ -24,6 +26,9 @@ pub struct SyncState {
     /// Last-read watermarks; authoritative in memory, mirrored to disk on
     /// every change so unread state survives restarts.
     pub read_state: Mutex<unread::ReadState>,
+    /// Merged-but-not-dismissed PRs; authoritative in memory, mirrored to
+    /// disk on every change so the Merged section survives restarts.
+    pub merged: Mutex<merged::MergedState>,
     /// Wakes the poll loop early, e.g. right after settings change.
     pub wake: Notify,
 }
@@ -33,6 +38,14 @@ pub struct SyncState {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     *app.state::<SyncState>().read_state.lock().unwrap() = unread::load(&app);
+    {
+        // Seed the initial snapshot too, so the Merged section is visible
+        // before the first sync completes.
+        let loaded = merged::load(&app);
+        let state = app.state::<SyncState>();
+        state.snapshot.lock().unwrap().merged = loaded.clone();
+        *state.merged.lock().unwrap() = loaded;
+    }
     tauri::async_runtime::spawn(async move {
         loop {
             sync_once(&app).await;
@@ -74,7 +87,19 @@ async fn sync_once(app: &AppHandle) {
     let result = fetch(app).await;
     let state = app.state::<SyncState>();
     let new_snapshot = match result {
-        Ok(Some(mut prs)) => {
+        Ok(Some(FetchResult {
+            mut prs,
+            newly_merged,
+        })) => {
+            let merged = {
+                let mut merged_state = state.merged.lock().unwrap();
+                if merged::apply(&prs, newly_merged, &mut merged_state) {
+                    if let Err(e) = merged::save(app, &merged_state) {
+                        eprintln!("cannot persist merged state: {e}");
+                    }
+                }
+                merged_state.clone()
+            };
             let mut read_state = state.read_state.lock().unwrap();
             if unread::apply(&mut prs, &mut read_state) {
                 if let Err(e) = unread::save(app, &read_state) {
@@ -83,11 +108,13 @@ async fn sync_once(app: &AppHandle) {
             }
             Snapshot {
                 prs,
+                merged,
                 has_synced: true,
             }
         }
         // Unconfigured: clear any list left over from previous settings,
-        // but keep the read watermarks for when a token comes back.
+        // but keep the read watermarks and merged history for when a token
+        // comes back.
         Ok(None) => Snapshot::default(),
         Err(e) => {
             eprintln!("sync failed: {e}");
@@ -103,8 +130,15 @@ async fn sync_once(app: &AppHandle) {
     let _ = app.emit("prs-updated", snapshot);
 }
 
+/// One sync's fetch: the open PRs plus any tracked PRs that turned out to
+/// have merged since the previous sync.
+struct FetchResult {
+    prs: Vec<PullRequest>,
+    newly_merged: Vec<merged::MergedPr>,
+}
+
 /// `Ok(None)` means the app is not configured (no token or no repos).
-async fn fetch(app: &AppHandle) -> Result<Option<Vec<PullRequest>>, String> {
+async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, String> {
     let Some(token) = keychain::load()? else {
         return Ok(None);
     };
@@ -112,7 +146,50 @@ async fn fetch(app: &AppHandle) -> Result<Option<Vec<PullRequest>>, String> {
     if repos.is_empty() {
         return Ok(None);
     }
-    github::fetch_open_prs(&token, &repos).await.map(Some)
+    let prs = github::fetch_open_prs(&token, &repos).await?;
+    let newly_merged = detect_merged(app, &token, &repos, &prs).await?;
+    Ok(Some(FetchResult { prs, newly_merged }))
+}
+
+/// Finds tracked PRs that left the open set since the previous sync and asks
+/// GitHub which of them merged; PRs closed without merging are simply absent
+/// from the answer. A failed status query fails the whole sync, keeping the
+/// old snapshot so the departure is re-detected next round — a network blip
+/// never silently drops a merge. Merges that happen while the app is quit
+/// are missed entirely: the previous open set lives only in memory.
+async fn detect_merged(
+    app: &AppHandle,
+    token: &str,
+    repos: &[String],
+    live_prs: &[PullRequest],
+) -> Result<Vec<merged::MergedPr>, String> {
+    let live: HashSet<String> = live_prs.iter().map(unread::key).collect();
+    let departed: Vec<PullRequest> = {
+        let state = app.state::<SyncState>();
+        let snapshot = state.snapshot.lock().unwrap();
+        snapshot
+            .prs
+            .iter()
+            .filter(|pr| !live.contains(&unread::key(pr)))
+            // A repo removed from the watchlist takes its PRs with it; those
+            // departed because of settings, not because they merged.
+            .filter(|pr| repos.iter().any(|r| r.eq_ignore_ascii_case(&pr.repo)))
+            .cloned()
+            .collect()
+    };
+    if departed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let keys: Vec<String> = departed.iter().map(unread::key).collect();
+    let merged_at = github::fetch_merged_status(token, &keys).await?;
+    Ok(departed
+        .iter()
+        .filter_map(|pr| {
+            merged_at
+                .get(&unread::key(pr))
+                .map(|t| merged::from_pr(pr, t.clone()))
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -141,6 +218,15 @@ mod tests {
                 // Internal working data; must not leak into the payload.
                 activity: vec!["2026-07-10T12:00:00Z".into()],
             }],
+            merged: vec![merged::MergedPr {
+                number: 3,
+                title: "Ship the other thing".into(),
+                url: "https://github.com/acme/widgets/pull/3".into(),
+                repo: "acme/widgets".into(),
+                author: "someone".into(),
+                avatar_url: "https://avatars.example/someone".into(),
+                merged_at: "2026-07-11T10:00:00Z".into(),
+            }],
             has_synced: true,
         };
         assert_eq!(
@@ -157,6 +243,15 @@ mod tests {
                     "updated_at": "2026-07-11T09:30:00Z",
                     "section": "mine",
                     "unread_count": 3
+                }],
+                "merged": [{
+                    "number": 3,
+                    "title": "Ship the other thing",
+                    "url": "https://github.com/acme/widgets/pull/3",
+                    "repo": "acme/widgets",
+                    "author": "someone",
+                    "avatar_url": "https://avatars.example/someone",
+                    "merged_at": "2026-07-11T10:00:00Z"
                 }],
                 "has_synced": true
             })

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{github, keychain, settings, sync, unread};
+use crate::{github, keychain, merged, settings, sync, unread};
 
 /// Settings changes should show up in the PR list right away, not after the
 /// remainder of the current poll interval.
@@ -44,6 +44,32 @@ fn mark(app: &AppHandle, only: Option<&str>) -> Result<(), String> {
         snapshot.clone()
     };
     sync::update_tray_count(app, sync::total_unread(&snapshot.prs));
+    app.emit("prs-updated", snapshot).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn dismiss_merged(app: AppHandle, key: String) -> Result<(), String> {
+    edit_merged(&app, |state| state.retain(|e| merged::key(e) != key))
+}
+
+#[tauri::command]
+pub fn clear_merged(app: AppHandle) -> Result<(), String> {
+    edit_merged(&app, |state| state.clear())
+}
+
+/// Applies an edit to the Merged section, persists it, and pushes the new
+/// list to the popover. The tray count is untouched: merged PRs never carry
+/// unread activity.
+fn edit_merged(app: &AppHandle, edit: impl FnOnce(&mut merged::MergedState)) -> Result<(), String> {
+    let state = app.state::<sync::SyncState>();
+    let snapshot = {
+        let mut merged_state = state.merged.lock().unwrap();
+        edit(&mut merged_state);
+        merged::save(app, &merged_state)?;
+        let mut snapshot = state.snapshot.lock().unwrap();
+        snapshot.merged = merged_state.clone();
+        snapshot.clone()
+    };
     app.emit("prs-updated", snapshot).map_err(|e| e.to_string())
 }
 

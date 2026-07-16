@@ -13,6 +13,7 @@ use tauri_plugin_positioner::{Position, WindowExt};
 mod commands;
 mod github;
 mod keychain;
+mod merged;
 mod settings;
 mod sync;
 mod unread;
@@ -62,6 +63,8 @@ pub fn run() {
             commands::get_prs,
             commands::mark_read,
             commands::mark_all_read,
+            commands::dismiss_merged,
+            commands::clear_merged,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {
