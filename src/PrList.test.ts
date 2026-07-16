@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { formatAge } from "./PrList";
+import { formatAge, totalUnread, PullRequest } from "./PrList";
 
 const NOW = Date.parse("2026-07-16T00:00:00Z");
 const secondsAgo = (seconds: number) =>
@@ -33,4 +33,20 @@ test("each unit takes over at its boundary", () => {
 test("52 weeks rounds to a year rather than 0y", () => {
   expect(formatAge(secondsAgo(52 * WEEK), NOW)).toBe("1y");
   expect(formatAge(secondsAgo(104 * WEEK), NOW)).toBe("2y");
+});
+
+const prWithUnread = (unread_count: number): PullRequest => ({
+  number: 7,
+  title: "Fix the thing",
+  url: "https://github.com/acme/widgets/pull/7",
+  repo: "acme/widgets",
+  author: "someone",
+  created_at: "2026-07-10T12:00:00Z",
+  section: "all",
+  unread_count,
+});
+
+test("the tray-facing total sums unread across PRs", () => {
+  expect(totalUnread([])).toBe(0);
+  expect(totalUnread([prWithUnread(2), prWithUnread(0), prWithUnread(5)])).toBe(7);
 });

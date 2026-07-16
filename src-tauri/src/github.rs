@@ -7,6 +7,14 @@ const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 /// multi-repo query well under the node limit while rarely paginating.
 const PAGE_SIZE: usize = 50;
 
+/// Recent comments/reviews fetched per PR for unread counting. Activity
+/// older than these windows can't be counted, so a badge caps out rather
+/// than being exact on unusually busy PRs — an acceptable trade against
+/// query size, since the watermark is baselined at first sight anyway.
+const COMMENT_PAGE: usize = 20;
+const REVIEW_PAGE: usize = 20;
+const REVIEW_COMMENT_PAGE: usize = 10;
+
 /// Which popover section a PR belongs to, from the viewer's perspective.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -25,6 +33,14 @@ pub struct PullRequest {
     pub author: String,
     pub created_at: String,
     pub section: Section,
+    /// Comments/reviews newer than the PR's last-read watermark; computed by
+    /// the unread engine after fetch, always 0 straight out of this module.
+    pub unread_count: u64,
+    /// Timestamps (ISO-8601 UTC, ascending) of recent comment/review
+    /// activity by people other than the viewer. Input to the unread
+    /// computation, not part of the frontend wire payload.
+    #[serde(skip)]
+    pub activity: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,6 +219,9 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
                author {{ login }} \
                participants(first: 50) {{ nodes {{ login }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
+               comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} \
+               reviews(last: {REVIEW_PAGE}) {{ nodes {{ state submittedAt author {{ login }} \
+                 comments(last: {REVIEW_COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} }} }} \
              }} \
            }} \
          }} ",
@@ -248,6 +267,8 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .unwrap_or_default()
                 .to_string(),
             section: section_for(node, viewer),
+            unread_count: 0,
+            activity: collect_activity(node, viewer),
         });
     }
     let page = repo.pointer("/pullRequests/pageInfo")?;
@@ -257,6 +278,54 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
     page.get("endCursor")
         .and_then(Value::as_str)
         .map(String::from)
+}
+
+/// Gathers the timestamps of activity that counts as an "update" for unread
+/// purposes: issue comments, submitted reviews, and review comments — never
+/// commits or CI, which the query doesn't even fetch. The viewer's own
+/// activity is excluded (you have read what you wrote), as are PENDING
+/// reviews (invisible to everyone but their author until submitted).
+fn collect_activity(node: &Value, viewer: &str) -> Vec<String> {
+    let mut times = Vec::new();
+    let by_other =
+        |item: &Value| item.pointer("/author/login").and_then(Value::as_str) != Some(viewer);
+    let mut push = |item: &Value, time_field: &str| {
+        if by_other(item) {
+            if let Some(t) = item.get(time_field).and_then(Value::as_str) {
+                times.push(t.to_string());
+            }
+        }
+    };
+
+    for comment in list(node, "/comments/nodes") {
+        push(comment, "createdAt");
+    }
+    for review in list(node, "/reviews/nodes") {
+        // A null submittedAt means the review is still PENDING.
+        if review.get("submittedAt").and_then(Value::as_str).is_none() {
+            continue;
+        }
+        let comments = list(review, "/comments/nodes");
+        // A COMMENTED review is often just the wrapper GitHub creates around
+        // inline comments; counting both would double-count a single reply.
+        let is_wrapper = review.get("state").and_then(Value::as_str) == Some("COMMENTED")
+            && !comments.is_empty();
+        if !is_wrapper {
+            push(review, "submittedAt");
+        }
+        for comment in comments {
+            push(comment, "createdAt");
+        }
+    }
+    times.sort();
+    times
+}
+
+fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
+    node.pointer(pointer)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
 }
 
 /// Mine beats Participated: the author is always a participant, so order
@@ -392,6 +461,95 @@ mod tests {
         let mut out = Vec::new();
         collect_repo_prs(&repo, "khiet", &mut out);
         assert_eq!(out[0].author, "ghost");
+    }
+
+    #[test]
+    fn issue_comments_by_others_count_as_activity_but_the_viewers_do_not() {
+        let node = pr_node(json!({
+            "comments": { "nodes": [
+                { "createdAt": "2026-07-11T08:00:00Z", "author": { "login": "other" } },
+                { "createdAt": "2026-07-12T09:00:00Z", "author": { "login": "khiet" } }
+            ] }
+        }));
+        assert_eq!(
+            collect_activity(&node, "khiet"),
+            vec!["2026-07-11T08:00:00Z"]
+        );
+    }
+
+    #[test]
+    fn submitted_reviews_count_but_pending_ones_do_not() {
+        let node = pr_node(json!({
+            "reviews": { "nodes": [
+                { "state": "APPROVED", "submittedAt": "2026-07-11T08:00:00Z",
+                  "author": { "login": "other" }, "comments": { "nodes": [] } },
+                { "state": "PENDING", "submittedAt": null,
+                  "author": { "login": "other" }, "comments": { "nodes": [] } }
+            ] }
+        }));
+        assert_eq!(
+            collect_activity(&node, "khiet"),
+            vec!["2026-07-11T08:00:00Z"]
+        );
+    }
+
+    #[test]
+    fn a_commented_review_wrapping_inline_comments_counts_only_the_comments() {
+        let node = pr_node(json!({
+            "reviews": { "nodes": [{
+                "state": "COMMENTED", "submittedAt": "2026-07-11T08:00:00Z",
+                "author": { "login": "other" },
+                "comments": { "nodes": [
+                    { "createdAt": "2026-07-11T08:00:00Z", "author": { "login": "other" } },
+                    { "createdAt": "2026-07-11T08:00:05Z", "author": { "login": "other" } }
+                ] }
+            }] }
+        }));
+        assert_eq!(
+            collect_activity(&node, "khiet"),
+            vec!["2026-07-11T08:00:00Z", "2026-07-11T08:00:05Z"]
+        );
+    }
+
+    #[test]
+    fn a_review_with_a_verdict_counts_alongside_its_inline_comments() {
+        let node = pr_node(json!({
+            "reviews": { "nodes": [{
+                "state": "CHANGES_REQUESTED", "submittedAt": "2026-07-11T08:00:00Z",
+                "author": { "login": "other" },
+                "comments": { "nodes": [
+                    { "createdAt": "2026-07-11T07:59:00Z", "author": { "login": "other" } }
+                ] }
+            }] }
+        }));
+        assert_eq!(
+            collect_activity(&node, "khiet"),
+            vec!["2026-07-11T07:59:00Z", "2026-07-11T08:00:00Z"]
+        );
+    }
+
+    #[test]
+    fn activity_is_sorted_across_comments_and_reviews() {
+        let node = pr_node(json!({
+            "comments": { "nodes": [
+                { "createdAt": "2026-07-12T09:00:00Z", "author": { "login": "other" } }
+            ] },
+            "reviews": { "nodes": [{
+                "state": "APPROVED", "submittedAt": "2026-07-11T08:00:00Z",
+                "author": { "login": "other" }, "comments": { "nodes": [] }
+            }] }
+        }));
+        assert_eq!(
+            collect_activity(&node, "khiet"),
+            vec!["2026-07-11T08:00:00Z", "2026-07-12T09:00:00Z"]
+        );
+    }
+
+    #[test]
+    fn commits_and_status_changes_never_reach_the_activity_list() {
+        // The query only asks for comments and reviews, so a node with
+        // neither yields no activity regardless of anything else on the PR.
+        assert!(collect_activity(&pr_node(json!({})), "khiet").is_empty());
     }
 
     #[test]

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
-import PrList, { Snapshot } from "./PrList";
+import PrList, { Snapshot, totalUnread } from "./PrList";
 import SettingsView from "./SettingsView";
 
 function App() {
@@ -29,13 +29,24 @@ function App() {
         <span className="popover-title">
           {inSettings ? "Settings" : "Grapevine"}
         </span>
-        <button
-          type="button"
-          className="settings-link"
-          onClick={() => setView(inSettings ? "list" : "settings")}
-        >
-          {inSettings ? "Done" : "Settings"}
-        </button>
+        <span className="header-actions">
+          {!inSettings && totalUnread(snapshot.prs) > 0 && (
+            <button
+              type="button"
+              className="settings-link"
+              onClick={() => invoke("mark_all_read").catch(() => {})}
+            >
+              Mark all read
+            </button>
+          )}
+          <button
+            type="button"
+            className="settings-link"
+            onClick={() => setView(inSettings ? "list" : "settings")}
+          >
+            {inSettings ? "Done" : "Settings"}
+          </button>
+        </span>
       </header>
       {inSettings ? (
         <SettingsView />
