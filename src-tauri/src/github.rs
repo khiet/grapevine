@@ -905,6 +905,56 @@ mod tests {
         );
     }
 
+    fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        map
+    }
+
+    /// `retry-after` counts seconds from now, so it has to be resolved
+    /// against the clock rather than passed through as an epoch. It also
+    /// wins over `x-ratelimit-reset` when both arrive: it is GitHub's
+    /// explicit instruction for this particular response.
+    #[test]
+    fn retry_after_is_read_as_seconds_from_now_and_outranks_the_reset_header() {
+        let assert_roughly_a_minute_out = |pairs: &[(&str, &str)]| {
+            let before = now_epoch_secs();
+            let reset = rate_limit_reset(&headers(pairs)).unwrap();
+            assert!(
+                (before + 60..=now_epoch_secs() + 60).contains(&reset),
+                "expected roughly 60s from now, got {reset} for {pairs:?}"
+            );
+        };
+        assert_roughly_a_minute_out(&[("retry-after", "60")]);
+        assert_roughly_a_minute_out(&[("retry-after", "60"), ("x-ratelimit-reset", "1784205296")]);
+    }
+
+    /// `x-ratelimit-reset` is already an absolute epoch; passing it through
+    /// unchanged is the whole point of the split.
+    #[test]
+    fn the_reset_header_is_read_as_an_absolute_epoch() {
+        assert_eq!(
+            rate_limit_reset(&headers(&[("x-ratelimit-reset", "1784205296")])),
+            Some(1_784_205_296)
+        );
+    }
+
+    /// No usable reset time means the caller falls back to its own backoff;
+    /// a garbled header must not be mistaken for one.
+    #[test]
+    fn missing_or_unparsable_reset_headers_report_no_reset_time() {
+        assert_eq!(rate_limit_reset(&headers(&[])), None);
+        assert_eq!(
+            rate_limit_reset(&headers(&[("x-ratelimit-reset", "soon")])),
+            None
+        );
+    }
+
     /// The popover shows this text verbatim; it must not leak internals like
     /// HTTP status codes or reset timestamps.
     #[test]
