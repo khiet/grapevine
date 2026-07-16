@@ -87,3 +87,37 @@ fn parse_repo_name(input: &str) -> Result<(&str, &str), String> {
     }
     Ok((owner, repo))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_repo_name;
+
+    #[test]
+    fn splits_owner_and_repo() {
+        assert_eq!(
+            parse_repo_name("tauri-apps/tauri"),
+            Ok(("tauri-apps", "tauri"))
+        );
+    }
+
+    #[test]
+    fn rejects_input_without_a_separator() {
+        assert!(parse_repo_name("rails").is_err());
+    }
+
+    #[test]
+    fn rejects_empty_owner_or_repo() {
+        assert!(parse_repo_name("/rails").is_err());
+        assert!(parse_repo_name("rails/").is_err());
+    }
+
+    #[test]
+    fn rejects_a_url_rather_than_treating_the_path_as_a_repo() {
+        assert!(parse_repo_name("https://github.com/rails/rails").is_err());
+    }
+
+    #[test]
+    fn rejects_embedded_whitespace() {
+        assert!(parse_repo_name("rails / rails").is_err());
+    }
+}
