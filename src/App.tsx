@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
-import PrList, { Snapshot, totalUnread } from "./PrList";
+import PrList, { formatLastSync, Snapshot, totalUnread } from "./PrList";
 import SettingsView from "./SettingsView";
 
 function App() {
@@ -11,6 +11,8 @@ function App() {
     prs: [],
     merged: [],
     has_synced: false,
+    last_sync_at: null,
+    sync_error: null,
   });
   const inSettings = view === "settings";
 
@@ -64,6 +66,21 @@ function App() {
               : "Configure a token and repositories to start watching."}
           </p>
         </main>
+      )}
+      {!inSettings && (snapshot.last_sync_at !== null || snapshot.sync_error) && (
+        <footer className="sync-status">
+          {snapshot.last_sync_at !== null && (
+            <span className="sync-time">
+              {formatLastSync(snapshot.last_sync_at)}
+            </span>
+          )}
+          {snapshot.sync_error && (
+            /* title carries the full message; the footer line clips it. */
+            <span className="sync-error" title={snapshot.sync_error}>
+              {snapshot.sync_error}
+            </span>
+          )}
+        </footer>
       )}
     </div>
   );

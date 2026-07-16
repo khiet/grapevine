@@ -1,5 +1,11 @@
 import { expect, test } from "vitest";
-import { formatUpdated, groupByRepo, totalUnread, PullRequest } from "./PrList";
+import {
+  formatLastSync,
+  formatUpdated,
+  groupByRepo,
+  totalUnread,
+  PullRequest,
+} from "./PrList";
 
 // formatUpdated works in local calendar days, so fixtures are built in local
 // time; the expectations then hold in any timezone.
@@ -25,6 +31,22 @@ test("older dates render as day and short month", () => {
   expect(formatUpdated(at(2026, 7, 14, 12, 0).toISOString(), NOW)).toBe("14 Jul");
   expect(formatUpdated(at(2026, 1, 22, 8, 0).toISOString(), NOW)).toBe("22 Jan");
   expect(formatUpdated(at(2025, 12, 31, 8, 0).toISOString(), NOW)).toBe("31 Dec");
+});
+
+test("the footer label reuses the row-timestamp format", () => {
+  expect(formatLastSync(at(2026, 7, 16, 14, 59).getTime(), NOW)).toBe(
+    "Synced 14:59",
+  );
+  expect(formatLastSync(at(2026, 7, 15, 23, 59).getTime(), NOW)).toBe(
+    "Synced Yesterday",
+  );
+  expect(formatLastSync(at(2026, 7, 1, 8, 0).getTime(), NOW)).toBe(
+    "Synced 1 Jul",
+  );
+});
+
+test("no sync yet means no footer label", () => {
+  expect(formatLastSync(null, NOW)).toBeNull();
 });
 
 const prWithUnread = (unread_count: number): PullRequest => ({

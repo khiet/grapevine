@@ -51,6 +51,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
+        // LaunchAgent (not AppleScript) so launch-at-login works without
+        // automation permissions and survives macOS updates.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(LastAutoHide(Mutex::new(None)))
         .manage(sync::SyncState::default())
         .invoke_handler(tauri::generate_handler![
@@ -65,6 +71,10 @@ pub fn run() {
             commands::mark_all_read,
             commands::dismiss_merged,
             commands::clear_merged,
+            commands::get_poll_interval,
+            commands::set_poll_interval,
+            commands::get_launch_at_login,
+            commands::set_launch_at_login,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {
@@ -82,7 +92,10 @@ pub fn run() {
             let menu = MenuBuilder::new(app).item(&quit).build()?;
 
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                // A dedicated glyph, not the app icon: template icons are
+                // alpha-only, and the colored app icon would flatten into an
+                // illegible block. tray-icon scales it to menubar height.
+                .icon(tauri::include_image!("icons/tray.png"))
                 .icon_as_template(true)
                 .menu(&menu)
                 // Left click toggles the popover; the menu stays on right click.

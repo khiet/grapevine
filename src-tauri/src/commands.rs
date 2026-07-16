@@ -1,5 +1,6 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::{github, keychain, merged, settings, sync, unread};
 
@@ -148,6 +149,42 @@ pub async fn remove_repo(app: AppHandle, name: String) -> Result<Vec<String>, St
     settings::save(&app, &current)?;
     request_sync(&app);
     Ok(current.repos)
+}
+
+#[tauri::command]
+pub async fn get_poll_interval(app: AppHandle) -> Result<u64, String> {
+    Ok(settings::load(&app)?.poll_interval_secs)
+}
+
+/// Saves the poll interval (clamped to the allowed range) and wakes the
+/// sync loop, so the new cadence is in force immediately — the loop reads
+/// the interval fresh when scheduling each round. Returns the stored value.
+#[tauri::command]
+pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String> {
+    let secs = settings::clamp_poll_secs(secs);
+    let mut current = settings::load(&app)?;
+    current.poll_interval_secs = secs;
+    settings::save(&app, &current)?;
+    request_sync(&app);
+    Ok(secs)
+}
+
+#[tauri::command]
+pub fn get_launch_at_login(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Could not read the login item: {e}"))
+}
+
+#[tauri::command]
+pub fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let launcher = app.autolaunch();
+    let result = if enabled {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    };
+    result.map_err(|e| format!("Could not update the login item: {e}"))
 }
 
 fn parse_repo_name(input: &str) -> Result<(&str, &str), String> {

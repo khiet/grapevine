@@ -8,12 +8,30 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
-use crate::{github, github::PullRequest, keychain, merged, settings, unread};
+use crate::{
+    github,
+    github::{GithubError, PullRequest, RateLimit},
+    keychain, merged, settings, unread,
+};
 
-const POLL_INTERVAL: Duration = Duration::from_secs(180);
+/// Remaining GraphQL budget under which the loop stops syncing until the
+/// window resets. A sync costs a handful of points out of 5000/hour, so
+/// this leaves the rest of the budget to whatever else shares the token.
+const RATE_LIMIT_RESERVE: u64 = 100;
+/// First retry delay after a failed sync; doubles per consecutive failure.
+const BACKOFF_BASE: Duration = Duration::from_secs(15);
+/// Ceiling for error backoff, so an extended outage still gets retried
+/// every few minutes rather than ever more rarely.
+const BACKOFF_CAP: Duration = Duration::from_secs(900);
+/// GitHub asks for at least a minute of quiet after a secondary rate limit;
+/// applied when GitHub rate-limits us without saying when the window resets.
+const RATE_LIMIT_MIN_WAIT: Duration = Duration::from_secs(60);
+/// Margin past the documented reset moment, absorbing clock skew.
+const RESET_BUFFER: Duration = Duration::from_secs(5);
 
-/// Latest sync result. A failed sync leaves the previous snapshot in place
-/// so the popover keeps showing the last known list instead of blanking.
+/// Latest sync result. A failed sync leaves the previous snapshot's list in
+/// place so the popover keeps showing the last known PRs instead of
+/// blanking; only the error field changes.
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct Snapshot {
     pub prs: Vec<PullRequest>,
@@ -22,6 +40,12 @@ pub struct Snapshot {
     /// False until a sync has completed while configured; the UI uses this
     /// to tell "not set up yet" apart from "no open PRs".
     pub has_synced: bool,
+    /// When the last successful sync finished (epoch milliseconds), shown in
+    /// the popover footer. Survives failed syncs: it dates the list on show.
+    pub last_sync_at: Option<u64>,
+    /// User-facing message of the most recent sync failure; cleared by the
+    /// next success.
+    pub sync_error: Option<String>,
 }
 
 #[derive(Default)]
@@ -37,8 +61,10 @@ pub struct SyncState {
     pub wake: Notify,
 }
 
-/// Spawns the background loop: sync now, then every [`POLL_INTERVAL`] or
-/// whenever [`SyncState::wake`] is notified, whichever comes first.
+/// Spawns the background loop: sync now, then after a delay picked from the
+/// outcome — the configured poll interval normally, a backoff after errors,
+/// the documented reset after rate limiting — or whenever
+/// [`SyncState::wake`] is notified, whichever comes first.
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     *app.state::<SyncState>().read_state.lock().unwrap() = unread::load(&app);
@@ -51,15 +77,93 @@ pub fn start(app: &AppHandle) {
         *state.merged.lock().unwrap() = loaded;
     }
     tauri::async_runtime::spawn(async move {
+        let mut consecutive_failures: u32 = 0;
         loop {
-            sync_once(&app).await;
+            let outcome = sync_once(&app).await;
+            let now = github::now_epoch_secs();
+            let delay = match outcome {
+                Outcome::Synced { rate_limit } => {
+                    consecutive_failures = 0;
+                    delay_after_success(poll_interval(&app), rate_limit.as_ref(), now)
+                }
+                Outcome::Unconfigured => {
+                    consecutive_failures = 0;
+                    poll_interval(&app)
+                }
+                Outcome::Failed {
+                    rate_limited,
+                    reset_epoch_secs,
+                } => {
+                    consecutive_failures += 1;
+                    delay_after_failure(consecutive_failures, rate_limited, reset_epoch_secs, now)
+                }
+            };
             let state = app.state::<SyncState>();
             tokio::select! {
-                _ = tokio::time::sleep(POLL_INTERVAL) => {}
+                _ = tokio::time::sleep(delay) => {}
                 _ = state.wake.notified() => {}
             }
         }
     });
+}
+
+/// Reads the poll interval fresh each round, so a settings change takes
+/// effect from the next scheduling decision without a restart.
+fn poll_interval(app: &AppHandle) -> Duration {
+    let secs = settings::load(app)
+        .map(|s| s.poll_interval_secs)
+        .unwrap_or(settings::DEFAULT_POLL_SECS);
+    Duration::from_secs(secs)
+}
+
+/// How long past the documented reset moment to stay quiet; zero when the
+/// reset is unknown or already behind us.
+fn until_reset(reset_epoch_secs: Option<u64>, now_epoch_secs: u64) -> Duration {
+    match reset_epoch_secs {
+        Some(reset) if reset > now_epoch_secs => {
+            Duration::from_secs(reset - now_epoch_secs) + RESET_BUFFER
+        }
+        _ => Duration::ZERO,
+    }
+}
+
+/// After a successful sync: the poll interval, unless the reported budget is
+/// nearly spent — then wait out the current rate-limit window instead.
+fn delay_after_success(
+    poll: Duration,
+    rate_limit: Option<&RateLimit>,
+    now_epoch_secs: u64,
+) -> Duration {
+    let Some(limit) = rate_limit else { return poll };
+    if limit.remaining >= RATE_LIMIT_RESERVE {
+        return poll;
+    }
+    match limit.reset_epoch_secs {
+        // An exhausted budget with no usable reset time: back off hard
+        // rather than keep spending the last few points.
+        None => poll.max(BACKOFF_CAP),
+        _ => poll.max(until_reset(limit.reset_epoch_secs, now_epoch_secs)),
+    }
+}
+
+/// After a failed sync: exponential backoff on consecutive failures, raised
+/// to GitHub's documented reset (or a one-minute floor) when the failure was
+/// rate limiting.
+fn delay_after_failure(
+    consecutive_failures: u32,
+    rate_limited: bool,
+    reset_epoch_secs: Option<u64>,
+    now_epoch_secs: u64,
+) -> Duration {
+    // Exponent capped so the shift cannot overflow; the cap dominates anyway.
+    let exponent = consecutive_failures.saturating_sub(1).min(6);
+    let mut delay = BACKOFF_CAP.min(BACKOFF_BASE * 2u32.pow(exponent));
+    if rate_limited {
+        delay = delay
+            .max(RATE_LIMIT_MIN_WAIT)
+            .max(until_reset(reset_epoch_secs, now_epoch_secs));
+    }
+    delay
 }
 
 pub fn total_unread(prs: &[PullRequest]) -> u64 {
@@ -87,13 +191,33 @@ pub fn update_tray_count(app: &AppHandle, total: u64) {
     }
 }
 
-async fn sync_once(app: &AppHandle) {
+/// What one sync attempt means for scheduling the next one.
+enum Outcome {
+    Synced {
+        rate_limit: Option<RateLimit>,
+    },
+    Unconfigured,
+    Failed {
+        rate_limited: bool,
+        reset_epoch_secs: Option<u64>,
+    },
+}
+
+fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+async fn sync_once(app: &AppHandle) -> Outcome {
     let result = fetch(app).await;
     let state = app.state::<SyncState>();
-    let new_snapshot = match result {
+    let (new_snapshot, outcome) = match result {
         Ok(Some(FetchResult {
             mut prs,
             newly_merged,
+            rate_limit,
         })) => {
             let merged = {
                 let mut merged_state = state.merged.lock().unwrap();
@@ -110,19 +234,40 @@ async fn sync_once(app: &AppHandle) {
                     eprintln!("cannot persist unread state: {e}");
                 }
             }
-            Snapshot {
-                prs,
-                merged,
-                has_synced: true,
-            }
+            (
+                Snapshot {
+                    prs,
+                    merged,
+                    has_synced: true,
+                    last_sync_at: Some(now_epoch_ms()),
+                    sync_error: None,
+                },
+                Outcome::Synced { rate_limit },
+            )
         }
         // Unconfigured: clear any list left over from previous settings,
         // but keep the read watermarks and merged history for when a token
         // comes back.
-        Ok(None) => Snapshot::default(),
+        Ok(None) => (Snapshot::default(), Outcome::Unconfigured),
+        // Failure: keep the last known list and its sync time, surface only
+        // the error, and skip the tray update — a stale count beats a
+        // vanishing one.
         Err(e) => {
             eprintln!("sync failed: {e}");
-            return;
+            let snapshot = {
+                let mut snapshot = state.snapshot.lock().unwrap();
+                snapshot.sync_error = Some(e.to_string());
+                snapshot.clone()
+            };
+            let _ = app.emit("prs-updated", snapshot);
+            let (rate_limited, reset_epoch_secs) = match e {
+                GithubError::RateLimited { reset_epoch_secs } => (true, reset_epoch_secs),
+                GithubError::Other(_) => (false, None),
+            };
+            return Outcome::Failed {
+                rate_limited,
+                reset_epoch_secs,
+            };
         }
     };
     let snapshot = {
@@ -132,27 +277,34 @@ async fn sync_once(app: &AppHandle) {
     };
     update_tray_count(app, total_unread(&snapshot.prs));
     let _ = app.emit("prs-updated", snapshot);
+    outcome
 }
 
-/// One sync's fetch: the open PRs plus any tracked PRs that turned out to
-/// have merged since the previous sync.
+/// One sync's fetch: the open PRs, any tracked PRs that turned out to have
+/// merged since the previous sync, and the rate-limit budget GitHub
+/// reported.
 struct FetchResult {
     prs: Vec<PullRequest>,
     newly_merged: Vec<merged::MergedPr>,
+    rate_limit: Option<RateLimit>,
 }
 
 /// `Ok(None)` means the app is not configured (no token or no repos).
-async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, String> {
-    let Some(token) = keychain::load()? else {
+async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
+    let Some(token) = keychain::load().map_err(GithubError::Other)? else {
         return Ok(None);
     };
-    let repos = settings::load(app)?.repos;
+    let repos = settings::load(app).map_err(GithubError::Other)?.repos;
     if repos.is_empty() {
         return Ok(None);
     }
-    let prs = github::fetch_open_prs(&token, &repos).await?;
-    let newly_merged = detect_merged(app, &token, &repos, &prs).await?;
-    Ok(Some(FetchResult { prs, newly_merged }))
+    let fetched = github::fetch_open_prs(&token, &repos).await?;
+    let newly_merged = detect_merged(app, &token, &repos, &fetched.prs).await?;
+    Ok(Some(FetchResult {
+        prs: fetched.prs,
+        newly_merged,
+        rate_limit: fetched.rate_limit,
+    }))
 }
 
 /// Finds tracked PRs that left the open set since the previous sync and asks
@@ -166,7 +318,7 @@ async fn detect_merged(
     token: &str,
     repos: &[String],
     live_prs: &[PullRequest],
-) -> Result<Vec<merged::MergedPr>, String> {
+) -> Result<Vec<merged::MergedPr>, GithubError> {
     let departed = {
         let state = app.state::<SyncState>();
         let snapshot = state.snapshot.lock().unwrap();
@@ -328,6 +480,8 @@ mod tests {
                 merged_at: "2026-07-11T10:00:00Z".into(),
             }],
             has_synced: true,
+            last_sync_at: Some(1_784_205_296_000),
+            sync_error: Some("Could not reach GitHub.".into()),
         };
         assert_eq!(
             serde_json::to_value(&snapshot).unwrap(),
@@ -353,8 +507,99 @@ mod tests {
                     "avatar_url": "https://avatars.example/someone",
                     "merged_at": "2026-07-11T10:00:00Z"
                 }],
-                "has_synced": true
+                "has_synced": true,
+                "last_sync_at": 1_784_205_296_000u64,
+                "sync_error": "Could not reach GitHub."
             })
+        );
+    }
+
+    /// The footer treats null as "never synced" / "no error"; the fields
+    /// must serialize as null rather than being omitted.
+    #[test]
+    fn absent_sync_status_serializes_as_nulls() {
+        let value = serde_json::to_value(Snapshot::default()).unwrap();
+        assert_eq!(value["last_sync_at"], json!(null));
+        assert_eq!(value["sync_error"], json!(null));
+    }
+
+    #[test]
+    fn a_healthy_sync_schedules_the_plain_poll_interval() {
+        let poll = Duration::from_secs(180);
+        assert_eq!(delay_after_success(poll, None, 1_000), poll);
+        let limit = RateLimit {
+            remaining: 4_900,
+            reset_epoch_secs: Some(2_000),
+        };
+        assert_eq!(delay_after_success(poll, Some(&limit), 1_000), poll);
+    }
+
+    /// Nearly-spent budget: wait out the window instead of polling into it.
+    #[test]
+    fn a_depleted_budget_waits_for_the_reset() {
+        let poll = Duration::from_secs(180);
+        let limit = RateLimit {
+            remaining: RATE_LIMIT_RESERVE - 1,
+            reset_epoch_secs: Some(2_000),
+        };
+        // 1000 seconds until reset, plus the buffer.
+        assert_eq!(
+            delay_after_success(poll, Some(&limit), 1_000),
+            Duration::from_secs(1_000) + RESET_BUFFER
+        );
+    }
+
+    #[test]
+    fn a_depleted_budget_with_an_imminent_reset_still_waits_the_poll_interval() {
+        let poll = Duration::from_secs(180);
+        let limit = RateLimit {
+            remaining: 0,
+            reset_epoch_secs: Some(1_010),
+        };
+        assert_eq!(delay_after_success(poll, Some(&limit), 1_000), poll);
+    }
+
+    #[test]
+    fn a_depleted_budget_without_a_reset_time_backs_off_hard() {
+        let poll = Duration::from_secs(180);
+        let limit = RateLimit {
+            remaining: 0,
+            reset_epoch_secs: None,
+        };
+        assert_eq!(delay_after_success(poll, Some(&limit), 1_000), BACKOFF_CAP);
+    }
+
+    #[test]
+    fn failures_back_off_exponentially_up_to_the_cap() {
+        let delay = |failures| delay_after_failure(failures, false, None, 1_000);
+        assert_eq!(delay(1), Duration::from_secs(15));
+        assert_eq!(delay(2), Duration::from_secs(30));
+        assert_eq!(delay(3), Duration::from_secs(60));
+        assert_eq!(delay(6), Duration::from_secs(480));
+        assert_eq!(delay(7), BACKOFF_CAP);
+        assert_eq!(delay(100), BACKOFF_CAP);
+    }
+
+    /// GitHub asks for at least a minute of quiet after a secondary rate
+    /// limit; the first-failure backoff alone would retry after 15s.
+    #[test]
+    fn a_rate_limited_failure_waits_at_least_a_minute() {
+        assert_eq!(
+            delay_after_failure(1, true, None, 1_000),
+            RATE_LIMIT_MIN_WAIT
+        );
+    }
+
+    #[test]
+    fn a_rate_limited_failure_waits_for_a_documented_reset() {
+        assert_eq!(
+            delay_after_failure(1, true, Some(1_500), 1_000),
+            Duration::from_secs(500) + RESET_BUFFER
+        );
+        // A reset already behind us falls back to the minimum wait.
+        assert_eq!(
+            delay_after_failure(1, true, Some(900), 1_000),
+            RATE_LIMIT_MIN_WAIT
         );
     }
 
