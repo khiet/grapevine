@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { formatUpdated, totalUnread, PullRequest } from "./PrList";
+import { formatUpdated, groupByRepo, totalUnread, PullRequest } from "./PrList";
 
 // formatUpdated works in local calendar days, so fixtures are built in local
 // time; the expectations then hold in any timezone.
@@ -43,4 +43,55 @@ const prWithUnread = (unread_count: number): PullRequest => ({
 test("the tray-facing total sums unread across PRs", () => {
   expect(totalUnread([])).toBe(0);
   expect(totalUnread([prWithUnread(2), prWithUnread(0), prWithUnread(5)])).toBe(7);
+});
+
+const pr = (repo: string, number: number, updated_at: string): PullRequest => ({
+  ...prWithUnread(0),
+  number,
+  repo,
+  updated_at,
+  url: `https://github.com/${repo}/pull/${number}`,
+});
+
+test("PRs collapse into one group per repo", () => {
+  const groups = groupByRepo([
+    pr("acme/widgets", 1, "2026-07-10T00:00:00Z"),
+    pr("acme/gadgets", 2, "2026-07-11T00:00:00Z"),
+    pr("acme/widgets", 3, "2026-07-09T00:00:00Z"),
+  ]);
+  expect(groups.map((g) => g.repo)).toEqual(["acme/gadgets", "acme/widgets"]);
+  expect(groups[1].prs.map((p) => p.number)).toEqual([1, 3]);
+});
+
+test("the repo whose newest PR moved most recently leads", () => {
+  // acme/widgets holds the single freshest PR; acme/gadgets has more PRs and
+  // wins on average recency, so this pins newest-wins over count-or-average.
+  const groups = groupByRepo([
+    pr("acme/gadgets", 1, "2026-07-14T00:00:00Z"),
+    pr("acme/gadgets", 2, "2026-07-13T00:00:00Z"),
+    pr("acme/widgets", 3, "2026-07-01T00:00:00Z"),
+    pr("acme/widgets", 4, "2026-07-15T00:00:00Z"),
+  ]);
+  expect(groups.map((g) => g.repo)).toEqual(["acme/widgets", "acme/gadgets"]);
+});
+
+test("rows keep their incoming order within a group", () => {
+  const groups = groupByRepo([
+    pr("acme/widgets", 1, "2026-07-09T00:00:00Z"),
+    pr("acme/widgets", 2, "2026-07-15T00:00:00Z"),
+    pr("acme/widgets", 3, "2026-07-12T00:00:00Z"),
+  ]);
+  expect(groups[0].prs.map((p) => p.number)).toEqual([1, 2, 3]);
+});
+
+test("an unparseable timestamp sinks its group instead of throwing", () => {
+  const groups = groupByRepo([
+    pr("acme/broken", 1, "not-a-date"),
+    pr("acme/widgets", 2, "2026-07-01T00:00:00Z"),
+  ]);
+  expect(groups.map((g) => g.repo)).toEqual(["acme/widgets", "acme/broken"]);
+});
+
+test("an empty list produces no groups", () => {
+  expect(groupByRepo([])).toEqual([]);
 });

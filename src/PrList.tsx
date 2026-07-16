@@ -55,7 +55,30 @@ export function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
 }
 
-function PrRow({ pr }: { pr: PullRequest }) {
+export interface RepoGroup {
+  repo: string;
+  prs: PullRequest[];
+}
+
+// Groups ordered by their most recently updated PR, so the repo that just moved
+// leads; within a group the caller's order is preserved. An unparseable
+// updated_at sorts as the epoch rather than throwing the group to the end.
+export function groupByRepo(prs: PullRequest[]): RepoGroup[] {
+  const groups = new Map<string, PullRequest[]>();
+  for (const pr of prs) {
+    const existing = groups.get(pr.repo);
+    if (existing) existing.push(pr);
+    else groups.set(pr.repo, [pr]);
+  }
+  const latest = (rows: PullRequest[]) =>
+    rows.reduce((max, pr) => Math.max(max, Date.parse(pr.updated_at) || 0), 0);
+  return [...groups.entries()]
+    .map(([repo, rows]) => ({ repo, prs: rows }))
+    .sort((a, b) => latest(b.prs) - latest(a.prs));
+}
+
+// showRepo is false inside a repo group, where the header already names it.
+function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean }) {
   const unread = pr.unread_count > 0;
   const open = () => {
     openUrl(pr.url).catch(() => {});
@@ -86,7 +109,7 @@ function PrRow({ pr }: { pr: PullRequest }) {
           </span>
           <span className="pr-origin">
             <span className="pr-repo">
-              {pr.repo} #{pr.number}
+              {showRepo ? `${pr.repo} #${pr.number}` : `#${pr.number}`}
             </span>
             <span className="pr-author">@{pr.author}</span>
           </span>
@@ -108,11 +131,31 @@ function PrList({ prs }: { prs: PullRequest[] }) {
               <h2 className="pr-section-label">{label}</h2>
               <span className="pr-section-count">{rows.length}</span>
             </div>
-            <ul>
-              {rows.map((pr) => (
-                <PrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
-              ))}
-            </ul>
+            {key === "all" ? (
+              groupByRepo(rows).map(({ repo, prs: group }) => (
+                <div key={repo} className="pr-repo-group">
+                  <div className="pr-repo-header">
+                    <h3 className="pr-repo-name">{repo}</h3>
+                    <span className="pr-repo-count">{group.length}</span>
+                  </div>
+                  <ul>
+                    {group.map((pr) => (
+                      <PrRow
+                        key={`${pr.repo}#${pr.number}`}
+                        pr={pr}
+                        showRepo={false}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              ))
+            ) : (
+              <ul>
+                {rows.map((pr) => (
+                  <PrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+                ))}
+              </ul>
+            )}
           </section>
         );
       })}
