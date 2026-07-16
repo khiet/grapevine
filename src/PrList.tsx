@@ -14,8 +14,19 @@ export interface PullRequest {
   unread_count: number;
 }
 
+export interface MergedPr {
+  number: number;
+  title: string;
+  url: string;
+  repo: string;
+  author: string;
+  avatar_url: string;
+  merged_at: string;
+}
+
 export interface Snapshot {
   prs: PullRequest[];
+  merged: MergedPr[];
   has_synced: boolean;
 }
 
@@ -119,7 +130,57 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
   );
 }
 
-function PrList({ prs }: { prs: PullRequest[] }) {
+/* Two sibling buttons, not a dismiss nested inside the row button (invalid
+   HTML): the row opens the PR on github.com, the × removes the entry. No
+   mark_read here — merged PRs carry no unread state. */
+function MergedRow({ pr }: { pr: MergedPr }) {
+  return (
+    <li className="pr-row-split">
+      <button
+        type="button"
+        className="pr-row"
+        onClick={() => openUrl(pr.url).catch(() => {})}
+      >
+        {/* The gutter span stays even without a badge so avatars align. */}
+        <span />
+        <img
+          className="pr-avatar"
+          alt=""
+          src={pr.avatar_url || AVATAR_PLACEHOLDER}
+          onError={(e) => {
+            e.currentTarget.src = AVATAR_PLACEHOLDER;
+          }}
+        />
+        <span className="pr-text">
+          <span className="pr-title-row">
+            <span className="pr-title">{pr.title}</span>
+            <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
+          </span>
+          <span className="pr-origin">
+            <span className="pr-repo">
+              {pr.repo} #{pr.number}
+            </span>
+            <span className="pr-author">@{pr.author}</span>
+          </span>
+        </span>
+      </button>
+      <button
+        type="button"
+        className="pr-dismiss"
+        aria-label="Dismiss"
+        onClick={() =>
+          invoke("dismiss_merged", { key: `${pr.repo}#${pr.number}` }).catch(
+            () => {},
+          )
+        }
+      >
+        ×
+      </button>
+    </li>
+  );
+}
+
+function PrList({ prs, merged }: { prs: PullRequest[]; merged: MergedPr[] }) {
   return (
     <main className="pr-list">
       {SECTIONS.map(({ key, label }) => {
@@ -159,6 +220,26 @@ function PrList({ prs }: { prs: PullRequest[] }) {
           </section>
         );
       })}
+      {merged.length > 0 && (
+        <section className="pr-section">
+          <div className="pr-section-header">
+            <h2 className="pr-section-label">Merged</h2>
+            <span className="pr-section-count">{merged.length}</span>
+            <button
+              type="button"
+              className="pr-section-clear"
+              onClick={() => invoke("clear_merged").catch(() => {})}
+            >
+              Clear all
+            </button>
+          </div>
+          <ul>
+            {merged.map((pr) => (
+              <MergedRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+            ))}
+          </ul>
+        </section>
+      )}
     </main>
   );
 }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -207,6 +209,81 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<Vec<PullReq
     // Newest first across all repos; ISO-8601 UTC timestamps sort lexically.
     prs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(prs)
+}
+
+/// Asks GitHub which of the given `owner/repo#number` PRs are merged, in one
+/// aliased query. Returns merged keys mapped to their mergedAt; keys absent
+/// from the result were closed without merging, deleted, or are no longer
+/// accessible with this token.
+pub async fn fetch_merged_status(
+    token: &str,
+    keys: &[String],
+) -> Result<HashMap<String, String>, String> {
+    let mut query = String::from("query { ");
+    // Keys come from PRs the app itself fetched, so skipping a malformed one
+    // drops corrupt data, not a real PR.
+    let mut targets: Vec<(String, String)> = Vec::new();
+    for key in keys {
+        let Some((owner, name, number)) = parse_pr_key(key) else {
+            continue;
+        };
+        let alias = format!("p{}", targets.len());
+        query.push_str(&merged_status_field(&alias, owner, name, number));
+        targets.push((alias, key.clone()));
+    }
+    if targets.is_empty() {
+        return Ok(HashMap::new());
+    }
+    query.push('}');
+
+    let response = graphql(token, &query, json!({})).await?;
+    let Some(data) = response.data else {
+        return Err(response
+            .errors
+            .into_iter()
+            .next()
+            .map(|e| format!("GitHub error: {}", e.message))
+            .unwrap_or_else(|| "GitHub returned an unexpected response.".into()));
+    };
+    Ok(collect_merged(&data, &targets))
+}
+
+fn parse_pr_key(key: &str) -> Option<(&str, &str, u64)> {
+    let (repo, number) = key.split_once('#')?;
+    let (owner, name) = repo.split_once('/')?;
+    Some((owner, name, number.parse().ok()?))
+}
+
+fn merged_status_field(alias: &str, owner: &str, name: &str, number: u64) -> String {
+    format!(
+        "{alias}: repository(owner: {owner}, name: {name}) {{ \
+           pullRequest(number: {number}) {{ merged mergedAt }} \
+         }} ",
+        owner = json!(owner),
+        name = json!(name),
+    )
+}
+
+/// Reads the merged aliases back out of the response. A null repository or
+/// pullRequest (vanished, inaccessible) and an unmerged PR both mean "not
+/// merged" and are simply left out.
+fn collect_merged(data: &Value, targets: &[(String, String)]) -> HashMap<String, String> {
+    let mut merged = HashMap::new();
+    for (alias, key) in targets {
+        let Some(pr) = data
+            .pointer(&format!("/{alias}/pullRequest"))
+            .filter(|v| !v.is_null())
+        else {
+            continue;
+        };
+        if pr.get("merged").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        if let Some(t) = pr.get("mergedAt").and_then(Value::as_str) {
+            merged.insert(key.clone(), t.to_string());
+        }
+    }
+    merged
 }
 
 fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> String {
@@ -577,5 +654,51 @@ mod tests {
         assert!(field.contains(r#"repository(owner: "acme", name: "widgets")"#));
         assert!(field.contains(r#"after: "abc""#));
         assert!(!repo_field("r0", "acme", "widgets", None).contains("after:"));
+    }
+
+    #[test]
+    fn merged_status_field_quotes_arguments() {
+        let field = merged_status_field("p0", "acme", "widgets", 7);
+        assert!(field.contains(r#"p0: repository(owner: "acme", name: "widgets")"#));
+        assert!(field.contains("pullRequest(number: 7)"));
+    }
+
+    #[test]
+    fn pr_keys_parse_into_query_arguments() {
+        assert_eq!(parse_pr_key("acme/widgets#7"), Some(("acme", "widgets", 7)));
+        assert_eq!(parse_pr_key("no-separator"), None);
+        assert_eq!(parse_pr_key("acme#7"), None);
+        assert_eq!(parse_pr_key("acme/widgets#seven"), None);
+    }
+
+    #[test]
+    fn collect_merged_keeps_only_merged_prs() {
+        let data = json!({
+            "p0": { "pullRequest": { "merged": true, "mergedAt": "2026-07-12T10:00:00Z" } },
+            "p1": { "pullRequest": { "merged": false, "mergedAt": null } }
+        });
+        let targets = [
+            ("p0".to_string(), "acme/widgets#7".to_string()),
+            ("p1".to_string(), "acme/widgets#8".to_string()),
+        ];
+        let merged = collect_merged(&data, &targets);
+        assert_eq!(
+            merged.get("acme/widgets#7").map(String::as_str),
+            Some("2026-07-12T10:00:00Z")
+        );
+        assert!(!merged.contains_key("acme/widgets#8"));
+    }
+
+    #[test]
+    fn vanished_repos_and_prs_do_not_count_as_merged() {
+        let data = json!({
+            "p0": null,
+            "p1": { "pullRequest": null }
+        });
+        let targets = [
+            ("p0".to_string(), "acme/widgets#7".to_string()),
+            ("p1".to_string(), "acme/widgets#8".to_string()),
+        ];
+        assert!(collect_merged(&data, &targets).is_empty());
     }
 }

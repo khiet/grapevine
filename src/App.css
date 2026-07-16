@@ -167,6 +167,62 @@ body {
   background-color: rgba(10, 132, 255, 0.12);
 }
 
+/* A merged row is two sibling buttons (open + dismiss) that must read as
+   one row: the li carries the hover highlight and the hairline, and the
+   inner .pr-row gives up its own so they don't stack. */
+.pr-row-split {
+  display: flex;
+  align-items: stretch;
+}
+
+.pr-row-split .pr-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.pr-row-split:hover {
+  background-color: rgba(10, 132, 255, 0.12);
+}
+
+.pr-row-split .pr-row:hover {
+  background-color: transparent;
+}
+
+.pr-section li + li.pr-row-split {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.pr-section li + li.pr-row-split .pr-row {
+  border-top: none;
+}
+
+/* Hidden until the row is hovered, Mail-style: a persistent × on every
+   merged row would read as clutter. */
+.pr-dismiss {
+  border: none;
+  background: none;
+  padding: 0 12px;
+  color: #8e8e93;
+  font: inherit;
+  font-size: 15px;
+  opacity: 0;
+}
+
+.pr-row-split:hover .pr-dismiss,
+.pr-dismiss:focus-visible {
+  opacity: 1;
+}
+
+.pr-section-clear {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  color: #0a84ff;
+  font-size: 12px;
+  font-weight: 500;
+}
+
 /* macOS system red, the standard notification-counter colour — the only
    colour in an otherwise greyscale list. */
 .pr-unread {
@@ -409,6 +465,22 @@ body {
 
   .pr-row:hover {
     background-color: rgba(10, 132, 255, 0.28);
+  }
+
+  .pr-row-split:hover {
+    background-color: rgba(10, 132, 255, 0.28);
+  }
+
+  .pr-row-split .pr-row:hover {
+    background-color: transparent;
+  }
+
+  .pr-section li + li.pr-row-split {
+    border-top-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .pr-dismiss {
+    color: #7c7c80;
   }
 
   .pr-unread {
