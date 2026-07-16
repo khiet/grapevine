@@ -1,10 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+import PrList, { Snapshot } from "./PrList";
 import SettingsView from "./SettingsView";
 
 function App() {
   const [view, setView] = useState<"list" | "settings">("list");
+  const [snapshot, setSnapshot] = useState<Snapshot>({
+    prs: [],
+    has_synced: false,
+  });
   const inSettings = view === "settings";
+
+  useEffect(() => {
+    invoke<Snapshot>("get_prs").then(setSnapshot).catch(() => {});
+    const unlisten = listen<Snapshot>("prs-updated", (event) =>
+      setSnapshot(event.payload),
+    );
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, []);
 
   return (
     <div className="popover">
@@ -22,11 +39,17 @@ function App() {
       </header>
       {inSettings ? (
         <SettingsView />
+      ) : snapshot.prs.length > 0 ? (
+        <PrList prs={snapshot.prs} />
       ) : (
         <main className="popover-body">
-          <p className="placeholder-heading">No pull requests yet</p>
+          <p className="placeholder-heading">
+            {snapshot.has_synced ? "No open pull requests" : "No pull requests yet"}
+          </p>
           <p className="placeholder-detail">
-            Configure a token and repositories to start watching.
+            {snapshot.has_synced
+              ? "The watched repositories have no open PRs."
+              : "Configure a token and repositories to start watching."}
           </p>
         </main>
       )}
