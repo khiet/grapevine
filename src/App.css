@@ -118,7 +118,7 @@ body {
 .pr-row {
   display: grid;
   grid-template-columns: 22px 30px 1fr;
-  align-items: start;
+  align-items: center;
   gap: 9px;
   width: 100%;
   padding: 9px 11px;
@@ -137,7 +137,6 @@ body {
    colour in an otherwise greyscale list. */
 .pr-unread {
   justify-self: center;
-  margin-top: 2px;
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
