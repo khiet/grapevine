@@ -33,7 +33,7 @@ export function formatAge(iso: string, now: number = Date.now()): string {
   if (days < 7) return `${days}d`;
   const weeks = Math.floor(days / 7);
   if (weeks < 52) return `${weeks}w`;
-  return `${Math.floor(days / 365)}y`;
+  return `${Math.floor(weeks / 52)}y`;
 }
 
 function PrRow({ pr }: { pr: PullRequest }) {
