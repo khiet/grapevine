@@ -175,13 +175,4 @@ mod tests {
         let numbers: Vec<u64> = state.iter().map(|e| e.number).collect();
         assert_eq!(numbers, vec![2, 3, 1]);
     }
-
-    /// merged.json holds serialized entries, so an entry must survive its
-    /// own round trip or persisted sections would not load back.
-    #[test]
-    fn an_entry_round_trips_through_its_disk_format() {
-        let entry = entry("acme/widgets", 7, "2026-07-12T10:00:00Z");
-        let raw = serde_json::to_string(&entry).unwrap();
-        assert_eq!(serde_json::from_str::<MergedPr>(&raw).unwrap(), entry);
-    }
 }

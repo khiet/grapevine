@@ -1,4 +1,8 @@
-use std::{collections::HashSet, sync::Mutex, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
+    time::Duration,
+};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -163,33 +167,52 @@ async fn detect_merged(
     repos: &[String],
     live_prs: &[PullRequest],
 ) -> Result<Vec<merged::MergedPr>, String> {
-    let live: HashSet<String> = live_prs.iter().map(unread::key).collect();
-    let departed: Vec<PullRequest> = {
+    let departed = {
         let state = app.state::<SyncState>();
         let snapshot = state.snapshot.lock().unwrap();
-        snapshot
-            .prs
-            .iter()
-            .filter(|pr| !live.contains(&unread::key(pr)))
-            // A repo removed from the watchlist takes its PRs with it; those
-            // departed because of settings, not because they merged.
-            .filter(|pr| repos.iter().any(|r| r.eq_ignore_ascii_case(&pr.repo)))
-            .cloned()
-            .collect()
+        departed_prs(&snapshot.prs, live_prs, repos)
     };
     if departed.is_empty() {
         return Ok(Vec::new());
     }
     let keys: Vec<String> = departed.iter().map(unread::key).collect();
     let merged_at = github::fetch_merged_status(token, &keys).await?;
-    Ok(departed
+    Ok(merged_entries(&departed, &merged_at))
+}
+
+/// The tracked PRs in `previous` that are gone from the newly fetched
+/// `live_prs` — the candidates for having merged.
+fn departed_prs(
+    previous: &[PullRequest],
+    live_prs: &[PullRequest],
+    repos: &[String],
+) -> Vec<PullRequest> {
+    let live: HashSet<String> = live_prs.iter().map(unread::key).collect();
+    previous
+        .iter()
+        .filter(|pr| !live.contains(&unread::key(pr)))
+        // A repo removed from the watchlist takes its PRs with it; those
+        // departed because of settings, not because they merged.
+        .filter(|pr| repos.iter().any(|r| r.eq_ignore_ascii_case(&pr.repo)))
+        .cloned()
+        .collect()
+}
+
+/// Turns GitHub's answer into section entries. A departed PR missing from
+/// `merged_at` was closed without merging (or is gone); it yields nothing
+/// and so disappears from the list silently.
+fn merged_entries(
+    departed: &[PullRequest],
+    merged_at: &HashMap<String, String>,
+) -> Vec<merged::MergedPr> {
+    departed
         .iter()
         .filter_map(|pr| {
             merged_at
                 .get(&unread::key(pr))
                 .map(|t| merged::from_pr(pr, t.clone()))
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -197,6 +220,83 @@ mod tests {
     use super::*;
     use crate::github::Section;
     use serde_json::json;
+
+    fn pr(repo: &str, number: u64) -> PullRequest {
+        PullRequest {
+            number,
+            title: "Fix the thing".into(),
+            url: format!("https://github.com/{repo}/pull/{number}"),
+            repo: repo.into(),
+            author: "someone".into(),
+            avatar_url: "https://avatars.example/someone".into(),
+            created_at: "2026-07-01T00:00:00Z".into(),
+            updated_at: "2026-07-01T00:00:00Z".into(),
+            section: Section::All,
+            unread_count: 0,
+            activity: vec![],
+        }
+    }
+
+    #[test]
+    fn a_pr_gone_from_the_open_list_has_departed() {
+        let previous = vec![pr("acme/widgets", 7), pr("acme/widgets", 8)];
+        let live = vec![pr("acme/widgets", 8)];
+        let repos = vec!["acme/widgets".to_string()];
+        let departed = departed_prs(&previous, &live, &repos);
+        assert_eq!(departed.len(), 1);
+        assert_eq!(departed[0].number, 7);
+    }
+
+    #[test]
+    fn prs_still_open_have_not_departed() {
+        let prs = vec![pr("acme/widgets", 7)];
+        let repos = vec!["acme/widgets".to_string()];
+        assert!(departed_prs(&prs, &prs, &repos).is_empty());
+    }
+
+    /// Un-watching a repo drops its PRs from the fetch. They left because of
+    /// settings, not because they merged, so they must not reach the merged
+    /// check — otherwise removing a repo would spray its open PRs into the
+    /// Merged section.
+    #[test]
+    fn prs_of_an_unwatched_repo_never_count_as_departed() {
+        let previous = vec![pr("acme/widgets", 7), pr("acme/gadgets", 1)];
+        let repos = vec!["acme/widgets".to_string()];
+        let departed = departed_prs(&previous, &[], &repos);
+        assert_eq!(departed.len(), 1);
+        assert_eq!(departed[0].repo, "acme/widgets");
+    }
+
+    /// The watchlist stores GitHub's canonical casing while a PR's repo name
+    /// comes back from the API; a case mismatch must not read as un-watched.
+    #[test]
+    fn the_watchlist_check_ignores_repo_name_casing() {
+        let previous = vec![pr("acme/widgets", 7)];
+        let repos = vec!["Acme/Widgets".to_string()];
+        assert_eq!(departed_prs(&previous, &[], &repos).len(), 1);
+    }
+
+    #[test]
+    fn departed_prs_that_merged_become_section_entries() {
+        let departed = vec![pr("acme/widgets", 7)];
+        let merged_at = HashMap::from([(
+            "acme/widgets#7".to_string(),
+            "2026-07-12T10:00:00Z".to_string(),
+        )]);
+        let entries = merged_entries(&departed, &merged_at);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].number, 7);
+        assert_eq!(entries[0].title, "Fix the thing");
+        assert_eq!(entries[0].merged_at, "2026-07-12T10:00:00Z");
+    }
+
+    /// A PR closed without merging is absent from GitHub's answer, and must
+    /// vanish silently rather than land in the Merged section.
+    #[test]
+    fn departed_prs_that_did_not_merge_yield_no_entry() {
+        let departed = vec![pr("acme/widgets", 7)];
+        assert!(merged_entries(&departed, &HashMap::new()).is_empty());
+    }
 
     /// The `Snapshot` interface in `src/PrList.tsx` consumes this JSON
     /// verbatim: field names and section values are the wire contract, so a
