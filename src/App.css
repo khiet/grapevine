@@ -129,8 +129,11 @@ body {
   text-align: left;
 }
 
+/* An accent tint, not a grey darken: the card is white on a #f2f2f7 window,
+   so any grey hover lands on the window colour and the row reads as a hole
+   punched through the card rather than as the highlight it is. */
 .pr-row:hover {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: rgba(10, 132, 255, 0.12);
 }
 
 /* macOS system red, the standard notification-counter colour — the only
@@ -365,7 +368,7 @@ body {
   }
 
   .pr-row:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(10, 132, 255, 0.28);
   }
 
   .pr-unread {
