@@ -146,7 +146,12 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<Vec<PullReq
         }
         let mut query = String::from("query { viewer { login } ");
         for (i, (owner, name, cursor)) in pending.iter().enumerate() {
-            query.push_str(&repo_field(&format!("r{i}"), owner, name, cursor.as_deref()));
+            query.push_str(&repo_field(
+                &format!("r{i}"),
+                owner,
+                name,
+                cursor.as_deref(),
+            ));
         }
         query.push('}');
 
