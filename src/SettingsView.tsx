@@ -117,100 +117,107 @@ function SettingsView() {
     <main className="settings">
       <section className="settings-section">
         <h2 className="settings-label">GitHub token</h2>
-        {tokenStatus.has_token && (
-          <div className="settings-status-row">
-            <span className="settings-ok">
-              Signed in as <strong>{tokenStatus.login ?? "unknown"}</strong>
-            </span>
-            <button type="button" className="settings-link" onClick={removeToken}>
-              Remove
+        <div className="settings-card">
+          {tokenStatus.has_token && (
+            <div className="settings-row">
+              <span className="settings-ok">
+                Signed in as <strong>{tokenStatus.login ?? "unknown"}</strong>
+              </span>
+              <button type="button" className="settings-link" onClick={removeToken}>
+                Remove
+              </button>
+            </div>
+          )}
+          <form className="settings-row settings-input-row" onSubmit={saveToken}>
+            <input
+              type="password"
+              value={tokenInput}
+              onChange={(event) => setTokenInput(event.target.value)}
+              placeholder={
+                tokenStatus.has_token
+                  ? "Replace token"
+                  : "Personal access token (classic)"
+              }
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button type="submit" disabled={tokenBusy || tokenInput.trim() === ""}>
+              {tokenBusy ? "Checking…" : "Save"}
             </button>
-          </div>
-        )}
-        <form className="settings-input-row" onSubmit={saveToken}>
-          <input
-            type="password"
-            value={tokenInput}
-            onChange={(event) => setTokenInput(event.target.value)}
-            placeholder={
-              tokenStatus.has_token
-                ? "Replace token"
-                : "Personal access token (classic)"
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <button type="submit" disabled={tokenBusy || tokenInput.trim() === ""}>
-            {tokenBusy ? "Checking…" : "Save"}
-          </button>
-        </form>
+          </form>
+        </div>
         {tokenError && <p className="settings-error">{tokenError}</p>}
       </section>
 
       <section className="settings-section">
         <h2 className="settings-label">Watched repositories</h2>
-        {repos.length === 0 ? (
-          <p className="settings-empty">No repositories yet.</p>
-        ) : (
-          <ul className="repo-list">
-            {repos.map((repo) => (
-              <li key={repo} className="repo-row">
-                <span className="repo-name">{repo}</span>
-                <button
-                  type="button"
-                  className="settings-link"
-                  aria-label={`Remove ${repo}`}
-                  onClick={() => removeRepo(repo)}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <form className="settings-input-row" onSubmit={addRepo}>
-          <input
-            value={repoInput}
-            onChange={(event) => setRepoInput(event.target.value)}
-            placeholder="owner/repo"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <button type="submit" disabled={repoBusy || repoInput.trim() === ""}>
-            {repoBusy ? "Checking…" : "Add"}
-          </button>
-        </form>
+        <div className="settings-card">
+          {repos.length === 0 ? (
+            <p className="settings-row settings-empty">No repositories yet.</p>
+          ) : (
+            <ul className="repo-list">
+              {repos.map((repo) => (
+                <li key={repo} className="settings-row repo-row">
+                  <span className="repo-name">{repo}</span>
+                  <button
+                    type="button"
+                    className="repo-remove"
+                    aria-label={`Remove ${repo}`}
+                    onClick={() => removeRepo(repo)}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form className="settings-row settings-input-row" onSubmit={addRepo}>
+            <input
+              value={repoInput}
+              onChange={(event) => setRepoInput(event.target.value)}
+              placeholder="owner/repo"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button type="submit" disabled={repoBusy || repoInput.trim() === ""}>
+              {repoBusy ? "Checking…" : "Add"}
+            </button>
+          </form>
+        </div>
         {repoError && <p className="settings-error">{repoError}</p>}
       </section>
 
       <section className="settings-section">
         <h2 className="settings-label">General</h2>
-        <label className="settings-field-row">
-          <span>Check for updates every</span>
-          <select
-            value={pollSecs ?? ""}
-            disabled={pollSecs === null}
-            onChange={(event) => changePollInterval(Number(event.target.value))}
-          >
-            {pollSecs === null && <option value="" />}
-            {(pollSecs === null || POLL_PRESETS.includes(pollSecs)
-              ? POLL_PRESETS
-              : [...POLL_PRESETS, pollSecs].sort((a, b) => a - b)
-            ).map((secs) => (
-              <option key={secs} value={secs}>
-                {pollLabel(secs)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="settings-field-row">
-          <span>Launch at login</span>
-          <input
-            type="checkbox"
-            checked={launchAtLogin}
-            onChange={(event) => toggleLaunchAtLogin(event.target.checked)}
-          />
-        </label>
+        <div className="settings-card">
+          <label className="settings-row settings-field-row">
+            <span>Check for updates every</span>
+            <select
+              value={pollSecs ?? ""}
+              disabled={pollSecs === null}
+              onChange={(event) => changePollInterval(Number(event.target.value))}
+            >
+              {pollSecs === null && <option value="" />}
+              {(pollSecs === null || POLL_PRESETS.includes(pollSecs)
+                ? POLL_PRESETS
+                : [...POLL_PRESETS, pollSecs].sort((a, b) => a - b)
+              ).map((secs) => (
+                <option key={secs} value={secs}>
+                  {pollLabel(secs)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-row settings-field-row">
+            <span>Launch at login</span>
+            <input
+              type="checkbox"
+              className="settings-switch"
+              checked={launchAtLogin}
+              onChange={(event) => toggleLaunchAtLogin(event.target.checked)}
+            />
+          </label>
+        </div>
         {generalError && <p className="settings-error">{generalError}</p>}
       </section>
     </main>

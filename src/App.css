@@ -420,19 +420,84 @@ body {
   font: inherit;
 }
 
-.settings-status-row,
-.repo-row {
+/* Sections render as the same white rounded slabs as the PR list, so the
+   settings screen reads as part of the same app. */
+.settings-card {
+  background-color: #ffffff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.settings-card > * + *,
+.repo-list li + li {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 9px 11px;
 }
 
 .repo-list {
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+}
+
+.repo-row:hover {
+  background-color: rgba(10, 132, 255, 0.12);
+}
+
+/* Hidden until the row is hovered, matching the Merged rows' dismiss. */
+.repo-remove {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: #8e8e93;
+  font: inherit;
+  font-size: 15px;
+  opacity: 0;
+}
+
+.repo-row:hover .repo-remove,
+.repo-remove:focus-visible {
+  opacity: 1;
+}
+
+/* A macOS-style switch drawn on the bare checkbox: track via the input
+   itself, knob via ::before sliding between the track's ends. */
+.settings-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background-color: #d8d8dc;
+  transition: background-color 0.15s ease;
+}
+
+.settings-switch:checked {
+  background-color: #34c759;
+}
+
+.settings-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+
+.settings-switch:checked::before {
+  left: 16px;
 }
 
 .repo-name {
@@ -534,9 +599,36 @@ body {
     color: #7c7c80;
   }
 
+  /* Recessed against the #2c2c2e card, so the field reads as a well
+     rather than vanishing into it. */
   .settings-input-row input {
-    background-color: #2c2c2e;
+    background-color: #1c1c1e;
     border-color: rgba(255, 255, 255, 0.16);
+  }
+
+  .settings-card {
+    background-color: #2c2c2e;
+  }
+
+  .settings-card > * + *,
+  .repo-list li + li {
+    border-top-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .repo-row:hover {
+    background-color: rgba(10, 132, 255, 0.28);
+  }
+
+  .repo-remove {
+    color: #7c7c80;
+  }
+
+  .settings-switch {
+    background-color: #3a3a3c;
+  }
+
+  .settings-switch:checked {
+    background-color: #30d158;
   }
 
   .settings-ok {
