@@ -120,7 +120,9 @@ mod tests {
                 url: "https://github.com/acme/widgets/pull/7".into(),
                 repo: "acme/widgets".into(),
                 author: "someone".into(),
+                avatar_url: "https://avatars.example/someone".into(),
                 created_at: "2026-07-10T12:00:00Z".into(),
+                updated_at: "2026-07-11T09:30:00Z".into(),
                 section: Section::Mine,
                 unread_count: 3,
                 // Internal working data; must not leak into the payload.
@@ -137,7 +139,9 @@ mod tests {
                     "url": "https://github.com/acme/widgets/pull/7",
                     "repo": "acme/widgets",
                     "author": "someone",
+                    "avatar_url": "https://avatars.example/someone",
                     "created_at": "2026-07-10T12:00:00Z",
+                    "updated_at": "2026-07-11T09:30:00Z",
                     "section": "mine",
                     "unread_count": 3
                 }],
