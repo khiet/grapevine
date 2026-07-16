@@ -15,6 +15,7 @@ mod github;
 mod keychain;
 mod settings;
 mod sync;
+mod unread;
 
 /// When the popover was last hidden because it lost focus. Clicking the tray
 /// icon while the popover is open first blurs (and hides) it, then delivers
@@ -59,6 +60,8 @@ pub fn run() {
             commands::add_repo,
             commands::remove_repo,
             commands::get_prs,
+            commands::mark_read,
+            commands::mark_all_read,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {

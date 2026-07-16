@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
-use crate::{github, github::PullRequest, keychain, settings};
+use crate::{github, github::PullRequest, keychain, settings, unread};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(180);
 
@@ -21,6 +21,9 @@ pub struct Snapshot {
 #[derive(Default)]
 pub struct SyncState {
     pub snapshot: Mutex<Snapshot>,
+    /// Last-read watermarks; authoritative in memory, mirrored to disk on
+    /// every change so unread state survives restarts.
+    pub read_state: Mutex<unread::ReadState>,
     /// Wakes the poll loop early, e.g. right after settings change.
     pub wake: Notify,
 }
@@ -29,6 +32,7 @@ pub struct SyncState {
 /// whenever [`SyncState::wake`] is notified, whichever comes first.
 pub fn start(app: &AppHandle) {
     let app = app.clone();
+    *app.state::<SyncState>().read_state.lock().unwrap() = unread::load(&app);
     tauri::async_runtime::spawn(async move {
         loop {
             sync_once(&app).await;
@@ -41,27 +45,48 @@ pub fn start(app: &AppHandle) {
     });
 }
 
+pub fn total_unread(prs: &[PullRequest]) -> u64 {
+    prs.iter().map(|pr| pr.unread_count).sum()
+}
+
+/// Shows the total unread count next to the tray icon, or none at zero so
+/// the icon returns to its plain state.
+pub fn update_tray_count(app: &AppHandle, total: u64) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title((total > 0).then(|| total.to_string()));
+    }
+}
+
 async fn sync_once(app: &AppHandle) {
     let result = fetch(app).await;
     let state = app.state::<SyncState>();
-    let snapshot = {
-        let mut snapshot = state.snapshot.lock().unwrap();
-        match result {
-            Ok(Some(prs)) => {
-                *snapshot = Snapshot {
-                    prs,
-                    has_synced: true,
+    let new_snapshot = match result {
+        Ok(Some(mut prs)) => {
+            let mut read_state = state.read_state.lock().unwrap();
+            if unread::apply(&mut prs, &mut read_state) {
+                if let Err(e) = unread::save(app, &read_state) {
+                    eprintln!("cannot persist unread state: {e}");
                 }
             }
-            // Unconfigured: clear any list left over from previous settings.
-            Ok(None) => *snapshot = Snapshot::default(),
-            Err(e) => {
-                eprintln!("sync failed: {e}");
-                return;
+            Snapshot {
+                prs,
+                has_synced: true,
             }
         }
+        // Unconfigured: clear any list left over from previous settings,
+        // but keep the read watermarks for when a token comes back.
+        Ok(None) => Snapshot::default(),
+        Err(e) => {
+            eprintln!("sync failed: {e}");
+            return;
+        }
+    };
+    let snapshot = {
+        let mut snapshot = state.snapshot.lock().unwrap();
+        *snapshot = new_snapshot;
         snapshot.clone()
     };
+    update_tray_count(app, total_unread(&snapshot.prs));
     let _ = app.emit("prs-updated", snapshot);
 }
 
@@ -97,6 +122,9 @@ mod tests {
                 author: "someone".into(),
                 created_at: "2026-07-10T12:00:00Z".into(),
                 section: Section::Mine,
+                unread_count: 3,
+                // Internal working data; must not leak into the payload.
+                activity: vec!["2026-07-10T12:00:00Z".into()],
             }],
             has_synced: true,
         };
@@ -110,7 +138,8 @@ mod tests {
                     "repo": "acme/widgets",
                     "author": "someone",
                     "created_at": "2026-07-10T12:00:00Z",
-                    "section": "mine"
+                    "section": "mine",
+                    "unread_count": 3
                 }],
                 "has_synced": true
             })

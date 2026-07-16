@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 export interface PullRequest {
@@ -8,6 +9,7 @@ export interface PullRequest {
   author: string;
   created_at: string;
   section: "mine" | "participated" | "all";
+  unread_count: number;
 }
 
 export interface Snapshot {
@@ -36,15 +38,25 @@ export function formatAge(iso: string, now: number = Date.now()): string {
   return `${Math.floor(weeks / 52)}y`;
 }
 
+export function totalUnread(prs: PullRequest[]): number {
+  return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
+}
+
 function PrRow({ pr }: { pr: PullRequest }) {
+  const open = () => {
+    openUrl(pr.url).catch(() => {});
+    // The backend clears the badge and pushes a fresh snapshot.
+    invoke("mark_read", { key: `${pr.repo}#${pr.number}` }).catch(() => {});
+  };
   return (
     <li>
-      <button
-        type="button"
-        className="pr-row"
-        onClick={() => openUrl(pr.url).catch(() => {})}
-      >
-        <span className="pr-title">{pr.title}</span>
+      <button type="button" className="pr-row" onClick={open}>
+        <span className="pr-title-row">
+          <span className="pr-title">{pr.title}</span>
+          {pr.unread_count > 0 && (
+            <span className="pr-badge">{pr.unread_count}</span>
+          )}
+        </span>
         <span className="pr-meta">
           {pr.repo} #{pr.number} · {pr.author} · {formatAge(pr.created_at)}
         </span>

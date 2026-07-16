@@ -1,7 +1,7 @@
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{github, keychain, settings, sync};
+use crate::{github, keychain, settings, sync, unread};
 
 /// Settings changes should show up in the PR list right away, not after the
 /// remainder of the current poll interval.
@@ -12,6 +12,39 @@ fn request_sync(app: &AppHandle) {
 #[tauri::command]
 pub fn get_prs(state: tauri::State<'_, sync::SyncState>) -> sync::Snapshot {
     state.snapshot.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn mark_read(app: AppHandle, key: String) -> Result<(), String> {
+    mark(&app, Some(&key))
+}
+
+#[tauri::command]
+pub fn mark_all_read(app: AppHandle) -> Result<(), String> {
+    mark(&app, None)
+}
+
+/// Moves the read watermark of the matching PR (or all PRs, for `None`) to
+/// its newest known activity, then pushes the cleared badges to the popover
+/// and the tray. Marking read is anchored to activity the app has actually
+/// seen: anything that lands on GitHub after this sync stays unread.
+fn mark(app: &AppHandle, only: Option<&str>) -> Result<(), String> {
+    let state = app.state::<sync::SyncState>();
+    let snapshot = {
+        let mut read_state = state.read_state.lock().unwrap();
+        let mut snapshot = state.snapshot.lock().unwrap();
+        for pr in &mut snapshot.prs {
+            let key = unread::key(pr);
+            if only.is_none_or(|k| k == key) {
+                pr.unread_count = 0;
+                read_state.insert(key, unread::read_watermark(pr));
+            }
+        }
+        unread::save(app, &read_state)?;
+        snapshot.clone()
+    };
+    sync::update_tray_count(app, sync::total_unread(&snapshot.prs));
+    app.emit("prs-updated", snapshot).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
