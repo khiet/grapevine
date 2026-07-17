@@ -28,6 +28,11 @@ export interface Snapshot {
   prs: PullRequest[];
   merged: MergedPr[];
   has_synced: boolean;
+  /** Epoch ms of the last successful sync; null before the first one. */
+  last_sync_at: number | null;
+  /** User-facing message of the most recent sync failure, if it is still
+   *  current; cleared by the next successful sync. */
+  sync_error: string | null;
 }
 
 const SECTIONS = [
@@ -64,6 +69,16 @@ export function formatUpdated(iso: string, now: Date = new Date()): string {
 
 export function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
+}
+
+// Footer label for the last successful sync, reusing the row-timestamp
+// format: "Synced 14:59" today, then "Synced Yesterday", "Synced 14 Jul".
+export function formatLastSync(
+  ms: number | null,
+  now: Date = new Date(),
+): string | null {
+  if (ms === null) return null;
+  return `Synced ${formatUpdated(new Date(ms).toISOString(), now)}`;
 }
 
 export interface RepoGroup {

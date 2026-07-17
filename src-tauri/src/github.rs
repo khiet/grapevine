@@ -5,6 +5,46 @@ use serde_json::{json, Value};
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
+/// A sync-path failure, split by what the sync loop should do about it:
+/// rate limiting waits for the documented reset, anything else retries with
+/// backoff. The `Display` form is the user-facing message shown in the
+/// popover and settings view.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GithubError {
+    /// GitHub explicitly refused for quota reasons (HTTP 403/429 or a
+    /// GraphQL RATE_LIMITED error). `reset_epoch_secs` is when the quota
+    /// window resets, when GitHub said so.
+    RateLimited {
+        reset_epoch_secs: Option<u64>,
+    },
+    Other(String),
+}
+
+impl std::fmt::Display for GithubError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GithubError::RateLimited { .. } => {
+                write!(f, "GitHub rate limit reached. Waiting for it to reset.")
+            }
+            GithubError::Other(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl From<GithubError> for String {
+    fn from(e: GithubError) -> String {
+        e.to_string()
+    }
+}
+
+/// GraphQL rate-limit budget reported alongside a successful sync; lets the
+/// loop slow down before GitHub starts refusing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RateLimit {
+    pub remaining: u64,
+    pub reset_epoch_secs: Option<u64>,
+}
+
 /// PRs per page. GitHub caps connection page sizes at 100; 50 keeps the
 /// multi-repo query well under the node limit while rarely paginating.
 const PAGE_SIZE: usize = 50;
@@ -64,39 +104,136 @@ struct GraphQlResponse {
     errors: Vec<GraphQlError>,
 }
 
-/// Errors are user-facing strings: they surface as inline messages in the
-/// settings view, so they must stand on their own without context.
-async fn graphql(token: &str, query: &str, variables: Value) -> Result<GraphQlResponse, String> {
+/// `Other` messages are user-facing strings: they surface as inline messages
+/// in the settings view and popover, so they must stand on their own.
+async fn graphql(
+    token: &str,
+    query: &str,
+    variables: Value,
+) -> Result<GraphQlResponse, GithubError> {
     let client = reqwest::Client::builder()
         .user_agent("grapevine")
         .build()
-        .map_err(|e| format!("cannot build HTTP client: {e}"))?;
+        .map_err(|e| GithubError::Other(format!("cannot build HTTP client: {e}")))?;
     let response = client
         .post(GRAPHQL_URL)
         .bearer_auth(token)
         .json(&json!({ "query": query, "variables": variables }))
         .send()
         .await
-        .map_err(|_| "Could not reach GitHub. Check your network connection.".to_string())?;
+        .map_err(|_| {
+            GithubError::Other("Could not reach GitHub. Check your network connection.".into())
+        })?;
 
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Err("GitHub rejected the token. Check that it is valid and not expired.".into());
-    }
-    if !response.status().is_success() {
-        return Err(format!(
-            "GitHub returned an error (HTTP {}).",
-            response.status().as_u16()
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(GithubError::Other(
+            "GitHub rejected the token. Check that it is valid and not expired.".into(),
         ));
+    }
+    // 403 with a rate-limit header (primary limit exhausted) or 429
+    // (secondary limit) both mean "stop asking until the reset".
+    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return Err(GithubError::RateLimited {
+            reset_epoch_secs: rate_limit_reset(response.headers()),
+        });
+    }
+    if !status.is_success() {
+        return Err(GithubError::Other(format!(
+            "GitHub returned an error (HTTP {}).",
+            status.as_u16()
+        )));
     }
     response
         .json::<GraphQlResponse>()
         .await
-        .map_err(|_| "GitHub returned an unexpected response.".to_string())
+        .map_err(|_| GithubError::Other("GitHub returned an unexpected response.".into()))
+}
+
+/// When the current quota window resets, from GitHub's rate-limit response
+/// headers: `retry-after` counts seconds from now, `x-ratelimit-reset` is an
+/// absolute epoch timestamp.
+fn rate_limit_reset(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    let value = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+    };
+    if let Some(seconds) = value("retry-after") {
+        return Some(now_epoch_secs() + seconds);
+    }
+    value("x-ratelimit-reset")
+}
+
+pub fn now_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Folds a GraphQL-level error list into a single typed error. GitHub tags
+/// quota refusals with `"type": "RATE_LIMITED"`; anything else surfaces the
+/// first message verbatim.
+fn error_from_graphql(errors: Vec<GraphQlError>) -> GithubError {
+    if errors
+        .iter()
+        .any(|e| e.kind.as_deref() == Some("RATE_LIMITED"))
+    {
+        return GithubError::RateLimited {
+            reset_epoch_secs: None,
+        };
+    }
+    GithubError::Other(
+        errors
+            .into_iter()
+            .next()
+            .map(|e| format!("GitHub error: {}", e.message))
+            .unwrap_or_else(|| "GitHub returned an unexpected response.".into()),
+    )
+}
+
+/// Parses GitHub's ISO-8601 UTC timestamps ("2026-07-16T12:00:00Z") to epoch
+/// seconds. Hand-rolled for exactly this fixed format — GitHub never sends
+/// offsets or fractional seconds on `resetAt` — to avoid a date-time crate
+/// for one field. Returns `None` on anything malformed.
+fn rfc3339_utc_to_epoch_secs(iso: &str) -> Option<u64> {
+    let bytes = iso.as_bytes();
+    if bytes.len() != 20 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    if bytes[10] != b'T' || bytes[13] != b':' || bytes[16] != b':' || bytes[19] != b'Z' {
+        return None;
+    }
+    let num = |range: std::ops::Range<usize>| iso[range].parse::<i64>().ok();
+    let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (hour, minute, second) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    // Days-from-civil (Howard Hinnant's algorithm): days since 1970-01-01
+    // for a proleptic Gregorian date.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(days * 86_400 + hour * 3_600 + minute * 60 + second).ok()
 }
 
 /// Validates the token by asking GitHub who it belongs to. Returns the login.
 pub async fn validate_token(token: &str) -> Result<String, String> {
-    let response = graphql(token, "query { viewer { login } }", json!({})).await?;
+    let response = graphql(token, "query { viewer { login } }", json!({}))
+        .await
+        .map_err(String::from)?;
     if let Some(login) = response
         .data
         .as_ref()
@@ -105,12 +242,7 @@ pub async fn validate_token(token: &str) -> Result<String, String> {
     {
         return Ok(login.to_string());
     }
-    Err(response
-        .errors
-        .into_iter()
-        .next()
-        .map(|e| format!("GitHub error: {}", e.message))
-        .unwrap_or_else(|| "GitHub returned an unexpected response.".into()))
+    Err(error_from_graphql(response.errors).into())
 }
 
 /// Checks that `owner/name` exists and is accessible with this token.
@@ -121,7 +253,8 @@ pub async fn validate_repo(token: &str, owner: &str, name: &str) -> Result<Strin
         "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { nameWithOwner } }",
         json!({ "owner": owner, "name": name }),
     )
-    .await?;
+    .await
+    .map_err(String::from)?;
     if let Some(full_name) = response
         .data
         .as_ref()
@@ -139,12 +272,13 @@ pub async fn validate_repo(token: &str, owner: &str, name: &str) -> Result<Strin
             "{owner}/{name} was not found or is not accessible with this token."
         ));
     }
-    Err(response
-        .errors
-        .into_iter()
-        .next()
-        .map(|e| format!("GitHub error: {}", e.message))
-        .unwrap_or_else(|| "GitHub returned an unexpected response.".into()))
+    Err(error_from_graphql(response.errors).into())
+}
+
+/// A completed PR fetch plus the rate-limit budget GitHub reported with it.
+pub struct FetchedPrs {
+    pub prs: Vec<PullRequest>,
+    pub rate_limit: Option<RateLimit>,
 }
 
 /// Fetches open PRs for every `owner/name` in `repos` and classifies each
@@ -152,7 +286,7 @@ pub async fn validate_repo(token: &str, owner: &str, name: &str) -> Result<Strin
 /// `repository` fields); follow-up queries are issued only for repos whose
 /// PR list spills past [`PAGE_SIZE`]. Repos that have vanished or become
 /// inaccessible are skipped rather than failing the whole sync.
-pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<Vec<PullRequest>, String> {
+pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<FetchedPrs, GithubError> {
     // (owner, name, resume cursor); repos drop out once fully fetched.
     let mut pending: Vec<(String, String, Option<String>)> = repos
         .iter()
@@ -160,14 +294,17 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<Vec<PullReq
         .map(|(owner, name)| (owner.to_string(), name.to_string(), None))
         .collect();
     let mut prs = Vec::new();
+    let mut rate_limit = None;
 
     let mut rounds = 0;
     while !pending.is_empty() {
         rounds += 1;
         if rounds > 20 {
-            return Err("GitHub returned too many pages of pull requests.".into());
+            return Err(GithubError::Other(
+                "GitHub returned too many pages of pull requests.".into(),
+            ));
         }
-        let mut query = String::from("query { viewer { login } ");
+        let mut query = String::from("query { viewer { login } rateLimit { remaining resetAt } ");
         for (i, (owner, name, cursor)) in pending.iter().enumerate() {
             query.push_str(&repo_field(
                 &format!("r{i}"),
@@ -180,13 +317,13 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<Vec<PullReq
 
         let response = graphql(token, &query, json!({})).await?;
         let Some(data) = response.data else {
-            return Err(response
-                .errors
-                .into_iter()
-                .next()
-                .map(|e| format!("GitHub error: {}", e.message))
-                .unwrap_or_else(|| "GitHub returned an unexpected response.".into()));
+            return Err(error_from_graphql(response.errors));
         };
+        // Later pages overwrite: the budget after the final request is the
+        // one the sync loop plans around.
+        if let Some(limit) = collect_rate_limit(&data) {
+            rate_limit = Some(limit);
+        }
         let viewer = data
             .pointer("/viewer/login")
             .and_then(Value::as_str)
@@ -208,7 +345,23 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<Vec<PullReq
 
     // Newest first across all repos; ISO-8601 UTC timestamps sort lexically.
     prs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    Ok(prs)
+    Ok(FetchedPrs { prs, rate_limit })
+}
+
+/// Reads the `rateLimit` field out of a query response; `None` when the
+/// field is missing or malformed rather than failing the sync over it.
+fn collect_rate_limit(data: &Value) -> Option<RateLimit> {
+    let remaining = data
+        .pointer("/rateLimit/remaining")
+        .and_then(Value::as_u64)?;
+    let reset_epoch_secs = data
+        .pointer("/rateLimit/resetAt")
+        .and_then(Value::as_str)
+        .and_then(rfc3339_utc_to_epoch_secs);
+    Some(RateLimit {
+        remaining,
+        reset_epoch_secs,
+    })
 }
 
 /// Asks GitHub which of the given `owner/repo#number` PRs are merged, in one
@@ -218,7 +371,7 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<Vec<PullReq
 pub async fn fetch_merged_status(
     token: &str,
     keys: &[String],
-) -> Result<HashMap<String, String>, String> {
+) -> Result<HashMap<String, String>, GithubError> {
     let mut query = String::from("query { ");
     // Keys come from PRs the app itself fetched, so skipping a malformed one
     // drops corrupt data, not a real PR.
@@ -238,12 +391,7 @@ pub async fn fetch_merged_status(
 
     let response = graphql(token, &query, json!({})).await?;
     let Some(data) = response.data else {
-        return Err(response
-            .errors
-            .into_iter()
-            .next()
-            .map(|e| format!("GitHub error: {}", e.message))
-            .unwrap_or_else(|| "GitHub returned an unexpected response.".into()));
+        return Err(error_from_graphql(response.errors));
     };
     Ok(collect_merged(&data, &targets))
 }
@@ -687,6 +835,164 @@ mod tests {
             Some("2026-07-12T10:00:00Z")
         );
         assert!(!merged.contains_key("acme/widgets#8"));
+    }
+
+    #[test]
+    fn iso_timestamps_parse_to_epoch_seconds() {
+        assert_eq!(rfc3339_utc_to_epoch_secs("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(
+            rfc3339_utc_to_epoch_secs("2026-07-16T12:34:56Z"),
+            Some(1_784_205_296)
+        );
+        // Leap-year day.
+        assert_eq!(
+            rfc3339_utc_to_epoch_secs("2024-02-29T00:00:00Z"),
+            Some(1_709_164_800)
+        );
+    }
+
+    #[test]
+    fn malformed_timestamps_parse_to_none() {
+        for input in [
+            "",
+            "2026-07-16",
+            "2026-07-16 12:34:56Z",
+            "2026-07-16T12:34:56",
+            "2026-07-16T12:34:56.000Z",
+            "2026-13-01T00:00:00Z",
+            "2026-00-10T00:00:00Z",
+            "2026-01-32T00:00:00Z",
+            "2026-01-01T24:00:00Z",
+            "yyyy-mm-ddThh:mm:ssZ",
+        ] {
+            assert_eq!(rfc3339_utc_to_epoch_secs(input), None, "input: {input:?}");
+        }
+    }
+
+    #[test]
+    fn a_rate_limited_graphql_error_is_typed_as_rate_limited() {
+        let errors = vec![
+            GraphQlError {
+                message: "something else".into(),
+                kind: None,
+            },
+            GraphQlError {
+                message: "API rate limit exceeded".into(),
+                kind: Some("RATE_LIMITED".into()),
+            },
+        ];
+        assert_eq!(
+            error_from_graphql(errors),
+            GithubError::RateLimited {
+                reset_epoch_secs: None
+            }
+        );
+    }
+
+    #[test]
+    fn other_graphql_errors_surface_the_first_message() {
+        let errors = vec![GraphQlError {
+            message: "Something exploded".into(),
+            kind: Some("INTERNAL".into()),
+        }];
+        assert_eq!(
+            error_from_graphql(errors),
+            GithubError::Other("GitHub error: Something exploded".into())
+        );
+        assert_eq!(
+            error_from_graphql(Vec::new()),
+            GithubError::Other("GitHub returned an unexpected response.".into())
+        );
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        map
+    }
+
+    /// `retry-after` counts seconds from now, so it has to be resolved
+    /// against the clock rather than passed through as an epoch. It also
+    /// wins over `x-ratelimit-reset` when both arrive: it is GitHub's
+    /// explicit instruction for this particular response.
+    #[test]
+    fn retry_after_is_read_as_seconds_from_now_and_outranks_the_reset_header() {
+        let assert_roughly_a_minute_out = |pairs: &[(&str, &str)]| {
+            let before = now_epoch_secs();
+            let reset = rate_limit_reset(&headers(pairs)).unwrap();
+            assert!(
+                (before + 60..=now_epoch_secs() + 60).contains(&reset),
+                "expected roughly 60s from now, got {reset} for {pairs:?}"
+            );
+        };
+        assert_roughly_a_minute_out(&[("retry-after", "60")]);
+        assert_roughly_a_minute_out(&[("retry-after", "60"), ("x-ratelimit-reset", "1784205296")]);
+    }
+
+    /// `x-ratelimit-reset` is already an absolute epoch; passing it through
+    /// unchanged is the whole point of the split.
+    #[test]
+    fn the_reset_header_is_read_as_an_absolute_epoch() {
+        assert_eq!(
+            rate_limit_reset(&headers(&[("x-ratelimit-reset", "1784205296")])),
+            Some(1_784_205_296)
+        );
+    }
+
+    /// No usable reset time means the caller falls back to its own backoff;
+    /// a garbled header must not be mistaken for one.
+    #[test]
+    fn missing_or_unparsable_reset_headers_report_no_reset_time() {
+        assert_eq!(rate_limit_reset(&headers(&[])), None);
+        assert_eq!(
+            rate_limit_reset(&headers(&[("x-ratelimit-reset", "soon")])),
+            None
+        );
+    }
+
+    /// The popover shows this text verbatim; it must not leak internals like
+    /// HTTP status codes or reset timestamps.
+    #[test]
+    fn the_rate_limited_error_renders_a_user_facing_message() {
+        let error = GithubError::RateLimited {
+            reset_epoch_secs: Some(1_784_205_296),
+        };
+        assert_eq!(
+            error.to_string(),
+            "GitHub rate limit reached. Waiting for it to reset."
+        );
+    }
+
+    #[test]
+    fn the_rate_limit_budget_is_read_from_the_response() {
+        let data = json!({
+            "rateLimit": { "remaining": 4321, "resetAt": "1970-01-01T01:00:00Z" }
+        });
+        assert_eq!(
+            collect_rate_limit(&data),
+            Some(RateLimit {
+                remaining: 4321,
+                reset_epoch_secs: Some(3600),
+            })
+        );
+        assert_eq!(collect_rate_limit(&json!({})), None);
+    }
+
+    #[test]
+    fn a_missing_or_malformed_reset_time_still_reports_the_budget() {
+        let data = json!({ "rateLimit": { "remaining": 12, "resetAt": "not a time" } });
+        assert_eq!(
+            collect_rate_limit(&data),
+            Some(RateLimit {
+                remaining: 12,
+                reset_epoch_secs: None,
+            })
+        );
     }
 
     #[test]
