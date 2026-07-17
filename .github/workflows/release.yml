@@ -1,0 +1,191 @@
+name: release
+
+# Every push to main runs release-please, which only maintains a release PR.
+# Nothing is built until that PR is merged: the merge is the deliberate
+# "ship it" signal, and it alone marks a release created and gates the build.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Serialize runs: never cancel a release mid-build, but do not let two pushes
+# race release-please into a conflicting release PR or a double tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      # Manifest mode namespaces every per-package output by its path, so the
+      # root package's tag is '.--tag_name', not 'tag_name'. 'releases_created'
+      # (plural) is the aggregate flag for "any release was cut this run".
+      release_created: ${{ steps.release.outputs.releases_created }}
+      tag_name: ${{ steps.release.outputs['.--tag_name'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # When the Apple secrets are absent (e.g. a fork), signing is skipped
+      # rather than failing the release: the signing and verification steps
+      # below gate on this flag, leaving an ordinary unsigned build.
+      #
+      # Notarization is detected separately: the cert alone signs the bundle,
+      # but stapling and the Gatekeeper assessment only make sense once the
+      # notary credentials are also present. A cert-only setup must not run
+      # (and fail) the notarization checks.
+      - name: Detect whether Apple signing is configured
+        id: signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple signing secrets are not set; producing an unsigned build."
+          fi
+
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+            if [ -n "$APPLE_CERTIFICATE" ]; then
+              echo "::warning::Notarization credentials are not set; producing a signed but un-notarized build."
+            fi
+          fi
+
+      # Import the Developer ID cert into a throwaway keychain scoped to this
+      # runner. The keychain password is ephemeral, so it needs no secret; the
+      # partition list is what lets codesign use the key without an interactive
+      # unlock prompt. The signing identity is read back from the keychain
+      # rather than hardcoded, so a cert renewal needs no workflow change.
+      - name: Import the Apple Developer ID certificate
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          # No auto-lock timeout: the keychain must stay unlocked for the whole
+          # build, and a notarization round-trip can outlast any fixed timeout,
+          # which would relock it and break a later codesign call.
+          security set-keychain-settings build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain \
+            | grep 'Developer ID Application' | head -1 | awk -F'"' '{print $2}')"
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      # Universal so the download runs on both Apple silicon and Intel; a
+      # native build would only ever match the runner's own architecture.
+      # When APPLE_SIGNING_IDENTITY and the notarization credentials are set,
+      # tauri signs the bundle and notarizes it with Apple, then staples the
+      # ticket to the .app before it is zipped below. Absent those vars the
+      # bundle falls back to an ad-hoc signature.
+      - name: Build the universal app bundle
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      # Fail the release if a build we believe is signed did not actually come
+      # out signed and stapled: spctl assesses it exactly as Gatekeeper will on
+      # a colleague's Mac, so a regression here is caught before we ship. The
+      # Gatekeeper assessment and staple check only run when notarization was
+      # configured; a signed-but-not-notarized build would fail them by design.
+      - name: Verify the signature and notarization
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          NOTARIZED: ${{ steps.signing.outputs.notarize }}
+        run: |
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Grapevine.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if [ "$NOTARIZED" = "true" ]; then
+            spctl --assess -vvv --type exec "$APP"
+            xcrun stapler validate "$APP"
+          fi
+
+      # ditto, not zip: it preserves the symlinks and metadata inside an .app
+      # that a plain zip flattens, which corrupts the bundle on extraction.
+      - name: Zip the app bundle
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          ditto -c -k --keepParent \
+            "src-tauri/target/universal-apple-darwin/release/bundle/macos/Grapevine.app" \
+            "Grapevine-${TAG}-universal.zip"
+
+      - name: Attach the build to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$TAG" "Grapevine-${TAG}-universal.zip" --clobber
+
+      # Notes come from CHANGELOG.md, not from what release-please derived for
+      # the release body: the changelog is the copy a human may have rewritten
+      # in the release PR, and this is what carries that rewrite onto the
+      # release page. The install steps are appended from a static footer.
+      - name: Set the release notes from the changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          awk -v ver="$VERSION" '
+            index($0, "## [" ver "]") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+
+          # Never publish an empty release body: if the heading format ever
+          # drifts from what this expects, keep the generated notes instead.
+          if [ ! -s notes.md ]; then
+            echo "::warning::No '$VERSION' section found in CHANGELOG.md; falling back to the generated notes."
+            gh release view "$TAG" --json body -q .body > notes.md
+          fi
+
+          printf '\n' >> notes.md
+          cat .github/release-footer.md >> notes.md
+          gh release edit "$TAG" --notes-file notes.md

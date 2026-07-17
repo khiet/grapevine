@@ -1,5 +1,8 @@
 [package]
 name = "grapevine"
+# Not the app version, and not released: tauri.conf.json reads the bundle
+# version from package.json, the single source release automation bumps. This
+# crate is never published, so this value is inert. Leave it alone.
 version = "0.1.0"
 description = "Minimal macOS menubar GitHub PR watcher"
 authors = ["Khiet Le"]

@@ -11,6 +11,8 @@
     <br />
     <a href="#about">About</a>
     ·
+    <a href="#install">Install</a>
+    ·
     <a href="#building">Building</a>
     ·
     <a href="#contributing">Contributing</a>
@@ -46,9 +48,17 @@ Grapevine deliberately does not, and will not:
 - Run anywhere other than a Mac menubar. No iOS, no Android, no CLI.
 - Ship on the App Store.
 
-## Building
+## Install
 
-There are no prebuilt downloads. Grapevine is built from source.
+Download the `Grapevine-<version>-universal.zip` asset from the latest
+[release](https://github.com/khiet/grapevine/releases), unzip it, and drag
+`Grapevine.app` to `/Applications`. The build is universal and runs on both
+Apple silicon and Intel Macs.
+
+Releases are signed with an Apple Developer ID and notarized by Apple, so the
+first launch opens normally with no Gatekeeper warning.
+
+## Building
 
 ### Stack
 
@@ -73,6 +83,13 @@ npm install
 npm run tauri dev
 ```
 
+### Tests
+
+```sh
+npm test           # frontend
+npm run test:rust  # Rust
+```
+
 ### Production build
 
 ```sh
@@ -80,6 +97,15 @@ npm run tauri build
 ```
 
 The runnable app lands in `src-tauri/target/release/bundle/macos/Grapevine.app`.
+
+### Releasing
+
+Releases are automated with
+[release-please](https://github.com/googleapis/release-please). Merging a
+Conventional Commit to `main` updates a standing release PR that bumps the
+version in `package.json` and writes `CHANGELOG.md`; merging *that* PR tags the
+release and builds the universal app onto it. `package.json` is the only place
+the app version lives, so never bump a version by hand.
 
 ## Setup
 
