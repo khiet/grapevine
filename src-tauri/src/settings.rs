@@ -74,7 +74,7 @@ mod tests {
     use super::*;
 
     /// Settings files written before the poll interval existed have no such
-    /// field; they must load with the default rather than fail or read zero.
+    /// field, and must not load as zero.
     #[test]
     fn a_settings_file_without_a_poll_interval_gets_the_default() {
         let settings: Settings = serde_json::from_str("{}").unwrap();

@@ -41,11 +41,10 @@ pub fn from_pr(pr: &PullRequest, merged_at: String) -> MergedPr {
     }
 }
 
-/// Folds one sync's merge detections into the section: entries whose PR is
-/// open again leave (a reopened PR belongs to the open list; it re-enters
-/// here with a fresh timestamp if it merges again), and each newly merged
-/// PR replaces any older entry sharing its key. Returns true when the state
-/// changed and needs persisting.
+/// Folds one sync's merge detections into the section: a reopened PR leaves
+/// (it belongs to the open list, and re-enters here if it merges again), and
+/// each newly merged PR replaces any older entry sharing its key. Returns true
+/// when the state changed and needs persisting.
 pub fn apply(live: &[PullRequest], newly_merged: Vec<MergedPr>, state: &mut MergedState) -> bool {
     let live: HashSet<String> = live.iter().map(unread::key).collect();
     let before = state.len();

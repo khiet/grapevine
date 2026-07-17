@@ -160,9 +160,9 @@ body {
   text-align: left;
 }
 
-/* An accent tint, not a grey darken: the card is white on a #f2f2f7 window,
-   so any grey hover lands on the window colour and the row reads as a hole
-   punched through the card rather than as the highlight it is. */
+/* An accent tint, not a grey darken: the card is white on a #f2f2f7 window, so
+   a grey hover lands on the window colour and the row reads as a hole punched
+   through the card rather than as the highlight it is. */
 .pr-row:hover {
   background-color: rgba(10, 132, 255, 0.12);
 }
@@ -252,10 +252,9 @@ body {
   gap: 2px;
 }
 
-/* Title and timestamp share a line, Mail-style: the timestamp is pinned
-   right and never wraps, so recency scans down one edge. Its column is
-   fixed rather than content-sized — a long timestamp must not steal width
-   from the title, which is what gets clipped. */
+/* Title and timestamp share a line, Mail-style: the timestamp is pinned right
+   and never wraps, so recency scans down one edge. Its column is fixed rather
+   than content-sized so a long timestamp cannot steal width from the title. */
 .pr-title-row {
   display: grid;
   grid-template-columns: 1fr 52px;
@@ -310,9 +309,8 @@ body {
   gap: 12px;
 }
 
-/* One quiet line pinned under the list: sync recency on the left, the
-   current sync error (if any) clipped beside it with the full text in the
-   tooltip. Deliberately muted — status, not content. */
+/* One quiet line pinned under the list. Deliberately muted: status, not
+   content. */
 .sync-status {
   display: flex;
   align-items: baseline;
@@ -524,7 +522,6 @@ body {
   color: #8e8e93;
 }
 
-/* Guidance inside a card; the card's child separator draws the divider. */
 .settings-note {
   padding: 9px 11px;
   font-size: 11px;

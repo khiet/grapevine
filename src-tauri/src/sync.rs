@@ -23,8 +23,8 @@ const BACKOFF_BASE: Duration = Duration::from_secs(15);
 /// Ceiling for error backoff, so an extended outage still gets retried
 /// every few minutes rather than ever more rarely.
 const BACKOFF_CAP: Duration = Duration::from_secs(900);
-/// GitHub asks for at least a minute of quiet after a secondary rate limit;
-/// applied when GitHub rate-limits us without saying when the window resets.
+/// Floor for every rate-limited retry: GitHub asks for at least a minute of
+/// quiet after a secondary rate limit.
 const RATE_LIMIT_MIN_WAIT: Duration = Duration::from_secs(60);
 /// Margin past the documented reset moment, absorbing clock skew.
 const RESET_BUFFER: Duration = Duration::from_secs(5);
@@ -40,31 +40,27 @@ pub struct Snapshot {
     /// False until a sync has completed while configured; the UI uses this
     /// to tell "not set up yet" apart from "no open PRs".
     pub has_synced: bool,
-    /// When the last successful sync finished (epoch milliseconds), shown in
-    /// the popover footer. Survives failed syncs: it dates the list on show.
+    /// Epoch ms of the last successful sync. Survives failed syncs: it dates
+    /// the list the popover is still showing.
     pub last_sync_at: Option<u64>,
-    /// User-facing message of the most recent sync failure; cleared by the
-    /// next success.
+    /// User-facing message of the most recent failure; cleared by a success.
     pub sync_error: Option<String>,
 }
 
 #[derive(Default)]
 pub struct SyncState {
     pub snapshot: Mutex<Snapshot>,
-    /// Last-read watermarks; authoritative in memory, mirrored to disk on
-    /// every change so unread state survives restarts.
+    /// Both are authoritative in memory and mirrored to disk on every change,
+    /// so unread badges and the Merged section survive restarts.
     pub read_state: Mutex<unread::ReadState>,
-    /// Merged-but-not-dismissed PRs; authoritative in memory, mirrored to
-    /// disk on every change so the Merged section survives restarts.
     pub merged: Mutex<merged::MergedState>,
     /// Wakes the poll loop early, e.g. right after settings change.
     pub wake: Notify,
 }
 
-/// Spawns the background loop: sync now, then after a delay picked from the
-/// outcome — the configured poll interval normally, a backoff after errors,
-/// the documented reset after rate limiting — or whenever
-/// [`SyncState::wake`] is notified, whichever comes first.
+/// Spawns the background loop: sync now, then again after a delay picked from
+/// the outcome, or whenever [`SyncState::wake`] is notified, whichever comes
+/// first.
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     *app.state::<SyncState>().read_state.lock().unwrap() = unread::load(&app);
@@ -170,11 +166,9 @@ pub fn total_unread(prs: &[PullRequest]) -> u64 {
     prs.iter().map(|pr| pr.unread_count).sum()
 }
 
-/// The tray title for `total`, empty at zero to hide the badge.
-///
-/// Empty rather than `None`: tray-icon's macOS `set_title` skips the button
-/// entirely on `None` (no else branch), so passing it leaves the previous
-/// count sitting on the icon and a cleared badge never disappears.
+/// The tray title for `total`. Zero yields an empty string rather than `None`:
+/// tray-icon's macOS `set_title` skips the button entirely on `None`, stranding
+/// the last count on the icon so a cleared badge never disappears.
 fn tray_title(total: u64) -> String {
     if total > 0 {
         total.to_string()
@@ -183,8 +177,6 @@ fn tray_title(total: u64) -> String {
     }
 }
 
-/// Shows the total unread count next to the tray icon, or nothing at zero so
-/// the icon returns to its plain state.
 pub fn update_tray_count(app: &AppHandle, total: u64) {
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_title(Some(tray_title(total)));
@@ -281,8 +273,7 @@ async fn sync_once(app: &AppHandle) -> Outcome {
 }
 
 /// One sync's fetch: the open PRs, any tracked PRs that turned out to have
-/// merged since the previous sync, and the rate-limit budget GitHub
-/// reported.
+/// merged since the previous sync, and the budget GitHub reported.
 struct FetchResult {
     prs: Vec<PullRequest>,
     newly_merged: Vec<merged::MergedPr>,
@@ -308,11 +299,10 @@ async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
 }
 
 /// Finds tracked PRs that left the open set since the previous sync and asks
-/// GitHub which of them merged; PRs closed without merging are simply absent
-/// from the answer. A failed status query fails the whole sync, keeping the
-/// old snapshot so the departure is re-detected next round — a network blip
-/// never silently drops a merge. Merges that happen while the app is quit
-/// are missed entirely: the previous open set lives only in memory.
+/// GitHub which of them merged. A failed status query fails the whole sync,
+/// keeping the old snapshot so the departure is re-detected next round — a
+/// network blip never silently drops a merge. Merges that happen while the app
+/// is quit are missed entirely: the previous open set lives only in memory.
 async fn detect_merged(
     app: &AppHandle,
     token: &str,
@@ -351,8 +341,8 @@ fn departed_prs(
 }
 
 /// Turns GitHub's answer into section entries. A departed PR missing from
-/// `merged_at` was closed without merging (or is gone); it yields nothing
-/// and so disappears from the list silently.
+/// `merged_at` was closed without merging, so it yields nothing and
+/// disappears from the popover silently.
 fn merged_entries(
     departed: &[PullRequest],
     merged_at: &HashMap<String, String>,
@@ -406,10 +396,8 @@ mod tests {
         assert!(departed_prs(&prs, &prs, &repos).is_empty());
     }
 
-    /// Un-watching a repo drops its PRs from the fetch. They left because of
-    /// settings, not because they merged, so they must not reach the merged
-    /// check — otherwise removing a repo would spray its open PRs into the
-    /// Merged section.
+    /// Un-watching a repo drops its PRs from the fetch, so without this guard
+    /// removing a repo would spray its open PRs into the Merged section.
     #[test]
     fn prs_of_an_unwatched_repo_never_count_as_departed() {
         let previous = vec![pr("acme/widgets", 7), pr("acme/gadgets", 1)];
@@ -442,8 +430,7 @@ mod tests {
         assert_eq!(entries[0].merged_at, "2026-07-12T10:00:00Z");
     }
 
-    /// A PR closed without merging is absent from GitHub's answer, and must
-    /// vanish silently rather than land in the Merged section.
+    /// A PR closed without merging is absent from GitHub's answer.
     #[test]
     fn departed_prs_that_did_not_merge_yield_no_entry() {
         let departed = vec![pr("acme/widgets", 7)];
@@ -514,7 +501,7 @@ mod tests {
         );
     }
 
-    /// The footer treats null as "never synced" / "no error"; the fields
+    /// The footer reads null as "never synced" / "no error", so the fields
     /// must serialize as null rather than being omitted.
     #[test]
     fn absent_sync_status_serializes_as_nulls() {
@@ -534,7 +521,6 @@ mod tests {
         assert_eq!(delay_after_success(poll, Some(&limit), 1_000), poll);
     }
 
-    /// Nearly-spent budget: wait out the window instead of polling into it.
     #[test]
     fn a_depleted_budget_waits_for_the_reset() {
         let poll = Duration::from_secs(180);
@@ -580,8 +566,7 @@ mod tests {
         assert_eq!(delay(100), BACKOFF_CAP);
     }
 
-    /// GitHub asks for at least a minute of quiet after a secondary rate
-    /// limit; the first-failure backoff alone would retry after 15s.
+    /// The first-failure backoff alone would retry after 15s.
     #[test]
     fn a_rate_limited_failure_waits_at_least_a_minute() {
         assert_eq!(
@@ -603,9 +588,6 @@ mod tests {
         );
     }
 
-    /// Zero must produce an empty title, never `None`: tray-icon's macOS
-    /// `set_title` ignores `None`, which would strand the last count on the
-    /// icon after the badges clear.
     #[test]
     fn a_zero_total_clears_the_tray_title_instead_of_leaving_it() {
         assert_eq!(tray_title(0), "");

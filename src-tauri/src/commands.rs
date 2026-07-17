@@ -25,10 +25,10 @@ pub fn mark_all_read(app: AppHandle) -> Result<(), String> {
     mark(&app, None)
 }
 
-/// Moves the read watermark of the matching PR (or all PRs, for `None`) to
-/// its newest known activity, then pushes the cleared badges to the popover
-/// and the tray. Marking read is anchored to activity the app has actually
-/// seen: anything that lands on GitHub after this sync stays unread.
+/// Moves the read watermark of the matching PR (or all PRs, for `None`) to its
+/// newest known activity, then pushes the cleared badges to the popover and the
+/// tray. Marking read is anchored to activity the app has actually seen, so
+/// anything that lands on GitHub after this sync stays unread.
 fn mark(app: &AppHandle, only: Option<&str>) -> Result<(), String> {
     let state = app.state::<sync::SyncState>();
     let snapshot = {
@@ -94,9 +94,9 @@ pub async fn token_status(app: AppHandle) -> Result<TokenStatus, String> {
 #[derive(Serialize)]
 pub struct SavedToken {
     pub login: String,
-    /// User-facing notice about the token's granted scopes. Advisory only:
-    /// the token is already saved when this arrives, so a `public_repo`
-    /// token (which we recommend for public-only watching) still works.
+    /// Advisory only: the token is already saved when this arrives, so a
+    /// `public_repo` token (which we recommend for public-only watching)
+    /// still works.
     pub scope_warning: Option<String>,
 }
 
@@ -168,9 +168,7 @@ pub async fn get_poll_interval(app: AppHandle) -> Result<u64, String> {
     Ok(settings::load(&app)?.poll_interval_secs)
 }
 
-/// Saves the poll interval (clamped to the allowed range) and wakes the
-/// sync loop, so the new cadence is in force immediately — the loop reads
-/// the interval fresh when scheduling each round. Returns the stored value.
+/// Returns the value actually stored, which may have been clamped.
 #[tauri::command]
 pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String> {
     let secs = settings::clamp_poll_secs(secs);

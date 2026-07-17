@@ -5,16 +5,13 @@ use serde_json::{json, Value};
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
-/// A sync-path failure, split by what the sync loop should do about it:
-/// rate limiting waits for the documented reset, anything else retries with
-/// backoff. The `Display` form is the user-facing message shown in the
-/// popover and settings view.
+/// A sync-path failure, split by what the sync loop should do about it: rate
+/// limiting waits for the reset, anything else retries with backoff.
+/// `Display` renders the message the popover and settings view show.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GithubError {
-    /// GitHub explicitly refused for quota reasons (HTTP 403/429 or a
-    /// GraphQL RATE_LIMITED error). `reset_epoch_secs` is when the quota
-    /// window resets, when GitHub said so.
     RateLimited {
+        /// `None` when GitHub did not say when the window resets.
         reset_epoch_secs: Option<u64>,
     },
     Other(String),
@@ -45,14 +42,13 @@ pub struct RateLimit {
     pub reset_epoch_secs: Option<u64>,
 }
 
-/// PRs per page. GitHub caps connection page sizes at 100; 50 keeps the
-/// multi-repo query well under the node limit while rarely paginating.
+/// PRs per page. GitHub caps connections at 100; 50 keeps the multi-repo
+/// query well under the node limit while rarely paginating.
 const PAGE_SIZE: usize = 50;
 
-/// Recent comments/reviews fetched per PR for unread counting. Activity
-/// older than these windows can't be counted, so a badge caps out rather
-/// than being exact on unusually busy PRs — an acceptable trade against
-/// query size, since the watermark is baselined at first sight anyway.
+/// Recent comments/reviews fetched per PR for unread counting. Older activity
+/// cannot be counted, so badges cap out on unusually busy PRs — acceptable,
+/// since the watermark is baselined at first sight anyway.
 const COMMENT_PAGE: usize = 20;
 const REVIEW_PAGE: usize = 20;
 const REVIEW_COMMENT_PAGE: usize = 10;
@@ -73,19 +69,16 @@ pub struct PullRequest {
     pub url: String,
     pub repo: String,
     pub author: String,
-    /// Author's GitHub avatar URL; empty when the account was deleted. The
-    /// frontend loads it directly (no local cache) and falls back to a
-    /// placeholder on failure.
+    /// Author's GitHub avatar URL; empty when the account was deleted.
     pub avatar_url: String,
     pub created_at: String,
     pub updated_at: String,
     pub section: Section,
-    /// Comments/reviews newer than the PR's last-read watermark; computed by
-    /// the unread engine after fetch, always 0 straight out of this module.
+    /// Activity newer than the PR's last-read watermark; filled in by the
+    /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
-    /// Timestamps (ISO-8601 UTC, ascending) of recent comment/review
-    /// activity by people other than the viewer. Input to the unread
-    /// computation, not part of the frontend wire payload.
+    /// Recent comment/review timestamps (ISO-8601 UTC, ascending) by people
+    /// other than the viewer. Input to the unread computation.
     #[serde(skip)]
     pub activity: Vec<String>,
 }
@@ -104,8 +97,6 @@ struct GraphQlResponse {
     errors: Vec<GraphQlError>,
 }
 
-/// `Other` messages are user-facing strings: they surface as inline messages
-/// in the settings view and popover, so they must stand on their own.
 async fn graphql(
     token: &str,
     query: &str,
@@ -114,11 +105,9 @@ async fn graphql(
     Ok(graphql_with_scopes(token, query, variables).await?.0)
 }
 
-/// Like [`graphql`], but also reports the raw `X-OAuth-Scopes` response
-/// header: `None` when GitHub sent no such header (fine-grained PATs and App
-/// tokens, whose permissions are not scopes), `Some` with the verbatim value
-/// for classic tokens — an empty string when no scopes are ticked. Callers
-/// that don't care about scopes use [`graphql`].
+/// Like [`graphql`], but also reports the raw `X-OAuth-Scopes` header: `None`
+/// when GitHub sent none (fine-grained PATs and App tokens have permissions,
+/// not scopes), `Some` — possibly empty — for classic tokens.
 async fn graphql_with_scopes(
     token: &str,
     query: &str,
@@ -144,8 +133,8 @@ async fn graphql_with_scopes(
             "GitHub rejected the token. Check that it is valid and not expired.".into(),
         ));
     }
-    // 403 with a rate-limit header (primary limit exhausted) or 429
-    // (secondary limit) both mean "stop asking until the reset".
+    // Both are read as quota refusals: the primary limit answers 403, the
+    // secondary limit 429.
     if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS
     {
         return Err(GithubError::RateLimited {
@@ -169,9 +158,8 @@ async fn graphql_with_scopes(
     Ok((parsed, scopes))
 }
 
-/// When the current quota window resets, from GitHub's rate-limit response
-/// headers: `retry-after` counts seconds from now, `x-ratelimit-reset` is an
-/// absolute epoch timestamp.
+/// When the current quota window resets. `retry-after` counts seconds from
+/// now; `x-ratelimit-reset` is already an absolute epoch.
 fn rate_limit_reset(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     let value = |name: &str| {
         headers
@@ -192,9 +180,8 @@ pub fn now_epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Folds a GraphQL-level error list into a single typed error. GitHub tags
-/// quota refusals with `"type": "RATE_LIMITED"`; anything else surfaces the
-/// first message verbatim.
+/// Folds a GraphQL-level error list into one typed error. GitHub tags quota
+/// refusals with `"type": "RATE_LIMITED"`.
 fn error_from_graphql(errors: Vec<GraphQlError>) -> GithubError {
     if errors
         .iter()
@@ -213,10 +200,9 @@ fn error_from_graphql(errors: Vec<GraphQlError>) -> GithubError {
     )
 }
 
-/// Parses GitHub's ISO-8601 UTC timestamps ("2026-07-16T12:00:00Z") to epoch
-/// seconds. Hand-rolled for exactly this fixed format — GitHub never sends
-/// offsets or fractional seconds on `resetAt` — to avoid a date-time crate
-/// for one field. Returns `None` on anything malformed.
+/// Parses GitHub's fixed ISO-8601 UTC form ("2026-07-16T12:00:00Z") to epoch
+/// seconds; `None` on anything else. Hand-rolled to avoid a date-time crate
+/// for one field: GitHub never sends offsets or fractional seconds here.
 fn rfc3339_utc_to_epoch_secs(iso: &str) -> Option<u64> {
     let bytes = iso.as_bytes();
     if bytes.len() != 20 || bytes[4] != b'-' || bytes[7] != b'-' {
@@ -236,8 +222,8 @@ fn rfc3339_utc_to_epoch_secs(iso: &str) -> Option<u64> {
     {
         return None;
     }
-    // Days-from-civil (Howard Hinnant's algorithm): days since 1970-01-01
-    // for a proleptic Gregorian date.
+    // Days-from-civil (Howard Hinnant): days since 1970-01-01 for a
+    // proleptic Gregorian date.
     let y = if month <= 2 { year - 1 } else { year };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
@@ -254,17 +240,13 @@ pub struct ValidatedToken {
     pub scope_warning: Option<String>,
 }
 
-/// Warning for a token whose granted scopes cannot see private repositories.
+/// Warns when a token's granted scopes cannot see private repositories.
 ///
-/// `header` is the raw `X-OAuth-Scopes` response header. Absent (`None`) and
-/// empty are different and must not be conflated: absent means scopes are
-/// not this token's model at all — fine-grained PATs and App tokens carry
-/// permissions instead and may well read private repos, so warning would
-/// tell a working setup it is broken. Present but empty means a classic
-/// token minted with no scopes ticked — the broken-for-private-repos case
-/// this check exists to catch. Scopes match exactly after splitting on
-/// commas: a substring test for `repo` would match `public_repo` and
-/// suppress the warning for exactly the token that needs it.
+/// `header` is the raw `X-OAuth-Scopes` response header, where absent and
+/// empty mean opposite things: absent means the token has permissions rather
+/// than scopes (fine-grained PAT, App token) and may well read private repos,
+/// so warning would call a working setup broken; empty means a classic token
+/// minted with no scopes ticked, which is the case this exists to catch.
 fn scope_warning(header: Option<&str>) -> Option<String> {
     let scopes = header?;
     if scopes.split(',').any(|scope| scope.trim() == "repo") {
@@ -328,11 +310,10 @@ pub struct FetchedPrs {
     pub rate_limit: Option<RateLimit>,
 }
 
-/// Fetches open PRs for every `owner/name` in `repos` and classifies each
-/// into its popover section. All repos go into one query (as aliased
-/// `repository` fields); follow-up queries are issued only for repos whose
-/// PR list spills past [`PAGE_SIZE`]. Repos that have vanished or become
-/// inaccessible are skipped rather than failing the whole sync.
+/// Fetches open PRs for every `owner/name` in `repos` and classifies each into
+/// its popover section. All repos share one query as aliased `repository`
+/// fields; only repos spilling past [`PAGE_SIZE`] need a follow-up query.
+/// Vanished or inaccessible repos are skipped rather than failing the sync.
 pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<FetchedPrs, GithubError> {
     // (owner, name, resume cursor); repos drop out once fully fetched.
     let mut pending: Vec<(String, String, Option<String>)> = repos
@@ -395,8 +376,8 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<FetchedPrs,
     Ok(FetchedPrs { prs, rate_limit })
 }
 
-/// Reads the `rateLimit` field out of a query response; `None` when the
-/// field is missing or malformed rather than failing the sync over it.
+/// Reads the `rateLimit` field out of a response; `None` rather than failing
+/// the sync when it is missing or malformed.
 fn collect_rate_limit(data: &Value) -> Option<RateLimit> {
     let remaining = data
         .pointer("/rateLimit/remaining")
@@ -412,9 +393,8 @@ fn collect_rate_limit(data: &Value) -> Option<RateLimit> {
 }
 
 /// Asks GitHub which of the given `owner/repo#number` PRs are merged, in one
-/// aliased query. Returns merged keys mapped to their mergedAt; keys absent
-/// from the result were closed without merging, deleted, or are no longer
-/// accessible with this token.
+/// aliased query. Keys absent from the result were closed without merging,
+/// deleted, or are no longer accessible with this token.
 pub async fn fetch_merged_status(
     token: &str,
     keys: &[String],
@@ -459,9 +439,8 @@ fn merged_status_field(alias: &str, owner: &str, name: &str, number: u64) -> Str
     )
 }
 
-/// Reads the merged aliases back out of the response. A null repository or
-/// pullRequest (vanished, inaccessible) and an unmerged PR both mean "not
-/// merged" and are simply left out.
+/// Reads the merged aliases back out of the response. A vanished repository
+/// or PR and an unmerged PR both mean "not merged" and are left out.
 fn collect_merged(data: &Value, targets: &[(String, String)]) -> HashMap<String, String> {
     let mut merged = HashMap::new();
     for (alias, key) in targets {
@@ -531,8 +510,8 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .unwrap_or_default()
                 .to_string(),
             repo: repo_name.to_string(),
-            // A null author means the account was deleted; GitHub shows these
-            // as "ghost".
+            // A null author means a deleted account, which GitHub calls
+            // "ghost".
             author: node
                 .pointer("/author/login")
                 .and_then(Value::as_str)
@@ -567,11 +546,11 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         .map(String::from)
 }
 
-/// Gathers the timestamps of activity that counts as an "update" for unread
-/// purposes: issue comments, submitted reviews, and review comments — never
-/// commits or CI, which the query doesn't even fetch. The viewer's own
-/// activity is excluded (you have read what you wrote), as are PENDING
-/// reviews (invisible to everyone but their author until submitted).
+/// Gathers the timestamps of what counts as an "update" for unread purposes:
+/// issue comments, submitted reviews, and review comments — never commits or
+/// CI, which the query does not fetch. The viewer's own activity is excluded
+/// (you have read what you wrote), as are PENDING reviews (invisible to
+/// everyone but their author until submitted).
 fn collect_activity(node: &Value, viewer: &str) -> Vec<String> {
     let mut times = Vec::new();
     let by_other =
@@ -617,8 +596,8 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 
 /// Mine beats Participated: the author is always a participant, so order
 /// matters. Participants covers reviewers, commenters, and mentions;
-/// reviewRequests covers pending review requests, which don't count as
-/// participation until acted on.
+/// reviewRequests covers requests not yet acted on, which GitHub does not
+/// count as participation.
 fn section_for(node: &Value, viewer: &str) -> Section {
     if node.get("viewerDidAuthor").and_then(Value::as_bool) == Some(true) {
         return Section::Mine;
@@ -838,8 +817,8 @@ mod tests {
 
     #[test]
     fn commits_and_status_changes_never_reach_the_activity_list() {
-        // The query only asks for comments and reviews, so a node with
-        // neither yields no activity regardless of anything else on the PR.
+        // The query asks only for comments and reviews, so a node with
+        // neither can yield nothing whatever else happened on the PR.
         assert!(collect_activity(&pr_node(json!({})), "khiet").is_empty());
     }
 
@@ -891,7 +870,6 @@ mod tests {
             rfc3339_utc_to_epoch_secs("2026-07-16T12:34:56Z"),
             Some(1_784_205_296)
         );
-        // Leap-year day.
         assert_eq!(
             rfc3339_utc_to_epoch_secs("2024-02-29T00:00:00Z"),
             Some(1_709_164_800)
@@ -959,23 +937,21 @@ mod tests {
         assert_eq!(scope_warning(Some("repo")), None);
     }
 
-    /// `public_repo` must not satisfy the `repo` check: a substring match
-    /// would silently pass exactly the token the warning exists for.
+    /// Scopes are matched exactly after splitting on commas: a substring test
+    /// for `repo` would pass exactly the token the warning exists for.
     #[test]
     fn public_repo_does_not_count_as_repo() {
         assert!(scope_warning(Some("public_repo")).is_some());
         assert!(scope_warning(Some("public_repo, read:user")).is_some());
     }
 
-    /// Present-but-empty means a classic token minted with no scopes ticked;
-    /// it authenticates but can see no private repos.
+    /// A classic token minted with no scopes ticked.
     #[test]
     fn an_empty_scopes_header_warns() {
         assert!(scope_warning(Some("")).is_some());
     }
 
-    /// An absent header means a fine-grained or App token, which has
-    /// permissions rather than scopes and may read private repos just fine.
+    /// A fine-grained or App token, which may read private repos just fine.
     #[test]
     fn an_absent_scopes_header_does_not_warn() {
         assert_eq!(scope_warning(None), None);
@@ -992,10 +968,8 @@ mod tests {
         map
     }
 
-    /// `retry-after` counts seconds from now, so it has to be resolved
-    /// against the clock rather than passed through as an epoch. It also
-    /// wins over `x-ratelimit-reset` when both arrive: it is GitHub's
-    /// explicit instruction for this particular response.
+    /// `retry-after` is GitHub's instruction for this particular response, so
+    /// it outranks the standing `x-ratelimit-reset`.
     #[test]
     fn retry_after_is_read_as_seconds_from_now_and_outranks_the_reset_header() {
         let assert_roughly_a_minute_out = |pairs: &[(&str, &str)]| {
@@ -1010,8 +984,6 @@ mod tests {
         assert_roughly_a_minute_out(&[("retry-after", "60"), ("x-ratelimit-reset", "1784205296")]);
     }
 
-    /// `x-ratelimit-reset` is already an absolute epoch; passing it through
-    /// unchanged is the whole point of the split.
     #[test]
     fn the_reset_header_is_read_as_an_absolute_epoch() {
         assert_eq!(
@@ -1020,8 +992,7 @@ mod tests {
         );
     }
 
-    /// No usable reset time means the caller falls back to its own backoff;
-    /// a garbled header must not be mistaken for one.
+    /// No reset time means the caller falls back to its own backoff.
     #[test]
     fn missing_or_unparsable_reset_headers_report_no_reset_time() {
         assert_eq!(rate_limit_reset(&headers(&[])), None);
@@ -1031,8 +1002,7 @@ mod tests {
         );
     }
 
-    /// The popover shows this text verbatim; it must not leak internals like
-    /// HTTP status codes or reset timestamps.
+    /// The popover shows this verbatim, so it must not leak the reset epoch.
     #[test]
     fn the_rate_limited_error_renders_a_user_facing_message() {
         let error = GithubError::RateLimited {

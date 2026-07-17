@@ -30,8 +30,7 @@ export interface Snapshot {
   has_synced: boolean;
   /** Epoch ms of the last successful sync; null before the first one. */
   last_sync_at: number | null;
-  /** User-facing message of the most recent sync failure, if it is still
-   *  current; cleared by the next successful sync. */
+  /** User-facing message of the most recent failure; cleared by a success. */
   sync_error: string | null;
 }
 
@@ -88,7 +87,7 @@ export interface RepoGroup {
 
 // Groups ordered by their most recently updated PR, so the repo that just moved
 // leads; within a group the caller's order is preserved. An unparseable
-// updated_at sorts as the epoch rather than throwing the group to the end.
+// updated_at sorts as the epoch rather than throwing.
 export function groupByRepo(prs: PullRequest[]): RepoGroup[] {
   const groups = new Map<string, PullRequest[]>();
   for (const pr of prs) {
@@ -145,9 +144,9 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
   );
 }
 
-/* Two sibling buttons, not a dismiss nested inside the row button (invalid
-   HTML): the row opens the PR on github.com, the × removes the entry. No
-   mark_read here — merged PRs carry no unread state. */
+/* Two sibling buttons, not a dismiss nested inside the row button, which
+   would be invalid HTML. No mark_read here: merged PRs carry no unread
+   state. */
 function MergedRow({ pr }: { pr: MergedPr }) {
   return (
     <li className="pr-row-split">

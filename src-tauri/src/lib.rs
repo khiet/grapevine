@@ -19,9 +19,9 @@ mod sync;
 mod unread;
 
 /// When the popover was last hidden because it lost focus. Clicking the tray
-/// icon while the popover is open first blurs (and hides) it, then delivers
-/// the click; without this timestamp the click would instantly re-show the
-/// window, turning "click to dismiss" into a no-op.
+/// icon while the popover is open blurs it first, then delivers the click;
+/// without this timestamp the click would instantly re-show the window,
+/// turning "click to dismiss" into a no-op.
 struct LastAutoHide(Mutex<Option<Instant>>);
 
 fn toggle_popover(app: &tauri::AppHandle) {
@@ -93,8 +93,8 @@ pub fn run() {
 
             TrayIconBuilder::with_id("main")
                 // A dedicated glyph, not the app icon: template icons are
-                // alpha-only, and the colored app icon would flatten into an
-                // illegible block. tray-icon scales it to menubar height.
+                // alpha-only, so the colored app icon would flatten into an
+                // illegible block.
                 .icon(tauri::include_image!("icons/tray.png"))
                 .icon_as_template(true)
                 .menu(&menu)

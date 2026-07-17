@@ -12,16 +12,15 @@ interface SavedToken {
   scope_warning: string | null;
 }
 
-// GitHub's new-token page accepts these query parameters and arrives with
-// the scope pre-ticked and the description filled in. Undocumented GitHub
-// behaviour: if it silently stops working the link degrades to a plain
-// token page and the note copy carries the guidance alone.
+// The query parameters pre-tick the scope and fill the description. This is
+// undocumented GitHub behaviour, but degrades to a plain token page if it ever
+// stops working, leaving the note copy to carry the guidance alone.
 const CREATE_TOKEN_URL =
   "https://github.com/settings/tokens/new?scopes=repo&description=Grapevine";
 
-// Preset sync cadences; the backend accepts anything in 30s..1h, this is
-// just the curated menu. A hand-edited settings.json value outside the list
-// is appended as its own option so the select never lies about the state.
+// A curated menu, not the real bounds: the backend accepts anything in 30s..1h.
+// A hand-edited settings.json value outside the list is appended as its own
+// option so the select never lies about the stored state.
 const POLL_PRESETS = [60, 120, 180, 300, 600, 900, 1800, 3600];
 
 export function pollLabel(secs: number): string {
@@ -38,9 +37,8 @@ function SettingsView() {
   });
   const [tokenInput, setTokenInput] = useState("");
   const [tokenError, setTokenError] = useState("");
-  // Non-blocking scope notice from the last save; the token is stored even
-  // when this is set. Feedback on the save action only, so it does not
-  // reappear after a restart.
+  // Non-blocking: the token is stored even when this is set. Feedback on the
+  // save action only, so it does not reappear after a restart.
   const [tokenWarning, setTokenWarning] = useState("");
   const [tokenBusy, setTokenBusy] = useState(false);
 

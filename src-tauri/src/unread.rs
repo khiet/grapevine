@@ -17,10 +17,9 @@ pub fn key(pr: &PullRequest) -> String {
     format!("{}#{}", pr.repo, pr.number)
 }
 
-/// The watermark that makes `pr` fully read: its newest known activity, or
-/// its creation time when there is no discussion yet. Anchoring to GitHub's
-/// own timestamps (never the local clock) keeps the computation immune to
-/// clock skew.
+/// The watermark that makes `pr` fully read: its newest known activity, or its
+/// creation time when there is no discussion yet. Anchoring to GitHub's own
+/// timestamps rather than the local clock keeps this immune to clock skew.
 pub fn read_watermark(pr: &PullRequest) -> String {
     pr.activity
         .last()
@@ -28,11 +27,11 @@ pub fn read_watermark(pr: &PullRequest) -> String {
         .unwrap_or_else(|| pr.created_at.clone())
 }
 
-/// Computes each PR's unread count from the watermarks, mutating both sides:
-/// PRs seen for the first time are baselined as read at their newest
-/// activity, so a fresh install (or a lost state file) never flags
-/// historical discussion; watermarks for PRs that left the list are dropped.
-/// Returns true when the state changed and needs persisting.
+/// Computes each PR's unread count from the watermarks, mutating both sides.
+/// PRs seen for the first time are baselined as read at their newest activity,
+/// so a fresh install (or a lost state file) never flags historical discussion;
+/// watermarks for PRs that left the list are dropped. Returns true when the
+/// state changed and needs persisting.
 pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
     let live: HashSet<String> = prs.iter().map(key).collect();
     let before = state.len();
@@ -66,9 +65,9 @@ fn path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("unread.json"))
 }
 
-/// A missing or unreadable file degrades to an empty state instead of
-/// failing sync: baselining then re-marks everything read, which loses
-/// pending unread counts but never mis-flags old activity.
+/// A missing or unreadable file degrades to an empty state instead of failing
+/// sync: baselining then re-marks everything read, which loses pending unread
+/// counts but never mis-flags old activity.
 pub fn load(app: &tauri::AppHandle) -> ReadState {
     let Ok(path) = path(app) else {
         return ReadState::default();
