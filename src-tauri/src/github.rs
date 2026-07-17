@@ -270,7 +270,7 @@ fn scope_warning(header: Option<&str>) -> Option<String> {
     if scopes.split(',').any(|scope| scope.trim() == "repo") {
         return None;
     }
-    Some("This token has no repo scope — private repositories won't be visible.".into())
+    Some("This token has no repo scope, so private repositories won't be visible.".into())
 }
 
 /// Validates the token by asking GitHub who it belongs to.

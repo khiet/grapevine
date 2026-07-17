@@ -176,9 +176,9 @@ function SettingsView() {
             >
               Create one on GitHub
             </button>
-            . <code>repo</code> grants read and write access to all your
-            private repositories — Grapevine only ever reads. If you watch
-            public repositories only, <code>public_repo</code> is enough.
+            . <strong>repo</strong> grants read and write access to all your
+            private repositories; Grapevine only ever reads. If you watch
+            public repositories only, <strong>public_repo</strong> is enough.
           </p>
         </div>
         {tokenError && <p className="settings-error">{tokenError}</p>}

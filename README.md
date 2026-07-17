@@ -90,7 +90,7 @@ Once the app is running, open the popover and go to settings.
    page](https://github.com/settings/tokens/new?scopes=repo&description=Grapevine)
    with `repo` pre-ticked and the description prefilled. `repo` is what covers
    private repos, but note that it grants read *and write* access to all of
-   your private repositories — Grapevine only ever reads. If you only watch
+   your private repositories; Grapevine only ever reads. If you only watch
    public repos, `public_repo` is the tighter choice.
 2. Paste the token into settings. Grapevine stores it in the macOS Keychain and
    never writes it to `settings.json`. Saving checks the scopes GitHub actually
