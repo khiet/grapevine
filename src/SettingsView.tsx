@@ -1,10 +1,23 @@
 import { FormEvent, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 interface TokenStatus {
   has_token: boolean;
   login: string | null;
 }
+
+interface SavedToken {
+  login: string;
+  scope_warning: string | null;
+}
+
+// GitHub's new-token page accepts these query parameters and arrives with
+// the scope pre-ticked and the description filled in. Undocumented GitHub
+// behaviour: if it silently stops working the link degrades to a plain
+// token page and the note copy carries the guidance alone.
+const CREATE_TOKEN_URL =
+  "https://github.com/settings/tokens/new?scopes=repo&description=Grapevine";
 
 // Preset sync cadences; the backend accepts anything in 30s..1h, this is
 // just the curated menu. A hand-edited settings.json value outside the list
@@ -25,6 +38,10 @@ function SettingsView() {
   });
   const [tokenInput, setTokenInput] = useState("");
   const [tokenError, setTokenError] = useState("");
+  // Non-blocking scope notice from the last save; the token is stored even
+  // when this is set. Feedback on the save action only, so it does not
+  // reappear after a restart.
+  const [tokenWarning, setTokenWarning] = useState("");
   const [tokenBusy, setTokenBusy] = useState(false);
 
   const [repos, setRepos] = useState<string[]>([]);
@@ -69,9 +86,11 @@ function SettingsView() {
     event.preventDefault();
     setTokenBusy(true);
     setTokenError("");
+    setTokenWarning("");
     try {
-      const login = await invoke<string>("save_token", { token: tokenInput });
-      setTokenStatus({ has_token: true, login });
+      const saved = await invoke<SavedToken>("save_token", { token: tokenInput });
+      setTokenStatus({ has_token: true, login: saved.login });
+      setTokenWarning(saved.scope_warning ?? "");
       setTokenInput("");
     } catch (error) {
       setTokenError(String(error));
@@ -82,6 +101,7 @@ function SettingsView() {
 
   async function removeToken() {
     setTokenError("");
+    setTokenWarning("");
     try {
       await invoke("clear_token");
       setTokenStatus({ has_token: false, login: null });
@@ -145,8 +165,24 @@ function SettingsView() {
               {tokenBusy ? "Checking…" : "Save"}
             </button>
           </form>
+          {/* Always visible, not just when no token is saved: tokens expire
+              every 30 days by default and get re-minted. */}
+          <p className="settings-note">
+            Need a token?{" "}
+            <button
+              type="button"
+              className="settings-link"
+              onClick={() => openUrl(CREATE_TOKEN_URL).catch(() => {})}
+            >
+              Create one on GitHub
+            </button>
+            . <strong>repo</strong> grants read and write access to all your
+            private repositories; Grapevine only ever reads. If you watch
+            public repositories only, <strong>public_repo</strong> is enough.
+          </p>
         </div>
         {tokenError && <p className="settings-error">{tokenError}</p>}
+        {tokenWarning && <p className="settings-warning">{tokenWarning}</p>}
       </section>
 
       <section className="settings-section">

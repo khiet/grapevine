@@ -111,6 +111,19 @@ async fn graphql(
     query: &str,
     variables: Value,
 ) -> Result<GraphQlResponse, GithubError> {
+    Ok(graphql_with_scopes(token, query, variables).await?.0)
+}
+
+/// Like [`graphql`], but also reports the raw `X-OAuth-Scopes` response
+/// header: `None` when GitHub sent no such header (fine-grained PATs and App
+/// tokens, whose permissions are not scopes), `Some` with the verbatim value
+/// for classic tokens — an empty string when no scopes are ticked. Callers
+/// that don't care about scopes use [`graphql`].
+async fn graphql_with_scopes(
+    token: &str,
+    query: &str,
+    variables: Value,
+) -> Result<(GraphQlResponse, Option<String>), GithubError> {
     let client = reqwest::Client::builder()
         .user_agent("grapevine")
         .build()
@@ -145,10 +158,15 @@ async fn graphql(
             status.as_u16()
         )));
     }
-    response
+    let scopes = response
+        .headers()
+        .get("x-oauth-scopes")
+        .map(|v| v.to_str().unwrap_or_default().to_string());
+    let parsed = response
         .json::<GraphQlResponse>()
         .await
-        .map_err(|_| GithubError::Other("GitHub returned an unexpected response.".into()))
+        .map_err(|_| GithubError::Other("GitHub returned an unexpected response.".into()))?;
+    Ok((parsed, scopes))
 }
 
 /// When the current quota window resets, from GitHub's rate-limit response
@@ -229,9 +247,35 @@ fn rfc3339_utc_to_epoch_secs(iso: &str) -> Option<u64> {
     u64::try_from(days * 86_400 + hour * 3_600 + minute * 60 + second).ok()
 }
 
-/// Validates the token by asking GitHub who it belongs to. Returns the login.
-pub async fn validate_token(token: &str) -> Result<String, String> {
-    let response = graphql(token, "query { viewer { login } }", json!({}))
+/// Outcome of a successful token validation: who the token belongs to, plus
+/// an optional user-facing warning about the scopes it was granted.
+pub struct ValidatedToken {
+    pub login: String,
+    pub scope_warning: Option<String>,
+}
+
+/// Warning for a token whose granted scopes cannot see private repositories.
+///
+/// `header` is the raw `X-OAuth-Scopes` response header. Absent (`None`) and
+/// empty are different and must not be conflated: absent means scopes are
+/// not this token's model at all — fine-grained PATs and App tokens carry
+/// permissions instead and may well read private repos, so warning would
+/// tell a working setup it is broken. Present but empty means a classic
+/// token minted with no scopes ticked — the broken-for-private-repos case
+/// this check exists to catch. Scopes match exactly after splitting on
+/// commas: a substring test for `repo` would match `public_repo` and
+/// suppress the warning for exactly the token that needs it.
+fn scope_warning(header: Option<&str>) -> Option<String> {
+    let scopes = header?;
+    if scopes.split(',').any(|scope| scope.trim() == "repo") {
+        return None;
+    }
+    Some("This token has no repo scope, so private repositories won't be visible.".into())
+}
+
+/// Validates the token by asking GitHub who it belongs to.
+pub async fn validate_token(token: &str) -> Result<ValidatedToken, String> {
+    let (response, scopes) = graphql_with_scopes(token, "query { viewer { login } }", json!({}))
         .await
         .map_err(String::from)?;
     if let Some(login) = response
@@ -240,7 +284,10 @@ pub async fn validate_token(token: &str) -> Result<String, String> {
         .and_then(|d| d.pointer("/viewer/login"))
         .and_then(Value::as_str)
     {
-        return Ok(login.to_string());
+        return Ok(ValidatedToken {
+            login: login.to_string(),
+            scope_warning: scope_warning(scopes.as_deref()),
+        });
     }
     Err(error_from_graphql(response.errors).into())
 }
@@ -903,6 +950,35 @@ mod tests {
             error_from_graphql(Vec::new()),
             GithubError::Other("GitHub returned an unexpected response.".into())
         );
+    }
+
+    #[test]
+    fn a_classic_token_with_repo_gets_no_scope_warning() {
+        // The live header format is comma-space separated.
+        assert_eq!(scope_warning(Some("read:user, repo")), None);
+        assert_eq!(scope_warning(Some("repo")), None);
+    }
+
+    /// `public_repo` must not satisfy the `repo` check: a substring match
+    /// would silently pass exactly the token the warning exists for.
+    #[test]
+    fn public_repo_does_not_count_as_repo() {
+        assert!(scope_warning(Some("public_repo")).is_some());
+        assert!(scope_warning(Some("public_repo, read:user")).is_some());
+    }
+
+    /// Present-but-empty means a classic token minted with no scopes ticked;
+    /// it authenticates but can see no private repos.
+    #[test]
+    fn an_empty_scopes_header_warns() {
+        assert!(scope_warning(Some("")).is_some());
+    }
+
+    /// An absent header means a fine-grained or App token, which has
+    /// permissions rather than scopes and may read private repos just fine.
+    #[test]
+    fn an_absent_scopes_header_does_not_warn() {
+        assert_eq!(scope_warning(None), None);
     }
 
     fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
