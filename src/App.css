@@ -514,8 +514,21 @@ body {
   color: #d70015;
 }
 
+/* Amber like .sync-error: the token saved and works for public repos, so
+   this is a caution, not a failure. */
+.settings-warning {
+  color: #c76b00;
+}
+
 .settings-empty {
   color: #8e8e93;
+}
+
+/* Guidance inside a card; the card's child separator draws the divider. */
+.settings-note {
+  padding: 9px 11px;
+  font-size: 11px;
+  color: #6e6e73;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -639,8 +652,16 @@ body {
     color: #ff453a;
   }
 
+  .settings-warning {
+    color: #ffb340;
+  }
+
   .settings-empty {
     color: #7c7c80;
+  }
+
+  .settings-note {
+    color: #98989d;
   }
 
   .sync-status {

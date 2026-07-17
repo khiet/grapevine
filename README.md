@@ -85,14 +85,17 @@ The runnable app lands in `src-tauri/target/release/bundle/macos/Grapevine.app`.
 
 Once the app is running, open the popover and go to settings.
 
-1. Create a [personal access token
-   (classic)](https://github.com/settings/tokens) on GitHub. Grant it `repo` if
-   you want to watch private repos, or just `public_repo` if you only watch
-   public ones. `repo` is a broad scope that carries read and write access to
-   all of your private repositories; `public_repo` is the tighter choice when
-   it is enough for you.
+1. Create a personal access token (classic) on GitHub. The "Create one on
+   GitHub" link in settings opens [the new-token
+   page](https://github.com/settings/tokens/new?scopes=repo&description=Grapevine)
+   with `repo` pre-ticked and the description prefilled. `repo` is what covers
+   private repos, but note that it grants read *and write* access to all of
+   your private repositories — Grapevine only ever reads. If you only watch
+   public repos, `public_repo` is the tighter choice.
 2. Paste the token into settings. Grapevine stores it in the macOS Keychain and
-   never writes it to `settings.json`.
+   never writes it to `settings.json`. Saving checks the scopes GitHub actually
+   granted: a classic token without `repo` gets a notice that private
+   repositories won't be visible, but the token still saves.
 3. Add repos as `owner/name`, one at a time.
 
 Fine-grained tokens are not recommended: they are scoped to a single resource

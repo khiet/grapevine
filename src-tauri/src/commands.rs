@@ -91,19 +91,31 @@ pub async fn token_status(app: AppHandle) -> Result<TokenStatus, String> {
     Ok(TokenStatus { has_token, login })
 }
 
+#[derive(Serialize)]
+pub struct SavedToken {
+    pub login: String,
+    /// User-facing notice about the token's granted scopes. Advisory only:
+    /// the token is already saved when this arrives, so a `public_repo`
+    /// token (which we recommend for public-only watching) still works.
+    pub scope_warning: Option<String>,
+}
+
 #[tauri::command]
-pub async fn save_token(app: AppHandle, token: String) -> Result<String, String> {
+pub async fn save_token(app: AppHandle, token: String) -> Result<SavedToken, String> {
     let token = token.trim().to_string();
     if token.is_empty() {
         return Err("Paste a token first.".into());
     }
-    let login = github::validate_token(&token).await?;
+    let validated = github::validate_token(&token).await?;
     keychain::store(&token)?;
     let mut current = settings::load(&app)?;
-    current.github_login = Some(login.clone());
+    current.github_login = Some(validated.login.clone());
     settings::save(&app, &current)?;
     request_sync(&app);
-    Ok(login)
+    Ok(SavedToken {
+        login: validated.login,
+        scope_warning: validated.scope_warning,
+    })
 }
 
 #[tauri::command]
