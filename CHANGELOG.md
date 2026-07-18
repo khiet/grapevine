@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/khiet/grapevine/compare/grapevine-v0.4.0...grapevine-v0.5.0) (2026-07-18)
+
+
+### Features
+
+* replace header title with a filter search bar ([#23](https://github.com/khiet/grapevine/issues/23)) ([b65041c](https://github.com/khiet/grapevine/commit/b65041cb812d5e0754a2bd14a683cfaebb9eddb9))
+
 ## [0.4.0](https://github.com/khiet/grapevine/compare/grapevine-v0.3.0...grapevine-v0.4.0) (2026-07-18)
 
 
