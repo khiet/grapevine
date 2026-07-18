@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0](https://github.com/khiet/grapevine/compare/grapevine-v0.3.0...grapevine-v0.4.0) (2026-07-18)
+
+
+### Features
+
+* increase popover height to 680px for better content visibility ([80bcb7f](https://github.com/khiet/grapevine/commit/80bcb7fe261665a2876146f92e569dc04c864634))
+* list launch-at-login under Open at Login via SMAppService ([36577b0](https://github.com/khiet/grapevine/commit/36577b065aa27bfadcc800e89c006d6a9f30c121))
+* list launch-at-login under Open at Login via SMAppService ([94786c3](https://github.com/khiet/grapevine/commit/94786c34de80b405a70b3164cad6818311edbe19))
+
 ## [0.3.0](https://github.com/khiet/grapevine/compare/grapevine-v0.2.0...grapevine-v0.3.0) (2026-07-18)
 
 
