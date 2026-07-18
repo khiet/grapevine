@@ -102,7 +102,7 @@ pub fn save(app: &tauri::AppHandle, state: &MergedState) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{CiStatus, Section};
+    use crate::github::Section;
 
     fn pr(repo: &str, number: u64) -> PullRequest {
         PullRequest {
@@ -116,7 +116,8 @@ mod tests {
             created_at: "2026-07-01T00:00:00Z".into(),
             updated_at: "2026-07-01T00:00:00Z".into(),
             section: Section::All,
-            ci_status: CiStatus::None,
+            blocked_reasons: vec![],
+            is_draft: false,
             unread_count: 0,
             activity: vec![],
         }

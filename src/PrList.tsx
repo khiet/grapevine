@@ -12,10 +12,27 @@ export interface PullRequest {
   created_at: string;
   updated_at: string;
   section: "mine" | "participated" | "all";
-  /** Head commit's CI rollup. Only "failing" is rendered; the rest, including
-   * "none" (no checks configured), leave the row undecorated. */
-  ci_status: "passing" | "failing" | "pending" | "none";
+  /** Why the PR is blocked, already in tooltip order; empty means no dot.
+   * Composed at the Rust boundary — the row only maps keys to labels. */
+  blocked_reasons: BlockedReason[];
+  /** Drafts render a neutral pill; the backend suppresses their dot. */
+  is_draft: boolean;
   unread_count: number;
+}
+
+export type BlockedReason = "conflict" | "ci" | "review";
+
+/* Neutral PR-property wording, deliberately not "you must act": the section
+   the row sits in supplies the "is this mine to fix?" context. */
+const BLOCKED_LABELS: Record<BlockedReason, string> = {
+  conflict: "Merge conflict",
+  ci: "CI failing",
+  review: "Changes requested",
+};
+
+// The dot's tooltip: every active reason, in the backend's fixed order.
+export function blockedTitle(reasons: BlockedReason[]): string {
+  return reasons.map((reason) => BLOCKED_LABELS[reason]).join("; ");
 }
 
 export interface MergedPr {
@@ -170,16 +187,21 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
               {showRepo ? `${pr.repo} #${pr.number}` : `#${pr.number}`}
             </span>
             <span className="pr-author">@{pr.author}</span>
-            {/* A single mark for a broken build. Passing and pending stay
-                undecorated so a quiet row keeps meaning "nothing needs you".
+            {/* A state marker, not an alert: drafts have their blocked dot
+                suppressed by the backend, and this pill explains that
+                silence. Grey, so the dots keep meaning "something is stuck". */}
+            {pr.is_draft && <span className="pr-draft">Draft</span>}
+            {/* A single mark for a blocked PR (merge conflict, failing CI,
+                changes requested). In-flight and healthy states stay
+                undecorated so a quiet row keeps meaning "nothing is stuck".
                 Distinct from the red unread badge in hue and meaning: orange
-                here says "your build is broken", red there says "someone
-                spoke". PAVE-3615 reuses this same dot for "PR is blocked". */}
-            {pr.ci_status === "failing" && (
+                here says "this PR is blocked", red there says "someone
+                spoke". */}
+            {pr.blocked_reasons.length > 0 && (
               <span
-                className="pr-ci"
-                title="Checks failing"
-                aria-label="Checks failing"
+                className="pr-blocked"
+                data-tip={blockedTitle(pr.blocked_reasons)}
+                aria-label={blockedTitle(pr.blocked_reasons)}
               />
             )}
           </span>

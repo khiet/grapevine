@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  blockedTitle,
   formatLastSync,
   formatUpdated,
   groupByRepo,
@@ -60,7 +61,8 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   created_at: "2026-07-10T12:00:00Z",
   updated_at: "2026-07-11T09:30:00Z",
   section: "all",
-  ci_status: "none",
+  blocked_reasons: [],
+  is_draft: false,
   unread_count,
 });
 
@@ -118,4 +120,13 @@ test("an unparseable timestamp sinks its group instead of throwing", () => {
 
 test("an empty list produces no groups", () => {
   expect(groupByRepo([])).toEqual([]);
+});
+
+// The keys are the wire contract with the Rust BlockedReason enum; the labels
+// are the tooltip copy, kept neutral (a PR property, never "you must act").
+test("the dot's tooltip names every reason in the backend's order", () => {
+  expect(blockedTitle(["conflict", "ci", "review"])).toBe(
+    "Merge conflict; CI failing; Changes requested",
+  );
+  expect(blockedTitle(["ci"])).toBe("CI failing");
 });
