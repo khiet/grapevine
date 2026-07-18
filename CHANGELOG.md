@@ -8,14 +8,12 @@
 * **github,ui:** blocked-PR dot and draft pill on the PR row ([9d15892](https://github.com/khiet/grapevine/commit/9d158925efde6910378e08163df7168229f8f990))
 * **github:** CI status indicator on the PR row ([4d3146a](https://github.com/khiet/grapevine/commit/4d3146a9decb8659f5bbaf28b8e20a162cae497c))
 * **github:** show organization avatar badge on each PR row ([388a018](https://github.com/khiet/grapevine/commit/388a018d0b5b7fe3a0671c5a7b5aa65e64cd9de8))
-* show the organization avatar on each PR row ([7eb0320](https://github.com/khiet/grapevine/commit/7eb03204a5b576f2f01dfb2fb64b359c8d8151e5))
 * **ui:** point the blocked-dot tooltip at the dot from its left ([d2f181e](https://github.com/khiet/grapevine/commit/d2f181e03a051f925aaaacfad9819d2664955e0d))
 * **ui:** show the blocked-dot tooltip after 200ms instead of the native delay ([c0b6d31](https://github.com/khiet/grapevine/commit/c0b6d317975110c177ba57db6e9aaf8375cdd332))
 
 
 ### Bug Fixes
 
-* **github:** order PRs by updated_at instead of created_at ([53e838c](https://github.com/khiet/grapevine/commit/53e838c4cf2834dd7df0ce2cf544f40bb01c487a))
 * **github:** order PRs by updated_at instead of created_at ([23e2f3d](https://github.com/khiet/grapevine/commit/23e2f3daf61be5f0080989a8119ad6ab433728c0))
 
 ## [0.2.0](https://github.com/khiet/grapevine/compare/grapevine-v0.1.0...grapevine-v0.2.0) (2026-07-17)
