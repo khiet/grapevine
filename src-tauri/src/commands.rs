@@ -180,12 +180,16 @@ pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String>
 
 #[tauri::command]
 pub fn get_launch_at_login() -> Result<bool, String> {
-    use objc2_service_management::{SMAppService, SMAppServiceStatus};
+    let status = unsafe { objc2_service_management::SMAppService::mainAppService().status() };
+    Ok(login_item_reports_on(status))
+}
 
-    let status = unsafe { SMAppService::mainAppService().status() };
-    // RequiresApproval means registered but pending the user's consent in
-    // System Settings; the app's intent is "on", so report it as enabled.
-    Ok(status == SMAppServiceStatus::Enabled || status == SMAppServiceStatus::RequiresApproval)
+/// The settings toggle reflects the app's intent, not raw system state:
+/// RequiresApproval means registered but pending the user's consent in
+/// System Settings, so it still reports as on.
+fn login_item_reports_on(status: objc2_service_management::SMAppServiceStatus) -> bool {
+    use objc2_service_management::SMAppServiceStatus;
+    status == SMAppServiceStatus::Enabled || status == SMAppServiceStatus::RequiresApproval
 }
 
 #[tauri::command]
@@ -221,7 +225,27 @@ fn parse_repo_name(input: &str) -> Result<(&str, &str), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_repo_name;
+    use super::{login_item_reports_on, parse_repo_name};
+    use objc2_service_management::SMAppServiceStatus;
+
+    #[test]
+    fn an_enabled_login_item_reports_on() {
+        assert!(login_item_reports_on(SMAppServiceStatus::Enabled));
+    }
+
+    /// A fresh registration sits in RequiresApproval until the user consents
+    /// in System Settings; reporting it as off would make the toggle appear
+    /// to bounce back right after being switched on.
+    #[test]
+    fn a_login_item_awaiting_user_approval_still_reports_on() {
+        assert!(login_item_reports_on(SMAppServiceStatus::RequiresApproval));
+    }
+
+    #[test]
+    fn an_unregistered_login_item_reports_off() {
+        assert!(!login_item_reports_on(SMAppServiceStatus::NotRegistered));
+        assert!(!login_item_reports_on(SMAppServiceStatus::NotFound));
+    }
 
     #[test]
     fn splits_owner_and_repo() {
