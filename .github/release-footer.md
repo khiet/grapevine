@@ -1,6 +1,6 @@
 ## Install
 
-Download the `Grapevine-<version>-universal.zip` asset below, unzip it, and drag
+Download the `Grapevine-v<version>-universal.zip` asset below, unzip it, and drag
 `Grapevine.app` to `/Applications`.
 
 The app is signed with an Apple Developer ID and notarized by Apple, so it opens
