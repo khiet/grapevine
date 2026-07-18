@@ -21,11 +21,12 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      # Manifest mode namespaces every per-package output by its path, so the
-      # root package's tag is '.--tag_name', not 'tag_name'. 'releases_created'
-      # (plural) is the aggregate flag for "any release was cut this run".
+      # 'releases_created' (plural) is the aggregate flag for "any release was
+      # cut this run". The tag is not exported here: its per-package output key
+      # is namespaced by path and came back empty on an action re-run, silently
+      # blanking the tag and breaking the upload. The build derives the tag
+      # itself instead (see "Resolve the release tag").
       release_created: ${{ steps.release.outputs.releases_created }}
-      tag_name: ${{ steps.release.outputs['.--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -54,6 +55,18 @@ jobs:
           workspaces: src-tauri
 
       - run: npm ci
+
+      # Derive the tag from the manifest and config rather than a release-please
+      # action output: the per-package output key is namespaced by path and
+      # came back empty on an action re-run, which blanked the tag and broke the
+      # upload. This mirrors release-please's own tag format,
+      # '<package-name>-v<version>', and is set once for every step below.
+      - name: Resolve the release tag
+        run: |
+          NAME="$(jq -r '.packages["."]["package-name"]' release-please-config.json)"
+          VERSION="$(jq -r '."."' .release-please-manifest.json)"
+          echo "TAG=${NAME}-v${VERSION}" >> "$GITHUB_ENV"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
 
       # When the Apple secrets are absent (e.g. a fork), signing is skipped
       # rather than failing the release: the signing and verification steps
@@ -150,8 +163,6 @@ jobs:
       # ditto, not zip: it preserves the symlinks and metadata inside an .app
       # that a plain zip flattens, which corrupts the bundle on extraction.
       - name: Zip the app bundle
-        env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           ditto -c -k --keepParent \
             "src-tauri/target/universal-apple-darwin/release/bundle/macos/Grapevine.app" \
@@ -160,7 +171,6 @@ jobs:
       - name: Attach the build to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: gh release upload "$TAG" "Grapevine-${TAG}-universal.zip" --clobber
 
       # Notes come from CHANGELOG.md, not from what release-please derived for
@@ -170,9 +180,7 @@ jobs:
       - name: Set the release notes from the changelog
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          VERSION="${TAG#v}"
           awk -v ver="$VERSION" '
             index($0, "## [" ver "]") == 1 { found = 1; next }
             found && /^## / { exit }
