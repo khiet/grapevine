@@ -46,17 +46,40 @@ fn toggle_popover(app: &tauri::AppHandle) {
     let _ = window.set_focus();
 }
 
+/// Earlier releases managed launch-at-login with a raw LaunchAgent plist,
+/// which System Settings lists under "App Background Activity" as the signing
+/// team instead of the app. If that plist is still present the user had
+/// autostart on: carry the setting over to SMAppService (listed under "Open at
+/// Login" with the app's name and icon), then delete the plist so login does
+/// not start two copies. If registration fails the plist is kept so the old
+/// mechanism still works and the migration retries on the next launch.
+fn migrate_launch_agent(app: &tauri::AppHandle) {
+    let Ok(home) = app.path().home_dir() else {
+        return;
+    };
+    let plist = home.join("Library/LaunchAgents/Grapevine.plist");
+    if !plist.exists() {
+        return;
+    }
+    let registered = unsafe {
+        objc2_service_management::SMAppService::mainAppService().registerAndReturnError()
+    };
+    match registered {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&plist);
+        }
+        Err(e) => eprintln!(
+            "launch-at-login migration failed: {}",
+            e.localizedDescription()
+        ),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
-        // LaunchAgent (not AppleScript) so launch-at-login works without
-        // automation permissions and survives macOS updates.
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
         .manage(LastAutoHide(Mutex::new(None)))
         .manage(sync::SyncState::default())
         .invoke_handler(tauri::generate_handler![
@@ -87,6 +110,8 @@ pub fn run() {
             // Menubar-only app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            migrate_launch_agent(app.handle());
 
             let quit = MenuItemBuilder::with_id("quit", "Quit Grapevine").build(app)?;
             let menu = MenuBuilder::new(app).item(&quit).build()?;

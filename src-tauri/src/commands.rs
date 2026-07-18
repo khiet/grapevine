@@ -1,6 +1,5 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_autostart::ManagerExt;
 
 use crate::{github, keychain, merged, settings, sync, unread};
 
@@ -180,21 +179,31 @@ pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String>
 }
 
 #[tauri::command]
-pub fn get_launch_at_login(app: AppHandle) -> Result<bool, String> {
-    app.autolaunch()
-        .is_enabled()
-        .map_err(|e| format!("Could not read the login item: {e}"))
+pub fn get_launch_at_login() -> Result<bool, String> {
+    use objc2_service_management::{SMAppService, SMAppServiceStatus};
+
+    let status = unsafe { SMAppService::mainAppService().status() };
+    // RequiresApproval means registered but pending the user's consent in
+    // System Settings; the app's intent is "on", so report it as enabled.
+    Ok(status == SMAppServiceStatus::Enabled || status == SMAppServiceStatus::RequiresApproval)
 }
 
 #[tauri::command]
-pub fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let launcher = app.autolaunch();
+pub fn set_launch_at_login(enabled: bool) -> Result<(), String> {
+    use objc2_service_management::SMAppService;
+
+    let service = unsafe { SMAppService::mainAppService() };
     let result = if enabled {
-        launcher.enable()
+        unsafe { service.registerAndReturnError() }
     } else {
-        launcher.disable()
+        unsafe { service.unregisterAndReturnError() }
     };
-    result.map_err(|e| format!("Could not update the login item: {e}"))
+    result.map_err(|e| {
+        format!(
+            "Could not update the login item: {}",
+            e.localizedDescription()
+        )
+    })
 }
 
 fn parse_repo_name(input: &str) -> Result<(&str, &str), String> {
