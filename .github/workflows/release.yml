@@ -3,9 +3,20 @@ name: release
 # Every push to main runs release-please, which only maintains a release PR.
 # Nothing is built until that PR is merged: the merge is the deliberate
 # "ship it" signal, and it alone marks a release created and gates the build.
+#
+# workflow_dispatch is a manual escape hatch: rebuild and re-attach an existing
+# release tag without release-please. Use it when a release was cut but its
+# build failed (e.g. a transient notarization network error) and the tag and
+# GitHub release still exist, so re-running the push flow would skip the build.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to rebuild and attach (e.g. grapevine-v0.2.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -19,6 +30,9 @@ concurrency:
 
 jobs:
   release-please:
+    # release-please maintains the release PR and cuts releases; a manual
+    # rebuild (workflow_dispatch) must not touch either, so skip it there.
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
       # 'releases_created' (plural) is the aggregate flag for "any release was
@@ -28,7 +42,7 @@ jobs:
       # itself instead (see "Resolve the release tag").
       release_created: ${{ steps.release.outputs.releases_created }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           config-file: release-please-config.json
@@ -36,12 +50,25 @@ jobs:
 
   build:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # Build on a push only when release-please actually cut a release, or on any
+    # manual rebuild. '!cancelled()' lets this run even though release-please is
+    # skipped on a workflow_dispatch (a skipped dependency would otherwise skip
+    # this job too).
+    if: >-
+      ${{ !cancelled()
+      && (
+        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
+        || github.event_name == 'workflow_dispatch'
+      ) }}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      # On a manual rebuild, check out the named tag; on a push, the default
+      # ref (the commit that triggered the run).
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -56,17 +83,28 @@ jobs:
 
       - run: npm ci
 
-      # Derive the tag from the manifest and config rather than a release-please
-      # action output: the per-package output key is namespaced by path and
-      # came back empty on an action re-run, which blanked the tag and broke the
-      # upload. This mirrors release-please's own tag format,
-      # '<package-name>-v<version>', and is set once for every step below.
+      # Resolve TAG and VERSION once for every step below. A manual rebuild names
+      # the tag directly; a push derives it from the manifest and config rather
+      # than a release-please action output, whose per-package output key is
+      # namespaced by path and came back empty on an action re-run, which blanked
+      # the tag and broke the upload. Both mirror release-please's own tag
+      # format, '<package-name>-v<version>'.
       - name: Resolve the release tag
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          NAME="$(jq -r '.packages["."]["package-name"]' release-please-config.json)"
-          VERSION="$(jq -r '."."' .release-please-manifest.json)"
-          echo "TAG=${NAME}-v${VERSION}" >> "$GITHUB_ENV"
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+            # Strip the '<package-name>-v' prefix for the changelog lookup.
+            VERSION="${TAG#*-v}"
+          else
+            NAME="$(jq -r '.packages["."]["package-name"]' release-please-config.json)"
+            VERSION="$(jq -r '."."' .release-please-manifest.json)"
+            TAG="${NAME}-v${VERSION}"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       # When the Apple secrets are absent (e.g. a fork), signing is skipped
       # rather than failing the release: the signing and verification steps
@@ -166,12 +204,12 @@ jobs:
         run: |
           ditto -c -k --keepParent \
             "src-tauri/target/universal-apple-darwin/release/bundle/macos/Grapevine.app" \
-            "Grapevine-${TAG}-universal.zip"
+            "Grapevine-v${VERSION}-universal.zip"
 
       - name: Attach the build to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$TAG" "Grapevine-${TAG}-universal.zip" --clobber
+        run: gh release upload "$TAG" "Grapevine-v${VERSION}-universal.zip" --clobber
 
       # Notes come from CHANGELOG.md, not from what release-please derived for
       # the release body: the changelog is the copy a human may have rewritten
