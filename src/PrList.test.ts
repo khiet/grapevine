@@ -60,6 +60,7 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   created_at: "2026-07-10T12:00:00Z",
   updated_at: "2026-07-11T09:30:00Z",
   section: "all",
+  ci_status: "none",
   unread_count,
 });
 

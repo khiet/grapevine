@@ -12,6 +12,9 @@ export interface PullRequest {
   created_at: string;
   updated_at: string;
   section: "mine" | "participated" | "all";
+  /** Head commit's CI rollup. Only "failing" is rendered; the rest, including
+   * "none" (no checks configured), leave the row undecorated. */
+  ci_status: "passing" | "failing" | "pending" | "none";
   unread_count: number;
 }
 
@@ -167,6 +170,18 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
               {showRepo ? `${pr.repo} #${pr.number}` : `#${pr.number}`}
             </span>
             <span className="pr-author">@{pr.author}</span>
+            {/* A single mark for a broken build. Passing and pending stay
+                undecorated so a quiet row keeps meaning "nothing needs you".
+                Distinct from the red unread badge in hue and meaning: orange
+                here says "your build is broken", red there says "someone
+                spoke". PAVE-3615 reuses this same dot for "PR is blocked". */}
+            {pr.ci_status === "failing" && (
+              <span
+                className="pr-ci"
+                title="Checks failing"
+                aria-label="Checks failing"
+              />
+            )}
           </span>
         </span>
       </button>

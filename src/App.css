@@ -328,6 +328,20 @@ body {
   flex: none;
 }
 
+/* The CI-failed mark: macOS system orange, deliberately not the unread badge's
+   red so the two signals stay distinct. Pushed to the row's right edge, out of
+   the metadata's way; rendered only for a failing build, so it never decorates
+   a healthy or quiet row. Orange reads on both the light and dark card. */
+.pr-ci {
+  margin-left: auto;
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #ff9f0a;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
