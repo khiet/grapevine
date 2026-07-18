@@ -56,6 +56,7 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   repo: "acme/widgets",
   author: "someone",
   avatar_url: "https://avatars.example/someone",
+  owner_avatar_url: "https://avatars.example/acme",
   created_at: "2026-07-10T12:00:00Z",
   updated_at: "2026-07-11T09:30:00Z",
   section: "all",

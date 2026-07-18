@@ -239,10 +239,35 @@ body {
   text-align: center;
 }
 
+/* Occupies the fixed 30px avatar column; the org badge overflows it via
+   absolute positioning without disturbing the row grid. */
+.pr-avatar-wrap {
+  position: relative;
+  width: 30px;
+  height: 30px;
+}
+
 .pr-avatar {
+  display: block;
   width: 30px;
   height: 30px;
   border-radius: 50%;
+}
+
+/* The repo owner's logo, square on the round author avatar's corner. Shape
+   contrast (square vs circle) keeps the two from reading as one avatar. The
+   ring is the card colour, so the badge sits in a punched notch rather than
+   smudging into the face. No fallback: a broken load hides the element. */
+.pr-org-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  object-fit: cover;
+  background-color: #ffffff;
+  box-shadow: 0 0 0 2px #ffffff;
 }
 
 .pr-text {
@@ -565,6 +590,12 @@ body {
 
   .pr-section ul {
     background-color: #2c2c2e;
+  }
+
+  /* Ring matches the dark card so the badge notch reads correctly. */
+  .pr-org-badge {
+    background-color: #2c2c2e;
+    box-shadow: 0 0 0 2px #2c2c2e;
   }
 
   .pr-repo-name {
