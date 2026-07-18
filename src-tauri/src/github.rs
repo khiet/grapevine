@@ -746,6 +746,24 @@ mod tests {
     }
 
     #[test]
+    fn the_repo_owner_avatar_is_copied_onto_every_pr() {
+        // The owner avatar is a repository-level field read once and shared by
+        // every PR in the repo; it becomes the org badge on each row.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "owner": { "avatarUrl": "https://avatars.example/acme" },
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({ "number": 7 })), pr_node(json!({ "number": 8 }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert_eq!(out[0].owner_avatar_url, "https://avatars.example/acme");
+        assert_eq!(out[1].owner_avatar_url, "https://avatars.example/acme");
+    }
+
+    #[test]
     fn issue_comments_by_others_count_as_activity_but_the_viewers_do_not() {
         let node = pr_node(json!({
             "comments": { "nodes": [

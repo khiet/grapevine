@@ -166,6 +166,26 @@ mod tests {
         assert_eq!(state[0].merged_at, "2026-07-14T09:00:00Z");
     }
 
+    /// A merged.json written before owner_avatar_url existed must still load.
+    /// Without #[serde(default)] the parse fails and load() silently discards
+    /// the entire Merged section, losing every undismissed merge.
+    #[test]
+    fn snapshots_saved_before_the_owner_avatar_field_still_load() {
+        let legacy = r#"[{
+            "number": 3,
+            "title": "Ship the other thing",
+            "url": "https://github.com/acme/widgets/pull/3",
+            "repo": "acme/widgets",
+            "author": "someone",
+            "avatar_url": "https://avatars.example/someone",
+            "merged_at": "2026-07-11T10:00:00Z"
+        }]"#;
+        let state: MergedState =
+            serde_json::from_str(legacy).expect("legacy snapshot must still deserialize");
+        assert_eq!(state.len(), 1);
+        assert_eq!(state[0].owner_avatar_url, "");
+    }
+
     #[test]
     fn entries_sort_newest_merge_first() {
         let mut state = vec![entry("acme/widgets", 1, "2026-07-10T10:00:00Z")];
