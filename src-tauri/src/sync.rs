@@ -360,7 +360,7 @@ fn merged_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{CiStatus, Section};
+    use crate::github::{BlockedReason, Section};
     use serde_json::json;
 
     fn pr(repo: &str, number: u64) -> PullRequest {
@@ -375,7 +375,8 @@ mod tests {
             created_at: "2026-07-01T00:00:00Z".into(),
             updated_at: "2026-07-01T00:00:00Z".into(),
             section: Section::All,
-            ci_status: CiStatus::None,
+            blocked_reasons: vec![],
+            is_draft: false,
             unread_count: 0,
             activity: vec![],
         }
@@ -456,7 +457,8 @@ mod tests {
                 created_at: "2026-07-10T12:00:00Z".into(),
                 updated_at: "2026-07-11T09:30:00Z".into(),
                 section: Section::Mine,
-                ci_status: CiStatus::Failing,
+                blocked_reasons: vec![BlockedReason::Ci],
+                is_draft: true,
                 unread_count: 3,
                 // Internal working data; must not leak into the payload.
                 activity: vec!["2026-07-10T12:00:00Z".into()],
@@ -489,7 +491,8 @@ mod tests {
                     "created_at": "2026-07-10T12:00:00Z",
                     "updated_at": "2026-07-11T09:30:00Z",
                     "section": "mine",
-                    "ci_status": "failing",
+                    "blocked_reasons": ["ci"],
+                    "is_draft": true,
                     "unread_count": 3
                 }],
                 "merged": [{
@@ -616,7 +619,8 @@ mod tests {
             created_at: "2026-07-10T12:00:00Z".into(),
             updated_at: "2026-07-11T09:30:00Z".into(),
             section: Section::All,
-            ci_status: CiStatus::None,
+            blocked_reasons: vec![],
+            is_draft: false,
             unread_count,
             activity: vec![],
         };

@@ -328,11 +328,12 @@ body {
   flex: none;
 }
 
-/* The CI-failed mark: macOS system orange, deliberately not the unread badge's
-   red so the two signals stay distinct. Pushed to the row's right edge, out of
-   the metadata's way; rendered only for a failing build, so it never decorates
-   a healthy or quiet row. Orange reads on both the light and dark card. */
-.pr-ci {
+/* The blocked-PR mark: macOS system orange, deliberately not the unread
+   badge's red so the two signals stay distinct. Pushed to the row's right
+   edge, out of the metadata's way; rendered only for blocked states (merge
+   conflict, failing CI, changes requested), so it never decorates a healthy
+   or in-flight row. Orange reads on both the light and dark card. */
+.pr-blocked {
   margin-left: auto;
   flex: none;
   align-self: center;
@@ -340,6 +341,20 @@ body {
   height: 8px;
   border-radius: 50%;
   background-color: #ff9f0a;
+}
+
+/* The draft pill: a neutral state marker in the metadata grey, never a signal
+   colour — a draft is the author's own choice, not something stuck. It also
+   explains why a draft row shows no blocked dot. */
+.pr-draft {
+  flex: none;
+  align-self: center;
+  padding: 0 5px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  background-color: rgba(120, 120, 128, 0.16);
 }
 
 .header-actions {
@@ -652,6 +667,12 @@ body {
   .pr-updated,
   .pr-origin {
     color: #7c7c80;
+  }
+
+  /* The light-mode fill sinks into the dark card; a stronger fill keeps the
+     pill legible without brightening its text into a signal. */
+  .pr-draft {
+    background-color: rgba(120, 120, 128, 0.32);
   }
 
   /* Recessed against the #2c2c2e card, so the field reads as a well

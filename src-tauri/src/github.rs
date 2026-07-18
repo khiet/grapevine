@@ -62,20 +62,15 @@ pub enum Section {
     All,
 }
 
-/// The head commit's aggregate CI state, collapsed from GitHub's six-way
-/// `statusCheckRollup` to the four distinctions the row actually renders.
-/// `Failing` folds GitHub's `FAILURE`/`ERROR` (a reader treats them alike) and
-/// `Pending` folds `PENDING`/`EXPECTED` (a check that hasn't started yet).
-/// `None` covers both a null rollup and a repo with no checks configured: to
-/// the app they are the same "nothing to show" and must render as nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+/// One reason a PR is blocked, for the row's indicator dot. Declaration order
+/// is the fixed tooltip order (conflict, then CI, then review); the frontend
+/// renders the list verbatim and never re-derives or re-sorts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum CiStatus {
-    Passing,
-    Failing,
-    Pending,
-    #[default]
-    None,
+pub enum BlockedReason {
+    Conflict,
+    Ci,
+    Review,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,10 +88,16 @@ pub struct PullRequest {
     pub created_at: String,
     pub updated_at: String,
     pub section: Section,
-    /// The head commit's CI rollup, for the row's status indicator. A property
-    /// of the PR, never an unread event: it does not feed [`collect_activity`]
+    /// Why the PR is blocked, in tooltip order; empty means no dot. Composed
+    /// here rather than shipping GitHub's raw enums so the frontend renders
+    /// one dot plus tooltip instead of re-deriving the logic. A property of
+    /// the PR, never an unread event: it does not feed [`collect_activity`]
     /// and must never move a badge or the tray count.
-    pub ci_status: CiStatus,
+    pub blocked_reasons: Vec<BlockedReason>,
+    /// Whether the PR is a draft. Renders as a neutral pill, and suppresses
+    /// the blocked dot (see [`blocked_reasons_for`]). Same property-not-event
+    /// rule as `blocked_reasons`.
+    pub is_draft: bool,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -497,6 +498,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor \
+               isDraft mergeable reviewDecision \
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                participants(first: 50) {{ nodes {{ login }} }} \
@@ -566,7 +568,8 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .unwrap_or_default()
                 .to_string(),
             section: section_for(node, viewer),
-            ci_status: ci_status_for(node),
+            blocked_reasons: blocked_reasons_for(node),
+            is_draft: node.get("isDraft").and_then(Value::as_bool) == Some(true),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -630,20 +633,36 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
         .unwrap_or_default()
 }
 
-/// Reads the head commit's `statusCheckRollup` and collapses it to the enum
-/// the row renders. The rollup lives per-commit, so it is read off the last
-/// commit (`commits(last: 1)`); a null rollup, no commits, or any unknown
-/// state all mean [`CiStatus::None`] — nothing to show.
-fn ci_status_for(node: &Value) -> CiStatus {
-    let state = node
+/// Composes the row's blocked indicator from mergeability, the head commit's
+/// CI rollup, and the review decision, in the fixed tooltip order. Only
+/// negative states light it: a mergeable, in-flight, or quiet PR yields an
+/// empty list so an undecorated row keeps meaning "nothing is stuck".
+///
+/// Suppressed entirely for drafts (the author has not declared readiness) and
+/// while `mergeable` is `UNKNOWN`: GitHub computes mergeability lazily and
+/// reports `UNKNOWN` until it settles, which must read as "no flag yet", not
+/// as a blocked state; it resolves on the next poll.
+fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
+    let field = |name: &str| node.get(name).and_then(Value::as_str);
+    if node.get("isDraft").and_then(Value::as_bool) == Some(true)
+        || field("mergeable") == Some("UNKNOWN")
+    {
+        return Vec::new();
+    }
+    let ci = node
         .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
         .and_then(Value::as_str);
-    match state {
-        Some("SUCCESS") => CiStatus::Passing,
-        Some("FAILURE") | Some("ERROR") => CiStatus::Failing,
-        Some("PENDING") | Some("EXPECTED") => CiStatus::Pending,
-        _ => CiStatus::None,
+    let mut reasons = Vec::new();
+    if field("mergeable") == Some("CONFLICTING") {
+        reasons.push(BlockedReason::Conflict);
     }
+    if matches!(ci, Some("FAILURE") | Some("ERROR")) {
+        reasons.push(BlockedReason::Ci);
+    }
+    if field("reviewDecision") == Some("CHANGES_REQUESTED") {
+        reasons.push(BlockedReason::Review);
+    }
+    reasons
 }
 
 /// Mine beats Participated: the author is always a participant, so order
@@ -803,67 +822,129 @@ mod tests {
         assert_eq!(out[1].owner_avatar_url, "https://avatars.example/acme");
     }
 
-    #[test]
-    fn the_head_commit_rollup_collapses_to_the_row_enum() {
-        let rollup = |state: Value| {
-            ci_status_for(&pr_node(json!({
-                "commits": { "nodes": [{ "commit": { "statusCheckRollup": state } }] }
-            })))
-        };
-        assert_eq!(rollup(json!({ "state": "SUCCESS" })), CiStatus::Passing);
-        assert_eq!(rollup(json!({ "state": "FAILURE" })), CiStatus::Failing);
-        assert_eq!(rollup(json!({ "state": "ERROR" })), CiStatus::Failing);
-        assert_eq!(rollup(json!({ "state": "PENDING" })), CiStatus::Pending);
-        assert_eq!(rollup(json!({ "state": "EXPECTED" })), CiStatus::Pending);
-        // A null rollup is a repo with no checks configured (or none reported
-        // yet): the same "nothing to show" as no CI at all.
-        assert_eq!(rollup(json!(null)), CiStatus::None);
+    fn ci_node(state: &str) -> Value {
+        json!({ "commits": { "nodes": [{ "commit": {
+            "statusCheckRollup": { "state": state }
+        } }] } })
     }
 
     #[test]
-    fn a_pr_with_no_commits_or_an_unknown_state_has_no_ci_status() {
-        // No commits node at all (the pr_node fixture omits it).
-        assert_eq!(ci_status_for(&pr_node(json!({}))), CiStatus::None);
-        // A state GitHub might add later must not read as one of ours.
-        let unknown = pr_node(json!({
-            "commits": { "nodes": [{ "commit": {
-                "statusCheckRollup": { "state": "SOMETHING_NEW" }
-            } }] }
+    fn each_blocked_trigger_lights_the_dot_on_its_own() {
+        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        assert_eq!(
+            reasons(json!({ "mergeable": "CONFLICTING" })),
+            vec![BlockedReason::Conflict]
+        );
+        assert_eq!(reasons(ci_node("FAILURE")), vec![BlockedReason::Ci]);
+        assert_eq!(reasons(ci_node("ERROR")), vec![BlockedReason::Ci]);
+        assert_eq!(
+            reasons(json!({ "reviewDecision": "CHANGES_REQUESTED" })),
+            vec![BlockedReason::Review]
+        );
+    }
+
+    #[test]
+    fn mergeable_in_flight_and_quiet_prs_stay_undecorated() {
+        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        // The pr_node fixture has no CI, mergeability, or review fields at all.
+        assert_eq!(reasons(json!({})), Vec::<BlockedReason>::new());
+        assert_eq!(
+            reasons(json!({ "mergeable": "MERGEABLE", "reviewDecision": "APPROVED" })),
+            Vec::new()
+        );
+        // In-flight states (CI pending, awaiting review) are progress, not
+        // blockage.
+        assert_eq!(reasons(ci_node("PENDING")), Vec::new());
+        assert_eq!(reasons(ci_node("EXPECTED")), Vec::new());
+        assert_eq!(reasons(ci_node("SUCCESS")), Vec::new());
+        assert_eq!(
+            reasons(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
+            Vec::new()
+        );
+    }
+
+    /// Fixed tooltip order regardless of which fields say what: conflict,
+    /// then CI, then review.
+    #[test]
+    fn concurrent_triggers_list_every_reason_in_fixed_order() {
+        let mut node = pr_node(json!({
+            "mergeable": "CONFLICTING",
+            "reviewDecision": "CHANGES_REQUESTED"
         }));
-        assert_eq!(ci_status_for(&unknown), CiStatus::None);
+        node.as_object_mut()
+            .unwrap()
+            .extend(ci_node("FAILURE").as_object().unwrap().clone());
+        assert_eq!(
+            blocked_reasons_for(&node),
+            vec![
+                BlockedReason::Conflict,
+                BlockedReason::Ci,
+                BlockedReason::Review
+            ]
+        );
     }
 
-    /// `PrList.tsx` switches on these exact strings (`pr.ci_status === "failing"`
-    /// today, the others as the indicator grows), so every variant's wire form
-    /// is a contract; a rename or a dropped `rename_all` breaks the row silently.
+    /// The author has not declared readiness, so "needs action now" does not
+    /// apply — whatever the CI, conflict, or review state says.
     #[test]
-    fn every_ci_status_variant_serializes_to_its_frontend_key() {
-        for (status, expected) in [
-            (CiStatus::Passing, "passing"),
-            (CiStatus::Failing, "failing"),
-            (CiStatus::Pending, "pending"),
-            (CiStatus::None, "none"),
+    fn drafts_suppress_the_dot_entirely() {
+        let mut node = pr_node(json!({
+            "isDraft": true,
+            "mergeable": "CONFLICTING",
+            "reviewDecision": "CHANGES_REQUESTED"
+        }));
+        node.as_object_mut()
+            .unwrap()
+            .extend(ci_node("FAILURE").as_object().unwrap().clone());
+        assert_eq!(blocked_reasons_for(&node), Vec::new());
+    }
+
+    /// GitHub computes `mergeable` lazily and answers `UNKNOWN` until it
+    /// settles; that transient must render as no dot, not as a blocked state.
+    #[test]
+    fn an_unknown_mergeability_suppresses_the_dot_until_the_next_poll() {
+        let mut node = pr_node(json!({
+            "mergeable": "UNKNOWN",
+            "reviewDecision": "CHANGES_REQUESTED"
+        }));
+        node.as_object_mut()
+            .unwrap()
+            .extend(ci_node("FAILURE").as_object().unwrap().clone());
+        assert_eq!(blocked_reasons_for(&node), Vec::new());
+    }
+
+    /// `PrList.tsx` maps these exact strings to tooltip labels, so every
+    /// variant's wire form is a contract; a rename or a dropped `rename_all`
+    /// breaks the row silently.
+    #[test]
+    fn every_blocked_reason_serializes_to_its_frontend_key() {
+        for (reason, expected) in [
+            (BlockedReason::Conflict, "conflict"),
+            (BlockedReason::Ci, "ci"),
+            (BlockedReason::Review, "review"),
         ] {
-            assert_eq!(serde_json::to_value(status).unwrap(), json!(expected));
+            assert_eq!(serde_json::to_value(reason).unwrap(), json!(expected));
         }
     }
 
     #[test]
-    fn ci_status_is_read_off_the_head_commit_onto_the_row() {
+    fn blocked_state_and_draftness_are_read_onto_the_row() {
         let repo = json!({
             "nameWithOwner": "acme/widgets",
             "pullRequests": {
                 "pageInfo": { "hasNextPage": false, "endCursor": null },
-                "nodes": [pr_node(json!({
-                    "commits": { "nodes": [{ "commit": {
-                        "statusCheckRollup": { "state": "FAILURE" }
-                    } }] }
-                }))]
+                "nodes": [
+                    pr_node(ci_node("FAILURE")),
+                    pr_node(json!({ "isDraft": true }))
+                ]
             }
         });
         let mut out = Vec::new();
         collect_repo_prs(&repo, "khiet", &mut out);
-        assert_eq!(out[0].ci_status, CiStatus::Failing);
+        assert_eq!(out[0].blocked_reasons, vec![BlockedReason::Ci]);
+        assert!(!out[0].is_draft);
+        assert_eq!(out[1].blocked_reasons, Vec::new());
+        assert!(out[1].is_draft);
     }
 
     #[test]
@@ -950,14 +1031,19 @@ mod tests {
 
     #[test]
     fn commits_and_status_changes_never_reach_the_activity_list() {
-        // CI state is now fetched (for the row indicator) but deliberately
-        // excluded from activity: a node with neither a comment nor a review
-        // yields nothing, whatever its commits or CI rollup say.
-        let node = pr_node(json!({
-            "commits": { "nodes": [{ "commit": {
-                "statusCheckRollup": { "state": "FAILURE" }
-            } }] }
+        // CI, mergeability, review decision, and draftness are all fetched
+        // (for the row's blocked dot and draft pill) but deliberately excluded
+        // from activity: they are properties of the PR, not unread events. A
+        // node with neither a comment nor a review yields nothing, whatever
+        // those fields say.
+        let mut node = pr_node(json!({
+            "isDraft": false,
+            "mergeable": "CONFLICTING",
+            "reviewDecision": "CHANGES_REQUESTED"
         }));
+        node.as_object_mut()
+            .unwrap()
+            .extend(ci_node("FAILURE").as_object().unwrap().clone());
         assert!(collect_activity(&node, "khiet").is_empty());
     }
 
@@ -969,14 +1055,17 @@ mod tests {
         assert!(!repo_field("r0", "acme", "widgets", None).contains("after:"));
     }
 
-    /// The CI rollup rides the existing PR query rather than a new request, and
-    /// must be read off the head commit (`commits(last: 1)`) since the rollup
-    /// is per-commit.
+    /// Everything the blocked indicator needs rides the existing PR query
+    /// rather than a new request. The CI rollup must be read off the head
+    /// commit (`commits(last: 1)`) since the rollup is per-commit.
     #[test]
-    fn repo_field_asks_for_the_head_commit_status_rollup() {
+    fn repo_field_asks_for_the_blocked_indicator_fields() {
         let field = repo_field("r0", "acme", "widgets", None);
         assert!(field.contains("commits(last: 1)"));
         assert!(field.contains("statusCheckRollup { state }"));
+        assert!(field.contains("isDraft"));
+        assert!(field.contains("mergeable"));
+        assert!(field.contains("reviewDecision"));
     }
 
     #[test]
