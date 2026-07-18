@@ -62,6 +62,22 @@ pub enum Section {
     All,
 }
 
+/// The head commit's aggregate CI state, collapsed from GitHub's six-way
+/// `statusCheckRollup` to the four distinctions the row actually renders.
+/// `Failing` folds GitHub's `FAILURE`/`ERROR` (a reader treats them alike) and
+/// `Pending` folds `PENDING`/`EXPECTED` (a check that hasn't started yet).
+/// `None` covers both a null rollup and a repo with no checks configured: to
+/// the app they are the same "nothing to show" and must render as nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CiStatus {
+    Passing,
+    Failing,
+    Pending,
+    #[default]
+    None,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PullRequest {
     pub number: u64,
@@ -77,6 +93,10 @@ pub struct PullRequest {
     pub created_at: String,
     pub updated_at: String,
     pub section: Section,
+    /// The head commit's CI rollup, for the row's status indicator. A property
+    /// of the PR, never an unread event: it does not feed [`collect_activity`]
+    /// and must never move a badge or the tray count.
+    pub ci_status: CiStatus,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -478,6 +498,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor \
                author {{ login avatarUrl }} \
+               commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                participants(first: 50) {{ nodes {{ login }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
                comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} \
@@ -545,6 +566,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .unwrap_or_default()
                 .to_string(),
             section: section_for(node, viewer),
+            ci_status: ci_status_for(node),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -560,7 +582,9 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
 
 /// Gathers the timestamps of what counts as an "update" for unread purposes:
 /// issue comments, submitted reviews, and review comments — never commits or
-/// CI, which the query does not fetch. The viewer's own activity is excluded
+/// CI. The query does fetch the head commit's CI rollup for the row indicator,
+/// but that is a property of the PR, not an unread event, so it is read
+/// elsewhere and never enters this list. The viewer's own activity is excluded
 /// (you have read what you wrote), as are PENDING reviews (invisible to
 /// everyone but their author until submitted).
 fn collect_activity(node: &Value, viewer: &str) -> Vec<String> {
@@ -604,6 +628,22 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default()
+}
+
+/// Reads the head commit's `statusCheckRollup` and collapses it to the enum
+/// the row renders. The rollup lives per-commit, so it is read off the last
+/// commit (`commits(last: 1)`); a null rollup, no commits, or any unknown
+/// state all mean [`CiStatus::None`] — nothing to show.
+fn ci_status_for(node: &Value) -> CiStatus {
+    let state = node
+        .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
+        .and_then(Value::as_str);
+    match state {
+        Some("SUCCESS") => CiStatus::Passing,
+        Some("FAILURE") | Some("ERROR") => CiStatus::Failing,
+        Some("PENDING") | Some("EXPECTED") => CiStatus::Pending,
+        _ => CiStatus::None,
+    }
 }
 
 /// Mine beats Participated: the author is always a participant, so order
@@ -764,6 +804,69 @@ mod tests {
     }
 
     #[test]
+    fn the_head_commit_rollup_collapses_to_the_row_enum() {
+        let rollup = |state: Value| {
+            ci_status_for(&pr_node(json!({
+                "commits": { "nodes": [{ "commit": { "statusCheckRollup": state } }] }
+            })))
+        };
+        assert_eq!(rollup(json!({ "state": "SUCCESS" })), CiStatus::Passing);
+        assert_eq!(rollup(json!({ "state": "FAILURE" })), CiStatus::Failing);
+        assert_eq!(rollup(json!({ "state": "ERROR" })), CiStatus::Failing);
+        assert_eq!(rollup(json!({ "state": "PENDING" })), CiStatus::Pending);
+        assert_eq!(rollup(json!({ "state": "EXPECTED" })), CiStatus::Pending);
+        // A null rollup is a repo with no checks configured (or none reported
+        // yet): the same "nothing to show" as no CI at all.
+        assert_eq!(rollup(json!(null)), CiStatus::None);
+    }
+
+    #[test]
+    fn a_pr_with_no_commits_or_an_unknown_state_has_no_ci_status() {
+        // No commits node at all (the pr_node fixture omits it).
+        assert_eq!(ci_status_for(&pr_node(json!({}))), CiStatus::None);
+        // A state GitHub might add later must not read as one of ours.
+        let unknown = pr_node(json!({
+            "commits": { "nodes": [{ "commit": {
+                "statusCheckRollup": { "state": "SOMETHING_NEW" }
+            } }] }
+        }));
+        assert_eq!(ci_status_for(&unknown), CiStatus::None);
+    }
+
+    /// `PrList.tsx` switches on these exact strings (`pr.ci_status === "failing"`
+    /// today, the others as the indicator grows), so every variant's wire form
+    /// is a contract; a rename or a dropped `rename_all` breaks the row silently.
+    #[test]
+    fn every_ci_status_variant_serializes_to_its_frontend_key() {
+        for (status, expected) in [
+            (CiStatus::Passing, "passing"),
+            (CiStatus::Failing, "failing"),
+            (CiStatus::Pending, "pending"),
+            (CiStatus::None, "none"),
+        ] {
+            assert_eq!(serde_json::to_value(status).unwrap(), json!(expected));
+        }
+    }
+
+    #[test]
+    fn ci_status_is_read_off_the_head_commit_onto_the_row() {
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({
+                    "commits": { "nodes": [{ "commit": {
+                        "statusCheckRollup": { "state": "FAILURE" }
+                    } }] }
+                }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert_eq!(out[0].ci_status, CiStatus::Failing);
+    }
+
+    #[test]
     fn issue_comments_by_others_count_as_activity_but_the_viewers_do_not() {
         let node = pr_node(json!({
             "comments": { "nodes": [
@@ -847,9 +950,15 @@ mod tests {
 
     #[test]
     fn commits_and_status_changes_never_reach_the_activity_list() {
-        // The query asks only for comments and reviews, so a node with
-        // neither can yield nothing whatever else happened on the PR.
-        assert!(collect_activity(&pr_node(json!({})), "khiet").is_empty());
+        // CI state is now fetched (for the row indicator) but deliberately
+        // excluded from activity: a node with neither a comment nor a review
+        // yields nothing, whatever its commits or CI rollup say.
+        let node = pr_node(json!({
+            "commits": { "nodes": [{ "commit": {
+                "statusCheckRollup": { "state": "FAILURE" }
+            } }] }
+        }));
+        assert!(collect_activity(&node, "khiet").is_empty());
     }
 
     #[test]
@@ -858,6 +967,16 @@ mod tests {
         assert!(field.contains(r#"repository(owner: "acme", name: "widgets")"#));
         assert!(field.contains(r#"after: "abc""#));
         assert!(!repo_field("r0", "acme", "widgets", None).contains("after:"));
+    }
+
+    /// The CI rollup rides the existing PR query rather than a new request, and
+    /// must be read off the head commit (`commits(last: 1)`) since the rollup
+    /// is per-commit.
+    #[test]
+    fn repo_field_asks_for_the_head_commit_status_rollup() {
+        let field = repo_field("r0", "acme", "widgets", None);
+        assert!(field.contains("commits(last: 1)"));
+        assert!(field.contains("statusCheckRollup { state }"));
     }
 
     #[test]
