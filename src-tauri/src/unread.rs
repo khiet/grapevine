@@ -103,6 +103,7 @@ mod tests {
             repo: repo.into(),
             author: "someone".into(),
             avatar_url: "https://avatars.example/someone".into(),
+            owner_avatar_url: "https://avatars.example/acme".into(),
             created_at: "2026-07-01T00:00:00Z".into(),
             updated_at: "2026-07-01T00:00:00Z".into(),
             section: Section::All,

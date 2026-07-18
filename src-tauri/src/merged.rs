@@ -15,6 +15,10 @@ pub struct MergedPr {
     pub repo: String,
     pub author: String,
     pub avatar_url: String,
+    /// Repo owner's avatar URL, snapshotted for the org badge. Empty for
+    /// entries saved before this field existed; the UI shows no badge then.
+    #[serde(default)]
+    pub owner_avatar_url: String,
     /// GitHub's mergedAt (ISO-8601 UTC); orders the section newest first.
     pub merged_at: String,
 }
@@ -37,6 +41,7 @@ pub fn from_pr(pr: &PullRequest, merged_at: String) -> MergedPr {
         repo: pr.repo.clone(),
         author: pr.author.clone(),
         avatar_url: pr.avatar_url.clone(),
+        owner_avatar_url: pr.owner_avatar_url.clone(),
         merged_at,
     }
 }
@@ -107,6 +112,7 @@ mod tests {
             repo: repo.into(),
             author: "someone".into(),
             avatar_url: "https://avatars.example/someone".into(),
+            owner_avatar_url: "https://avatars.example/acme".into(),
             created_at: "2026-07-01T00:00:00Z".into(),
             updated_at: "2026-07-01T00:00:00Z".into(),
             section: Section::All,

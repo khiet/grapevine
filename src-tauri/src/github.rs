@@ -71,6 +71,9 @@ pub struct PullRequest {
     pub author: String,
     /// Author's GitHub avatar URL; empty when the account was deleted.
     pub avatar_url: String,
+    /// Repo owner's (organization or user) avatar URL, used as the org badge
+    /// on the row. Empty when GitHub returns no owner; the UI shows no badge.
+    pub owner_avatar_url: String,
     pub created_at: String,
     pub updated_at: String,
     pub section: Section,
@@ -468,6 +471,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
     format!(
         "{alias}: repository(owner: {owner}, name: {name}) {{ \
            nameWithOwner \
+           owner {{ avatarUrl }} \
            pullRequests(states: OPEN, first: {PAGE_SIZE}{after}, \
                         orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
              pageInfo {{ hasNextPage endCursor }} \
@@ -492,6 +496,12 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
 fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> Option<String> {
     let repo_name = repo
         .pointer("/nameWithOwner")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    // Read once per repo: the owner is a repository-level field, shared by
+    // every PR in the repo.
+    let owner_avatar_url = repo
+        .pointer("/owner/avatarUrl")
         .and_then(Value::as_str)
         .unwrap_or_default();
     let nodes = repo
@@ -523,6 +533,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
+            owner_avatar_url: owner_avatar_url.to_string(),
             created_at: node
                 .get("createdAt")
                 .and_then(Value::as_str)

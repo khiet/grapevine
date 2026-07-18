@@ -8,6 +8,7 @@ export interface PullRequest {
   repo: string;
   author: string;
   avatar_url: string;
+  owner_avatar_url: string;
   created_at: string;
   updated_at: string;
   section: "mine" | "participated" | "all";
@@ -21,6 +22,7 @@ export interface MergedPr {
   repo: string;
   author: string;
   avatar_url: string;
+  owner_avatar_url: string;
   merged_at: string;
 }
 
@@ -102,6 +104,41 @@ export function groupByRepo(prs: PullRequest[]): RepoGroup[] {
     .sort((a, b) => latest(b.prs) - latest(a.prs));
 }
 
+// The round author avatar with a small square organization badge (the repo
+// owner's avatar) on its corner: the face says who, the badge says which org.
+// The badge has no placeholder by design — a missing or broken owner avatar
+// simply shows no badge, keeping the corner clean rather than grey.
+function PrAvatar({
+  avatarUrl,
+  ownerAvatarUrl,
+}: {
+  avatarUrl: string;
+  ownerAvatarUrl: string;
+}) {
+  return (
+    <span className="pr-avatar-wrap">
+      <img
+        className="pr-avatar"
+        alt=""
+        src={avatarUrl || AVATAR_PLACEHOLDER}
+        onError={(e) => {
+          e.currentTarget.src = AVATAR_PLACEHOLDER;
+        }}
+      />
+      {ownerAvatarUrl && (
+        <img
+          className="pr-org-badge"
+          alt=""
+          src={ownerAvatarUrl}
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean }) {
   const unread = pr.unread_count > 0;
@@ -119,14 +156,7 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
       >
         {/* The gutter span stays even without a badge so avatars align. */}
         {unread ? <span className="pr-unread">{pr.unread_count}</span> : <span />}
-        <img
-          className="pr-avatar"
-          alt=""
-          src={pr.avatar_url || AVATAR_PLACEHOLDER}
-          onError={(e) => {
-            e.currentTarget.src = AVATAR_PLACEHOLDER;
-          }}
-        />
+        <PrAvatar avatarUrl={pr.avatar_url} ownerAvatarUrl={pr.owner_avatar_url} />
         <span className="pr-text">
           <span className="pr-title-row">
             <span className="pr-title">{pr.title}</span>
@@ -157,14 +187,7 @@ function MergedRow({ pr }: { pr: MergedPr }) {
       >
         {/* The gutter span stays even without a badge so avatars align. */}
         <span />
-        <img
-          className="pr-avatar"
-          alt=""
-          src={pr.avatar_url || AVATAR_PLACEHOLDER}
-          onError={(e) => {
-            e.currentTarget.src = AVATAR_PLACEHOLDER;
-          }}
-        />
+        <PrAvatar avatarUrl={pr.avatar_url} ownerAvatarUrl={pr.owner_avatar_url} />
         <span className="pr-text">
           <span className="pr-title-row">
             <span className="pr-title">{pr.title}</span>
