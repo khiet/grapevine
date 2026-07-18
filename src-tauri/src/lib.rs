@@ -51,12 +51,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
-        // LaunchAgent (not AppleScript) so launch-at-login works without
-        // automation permissions and survives macOS updates.
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
         .manage(LastAutoHide(Mutex::new(None)))
         .manage(sync::SyncState::default())
         .invoke_handler(tauri::generate_handler![
