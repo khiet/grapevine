@@ -420,6 +420,50 @@ body {
   gap: 12px;
 }
 
+/* Rounded macOS search field filling the space the title used to hold. */
+.header-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-right: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background-color: rgba(120, 120, 128, 0.16);
+}
+
+.header-search-icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: #8e8e93;
+}
+
+.header-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: text;
+  outline: none;
+  /* The field is the one place the popover invites text entry. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.header-search-input::placeholder {
+  color: #8e8e93;
+}
+
+/* Drop the native WebKit clear button; Escape already clears the field. */
+.header-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* One quiet line pinned under the list. Deliberately muted: status, not
    content. */
 .sync-status {
@@ -647,6 +691,15 @@ body {
 
   .popover-header {
     border-bottom-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .header-search {
+    background-color: rgba(120, 120, 128, 0.28);
+  }
+
+  .header-search-icon,
+  .header-search-input::placeholder {
+    color: #98989d;
   }
 
   .placeholder-heading {
