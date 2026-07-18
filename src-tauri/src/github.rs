@@ -822,10 +822,10 @@ mod tests {
         assert_eq!(out[1].owner_avatar_url, "https://avatars.example/acme");
     }
 
-    fn ci_node(state: &str) -> Value {
-        json!({ "commits": { "nodes": [{ "commit": {
-            "statusCheckRollup": { "state": state }
-        } }] } })
+    /// A `commits` connection whose head commit rolls up to `state`, for
+    /// embedding in a `pr_node` overrides literal.
+    fn ci_commits(state: &str) -> Value {
+        json!({ "nodes": [{ "commit": { "statusCheckRollup": { "state": state } } }] })
     }
 
     #[test]
@@ -835,8 +835,14 @@ mod tests {
             reasons(json!({ "mergeable": "CONFLICTING" })),
             vec![BlockedReason::Conflict]
         );
-        assert_eq!(reasons(ci_node("FAILURE")), vec![BlockedReason::Ci]);
-        assert_eq!(reasons(ci_node("ERROR")), vec![BlockedReason::Ci]);
+        assert_eq!(
+            reasons(json!({ "commits": ci_commits("FAILURE") })),
+            vec![BlockedReason::Ci]
+        );
+        assert_eq!(
+            reasons(json!({ "commits": ci_commits("ERROR") })),
+            vec![BlockedReason::Ci]
+        );
         assert_eq!(
             reasons(json!({ "reviewDecision": "CHANGES_REQUESTED" })),
             vec![BlockedReason::Review]
@@ -854,9 +860,18 @@ mod tests {
         );
         // In-flight states (CI pending, awaiting review) are progress, not
         // blockage.
-        assert_eq!(reasons(ci_node("PENDING")), Vec::new());
-        assert_eq!(reasons(ci_node("EXPECTED")), Vec::new());
-        assert_eq!(reasons(ci_node("SUCCESS")), Vec::new());
+        assert_eq!(
+            reasons(json!({ "commits": ci_commits("PENDING") })),
+            Vec::new()
+        );
+        assert_eq!(
+            reasons(json!({ "commits": ci_commits("EXPECTED") })),
+            Vec::new()
+        );
+        assert_eq!(
+            reasons(json!({ "commits": ci_commits("SUCCESS") })),
+            Vec::new()
+        );
         assert_eq!(
             reasons(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
             Vec::new()
@@ -867,13 +882,11 @@ mod tests {
     /// then CI, then review.
     #[test]
     fn concurrent_triggers_list_every_reason_in_fixed_order() {
-        let mut node = pr_node(json!({
+        let node = pr_node(json!({
             "mergeable": "CONFLICTING",
+            "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED"
         }));
-        node.as_object_mut()
-            .unwrap()
-            .extend(ci_node("FAILURE").as_object().unwrap().clone());
         assert_eq!(
             blocked_reasons_for(&node),
             vec![
@@ -888,14 +901,12 @@ mod tests {
     /// apply — whatever the CI, conflict, or review state says.
     #[test]
     fn drafts_suppress_the_dot_entirely() {
-        let mut node = pr_node(json!({
+        let node = pr_node(json!({
             "isDraft": true,
             "mergeable": "CONFLICTING",
+            "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED"
         }));
-        node.as_object_mut()
-            .unwrap()
-            .extend(ci_node("FAILURE").as_object().unwrap().clone());
         assert_eq!(blocked_reasons_for(&node), Vec::new());
     }
 
@@ -903,13 +914,11 @@ mod tests {
     /// settles; that transient must render as no dot, not as a blocked state.
     #[test]
     fn an_unknown_mergeability_suppresses_the_dot_until_the_next_poll() {
-        let mut node = pr_node(json!({
+        let node = pr_node(json!({
             "mergeable": "UNKNOWN",
+            "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED"
         }));
-        node.as_object_mut()
-            .unwrap()
-            .extend(ci_node("FAILURE").as_object().unwrap().clone());
         assert_eq!(blocked_reasons_for(&node), Vec::new());
     }
 
@@ -934,7 +943,7 @@ mod tests {
             "pullRequests": {
                 "pageInfo": { "hasNextPage": false, "endCursor": null },
                 "nodes": [
-                    pr_node(ci_node("FAILURE")),
+                    pr_node(json!({ "commits": ci_commits("FAILURE") })),
                     pr_node(json!({ "isDraft": true }))
                 ]
             }
@@ -1036,14 +1045,12 @@ mod tests {
         // from activity: they are properties of the PR, not unread events. A
         // node with neither a comment nor a review yields nothing, whatever
         // those fields say.
-        let mut node = pr_node(json!({
+        let node = pr_node(json!({
             "isDraft": false,
             "mergeable": "CONFLICTING",
+            "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED"
         }));
-        node.as_object_mut()
-            .unwrap()
-            .extend(ci_node("FAILURE").as_object().unwrap().clone());
         assert!(collect_activity(&node, "khiet").is_empty());
     }
 
