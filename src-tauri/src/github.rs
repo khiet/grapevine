@@ -833,6 +833,21 @@ mod tests {
         assert_eq!(ci_status_for(&unknown), CiStatus::None);
     }
 
+    /// `PrList.tsx` switches on these exact strings (`pr.ci_status === "failing"`
+    /// today, the others as the indicator grows), so every variant's wire form
+    /// is a contract; a rename or a dropped `rename_all` breaks the row silently.
+    #[test]
+    fn every_ci_status_variant_serializes_to_its_frontend_key() {
+        for (status, expected) in [
+            (CiStatus::Passing, "passing"),
+            (CiStatus::Failing, "failing"),
+            (CiStatus::Pending, "pending"),
+            (CiStatus::None, "none"),
+        ] {
+            assert_eq!(serde_json::to_value(status).unwrap(), json!(expected));
+        }
+    }
+
     #[test]
     fn ci_status_is_read_off_the_head_commit_onto_the_row() {
         let repo = json!({
