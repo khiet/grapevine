@@ -142,6 +142,9 @@ test("a term matches title, repo, author, or #number, case-insensitively", () =>
   expect(matchesFilter(filterable, "#42")).toBe(true);
   expect(matchesFilter(filterable, "42")).toBe(true);
   expect(matchesFilter(filterable, "gadgets")).toBe(false);
+  // Folding runs on both sides: a lowercase query matches the capital "F" in
+  // the title, which pins haystack-side folding, not just the query's.
+  expect(matchesFilter(filterable, "fix")).toBe(true);
 });
 
 test("multiple terms are AND'd across the searchable fields", () => {
