@@ -371,8 +371,9 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<FetchedPrs,
         pending = still_pending;
     }
 
-    // Newest first across all repos; ISO-8601 UTC timestamps sort lexically.
-    prs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Most recently updated first across all repos; ISO-8601 UTC timestamps
+    // sort lexically.
+    prs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(FetchedPrs { prs, rate_limit })
 }
 
@@ -468,7 +469,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
         "{alias}: repository(owner: {owner}, name: {name}) {{ \
            nameWithOwner \
            pullRequests(states: OPEN, first: {PAGE_SIZE}{after}, \
-                        orderBy: {{field: CREATED_AT, direction: DESC}}) {{ \
+                        orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor \
