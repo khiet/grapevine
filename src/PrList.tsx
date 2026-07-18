@@ -200,7 +200,7 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
             {pr.blocked_reasons.length > 0 && (
               <span
                 className="pr-blocked"
-                title={blockedTitle(pr.blocked_reasons)}
+                data-tip={blockedTitle(pr.blocked_reasons)}
                 aria-label={blockedTitle(pr.blocked_reasons)}
               />
             )}

@@ -334,13 +334,49 @@ body {
    conflict, failing CI, changes requested), so it never decorates a healthy
    or in-flight row. Orange reads on both the light and dark card. */
 .pr-blocked {
+  position: relative;
   margin-left: auto;
   flex: none;
   align-self: center;
-  width: 8px;
-  height: 8px;
+  /* The visible dot is the 8px content box; the 4px padding is an invisible
+     hit area, since an 8px hover target is too fiddly for the tooltip. The
+     negative margin keeps the visible dot flush with the timestamp edge. */
+  width: 16px;
+  height: 16px;
+  padding: 4px;
+  margin-right: -4px;
+  background-clip: content-box;
   border-radius: 50%;
   background-color: #ff9f0a;
+}
+
+/* The reasons bubble. A custom tooltip instead of the native `title` one,
+   whose OS-controlled ~1.5s delay buried the information; this one shows
+   after 200ms. Right-aligned to the dot so it grows leftward across the row
+   rather than past the list edge, and raised above the sticky section
+   header. Dark in both themes, like the native macOS dark tooltip. */
+.pr-blocked::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 3px);
+  right: 2px;
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background-color: rgba(58, 58, 60, 0.96);
+  color: #f2f2f7;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.pr-blocked:hover::after {
+  opacity: 1;
+  /* Delay only on the way in; hiding is immediate because the non-hover
+     state carries no transition. */
+  transition: opacity 120ms ease-out 200ms;
 }
 
 /* The draft pill: a neutral state marker in the metadata grey, never a signal
@@ -673,6 +709,12 @@ body {
      pill legible without brightening its text into a signal. */
   .pr-draft {
     background-color: rgba(120, 120, 128, 0.32);
+  }
+
+  /* Lifted a step above the #2c2c2e card so the bubble does not melt into
+     the row it covers. */
+  .pr-blocked::after {
+    background-color: #48484a;
   }
 
   /* Recessed against the #2c2c2e card, so the field reads as a well
