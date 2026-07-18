@@ -92,6 +92,21 @@ export function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
 }
 
+// The fields a filter term can match: title, repo, "#number", and author.
+// Only PullRequest and MergedPr flow through here, and both carry these.
+type Filterable = Pick<PullRequest, "title" | "repo" | "author" | "number">;
+
+// True when every whitespace-separated term appears somewhere in the row's
+// searchable text (case-insensitive). Terms are AND'd, so "acme fix" narrows
+// rather than widens. An empty or whitespace-only query matches everything.
+export function matchesFilter(item: Filterable, query: string): boolean {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack =
+    `${item.title} ${item.repo} #${item.number} ${item.author}`.toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
 // Footer label for the last successful sync, reusing the row-timestamp
 // format: "Synced 14:59" today, then "Synced Yesterday", "Synced 14 Jul".
 export function formatLastSync(

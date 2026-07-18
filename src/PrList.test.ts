@@ -4,6 +4,7 @@ import {
   formatLastSync,
   formatUpdated,
   groupByRepo,
+  matchesFilter,
   totalUnread,
   PullRequest,
 } from "./PrList";
@@ -120,6 +121,36 @@ test("an unparseable timestamp sinks its group instead of throwing", () => {
 
 test("an empty list produces no groups", () => {
   expect(groupByRepo([])).toEqual([]);
+});
+
+const filterable = {
+  title: "Fix the flaky sync test",
+  repo: "acme/widgets",
+  author: "octocat",
+  number: 42,
+};
+
+test("an empty or whitespace query matches every row", () => {
+  expect(matchesFilter(filterable, "")).toBe(true);
+  expect(matchesFilter(filterable, "   ")).toBe(true);
+});
+
+test("a term matches title, repo, author, or #number, case-insensitively", () => {
+  expect(matchesFilter(filterable, "FLAKY")).toBe(true);
+  expect(matchesFilter(filterable, "widgets")).toBe(true);
+  expect(matchesFilter(filterable, "octocat")).toBe(true);
+  expect(matchesFilter(filterable, "#42")).toBe(true);
+  expect(matchesFilter(filterable, "42")).toBe(true);
+  expect(matchesFilter(filterable, "gadgets")).toBe(false);
+  // Folding runs on both sides: a lowercase query matches the capital "F" in
+  // the title, which pins haystack-side folding, not just the query's.
+  expect(matchesFilter(filterable, "fix")).toBe(true);
+});
+
+test("multiple terms are AND'd across the searchable fields", () => {
+  // "acme" hits the repo, "flaky" hits the title: both must match.
+  expect(matchesFilter(filterable, "acme flaky")).toBe(true);
+  expect(matchesFilter(filterable, "acme missing")).toBe(false);
 });
 
 // The keys are the wire contract with the Rust BlockedReason enum; the labels
