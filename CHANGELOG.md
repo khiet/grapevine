@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/khiet/grapevine/compare/grapevine-v0.5.0...grapevine-v0.6.0) (2026-07-19)
+
+
+### Features
+
+* auto-update the app via tauri-plugin-updater ([#28](https://github.com/khiet/grapevine/issues/28)) ([eec05cc](https://github.com/khiet/grapevine/commit/eec05cc64e8f615de6af0862f05cf4cbc609fc60))
+* flag review-requested PRs with a marker in Participated ([#25](https://github.com/khiet/grapevine/issues/25)) ([458d846](https://github.com/khiet/grapevine/commit/458d846b8ef9a4d3aa9789c44bf74f6ec58042a2))
+
 ## [0.5.0](https://github.com/khiet/grapevine/compare/grapevine-v0.4.0...grapevine-v0.5.0) (2026-07-18)
 
 
