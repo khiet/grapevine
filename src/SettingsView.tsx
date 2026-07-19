@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { checkForUpdates, updateStatusLabel, useUpdateState } from "./updater";
 
 interface TokenStatus {
   has_token: boolean;
@@ -53,11 +55,15 @@ function SettingsView() {
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [generalError, setGeneralError] = useState("");
 
+  const [appVersion, setAppVersion] = useState("");
+  const updateState = useUpdateState();
+
   useEffect(() => {
     invoke<TokenStatus>("token_status").then(setTokenStatus).catch(() => {});
     invoke<string[]>("list_repos").then(setRepos).catch(() => {});
     invoke<number>("get_poll_interval").then(setPollSecs).catch(() => {});
     invoke<boolean>("get_launch_at_login").then(setLaunchAtLogin).catch(() => {});
+    getVersion().then(setAppVersion).catch(() => {});
   }, []);
 
   async function changePollInterval(secs: number) {
@@ -225,7 +231,7 @@ function SettingsView() {
         <h2 className="settings-label">General</h2>
         <div className="settings-card">
           <label className="settings-row settings-field-row">
-            <span>Check for updates every</span>
+            <span>Refresh pull requests every</span>
             <select
               value={pollSecs ?? ""}
               disabled={pollSecs === null}
@@ -253,6 +259,28 @@ function SettingsView() {
           </label>
         </div>
         {generalError && <p className="settings-error">{generalError}</p>}
+      </section>
+
+      <section className="settings-section">
+        <h2 className="settings-label">Updates</h2>
+        <div className="settings-card">
+          <div className="settings-row settings-field-row">
+            <span>Grapevine {appVersion && `v${appVersion}`}</span>
+            <button
+              type="button"
+              disabled={
+                updateState.phase === "checking" ||
+                updateState.phase === "downloading"
+              }
+              onClick={() => checkForUpdates(true)}
+            >
+              Check for updates
+            </button>
+          </div>
+        </div>
+        {updateStatusLabel(updateState) && (
+          <p className="settings-note">{updateStatusLabel(updateState)}</p>
+        )}
       </section>
     </main>
   );

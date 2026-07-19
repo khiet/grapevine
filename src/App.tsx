@@ -9,6 +9,7 @@ import PrList, {
   totalUnread,
 } from "./PrList";
 import SettingsView from "./SettingsView";
+import { restartToUpdate, startUpdateChecks, useUpdateState } from "./updater";
 
 function App() {
   const [view, setView] = useState<"list" | "settings">("list");
@@ -21,6 +22,7 @@ function App() {
     sync_error: null,
   });
   const inSettings = view === "settings";
+  const updateState = useUpdateState();
 
   // The filter is a view over the current snapshot, recomputed each render.
   const visiblePrs = snapshot.prs.filter((pr) => matchesFilter(pr, filter));
@@ -29,6 +31,7 @@ function App() {
   const hasVisible = visiblePrs.length > 0 || visibleMerged.length > 0;
 
   useEffect(() => {
+    startUpdateChecks();
     invoke<Snapshot>("get_prs").then(setSnapshot).catch(() => {});
     const unlisten = listen<Snapshot>("prs-updated", (event) =>
       setSnapshot(event.payload),
@@ -87,6 +90,17 @@ function App() {
           </button>
         </span>
       </header>
+      {/* Above the body in both views: an update staged by a background check
+          has no other way to get noticed in a popover that is usually hidden. */}
+      {updateState.phase === "ready" && (
+        <button
+          type="button"
+          className="update-banner"
+          onClick={() => restartToUpdate()}
+        >
+          Restart to update to v{updateState.version}
+        </button>
+      )}
       {inSettings ? (
         <SettingsView />
       ) : hasVisible ? (
