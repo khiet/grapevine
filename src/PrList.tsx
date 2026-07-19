@@ -22,6 +22,10 @@ export interface PullRequest {
    * grey mark. Backend-computed, suppressed on drafts, and self-clearing once
    * the viewer reviews. */
   review_requested: boolean;
+  /** Files touched, straight from GitHub. GitHub computes this lazily, so a
+   * freshly opened PR can report 0; the row hides the count when it is 0 (see
+   * {@link changedFilesLabel}). */
+  changed_files: number;
   unread_count: number;
 }
 
@@ -95,6 +99,18 @@ export function formatUpdated(iso: string, now: Date = new Date()): string {
 
 export function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
+}
+
+// The row's size signal: how many files the PR touches. Returns null when the
+// count is 0, which the row treats as "render nothing": 0 means either a
+// genuinely empty PR or GitHub not having computed the count yet, and "0 files"
+// reads as noise in both cases. Singular label so a one-file PR does not read
+// "1 files".
+export function changedFilesLabel(pr: PullRequest): string | null {
+  if (pr.changed_files === 0) {
+    return null;
+  }
+  return pr.changed_files === 1 ? "1 file" : `${pr.changed_files} files`;
 }
 
 // The fields a filter term can match: title, repo, "#number", and author.
@@ -211,6 +227,7 @@ function RowMark({ tip, children }: { tip: string; children: ReactNode }) {
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean }) {
   const unread = pr.unread_count > 0;
+  const files = changedFilesLabel(pr);
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
@@ -236,6 +253,10 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
               {showRepo ? `${pr.repo} #${pr.number}` : `#${pr.number}`}
             </span>
             <span className="pr-author">@{pr.author}</span>
+            {/* The PR's size: files touched. Fixed width (flex: none), so the
+                repo name truncates first under a tight row. Hidden when the PR
+                has no computed changes (see changedFilesLabel). */}
+            {files && <span className="pr-diffstat">{files}</span>}
             {/* A neutral state pill, never a signal. The backend suppresses
                 the other markers on a draft (the author has not declared
                 readiness), so a draft row shows only this pill, with room to

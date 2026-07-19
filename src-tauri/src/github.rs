@@ -108,6 +108,12 @@ pub struct PullRequest {
     /// [`section_for`]). Same property-not-event rule as `blocked_reasons`;
     /// team requests never set it (see [`review_requested_for`]).
     pub review_requested: bool,
+    /// Files touched, straight from GitHub. Like `mergeable`, GitHub computes
+    /// this lazily, so a freshly opened PR can report 0 until a later poll; the
+    /// row hides the count when it is 0, which also covers a genuinely empty
+    /// PR. Same property-not-event rule as `blocked_reasons`: never feeds
+    /// unread.
+    pub changed_files: u64,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -509,6 +515,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor \
                isDraft mergeable reviewDecision \
+               changedFiles \
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                participants(first: 50) {{ nodes {{ login }} }} \
@@ -586,6 +593,10 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
             review_requested: !is_draft && review_requested_for(node, viewer),
+            changed_files: node
+                .get("changedFiles")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -819,7 +830,7 @@ mod tests {
             "nameWithOwner": "acme/widgets",
             "pullRequests": {
                 "pageInfo": { "hasNextPage": false, "endCursor": "abc" },
-                "nodes": [pr_node(json!({}))]
+                "nodes": [pr_node(json!({ "changedFiles": 7 }))]
             }
         });
         let mut out = Vec::new();
@@ -832,6 +843,25 @@ mod tests {
         assert_eq!(out[0].avatar_url, "https://avatars.example/someone");
         assert_eq!(out[0].created_at, "2026-07-10T12:00:00Z");
         assert_eq!(out[0].updated_at, "2026-07-11T09:30:00Z");
+        assert_eq!(out[0].changed_files, 7);
+    }
+
+    #[test]
+    fn an_uncomputed_file_count_defaults_to_zero() {
+        // GitHub computes changedFiles lazily, so a freshly opened PR omits it;
+        // it must arrive as 0 (not error) so the row's "hide the count when 0"
+        // rule covers the not-yet-computed case. `pr_node` deliberately leaves
+        // the field out.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({}))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert_eq!(out[0].changed_files, 0);
     }
 
     #[test]
@@ -1174,6 +1204,7 @@ mod tests {
         assert!(field.contains("isDraft"));
         assert!(field.contains("mergeable"));
         assert!(field.contains("reviewDecision"));
+        assert!(field.contains("changedFiles"));
     }
 
     #[test]
