@@ -64,6 +64,7 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   section: "all",
   blocked_reasons: [],
   is_draft: false,
+  review_requested: false,
   unread_count,
 });
 

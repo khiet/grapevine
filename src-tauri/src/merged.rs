@@ -118,6 +118,7 @@ mod tests {
             section: Section::All,
             blocked_reasons: vec![],
             is_draft: false,
+            review_requested: false,
             unread_count: 0,
             activity: vec![],
         }

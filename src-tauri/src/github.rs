@@ -94,10 +94,20 @@ pub struct PullRequest {
     /// the PR, never an unread event: it does not feed [`collect_activity`]
     /// and must never move a badge or the tray count.
     pub blocked_reasons: Vec<BlockedReason>,
-    /// Whether the PR is a draft. Renders as a neutral pill, and suppresses
-    /// the blocked dot (see [`blocked_reasons_for`]). Same property-not-event
-    /// rule as `blocked_reasons`.
+    /// Whether the PR is a draft. Renders as a neutral grey mark, and
+    /// suppresses the blocked dot (see [`blocked_reasons_for`]). Same
+    /// property-not-event rule as `blocked_reasons`.
     pub is_draft: bool,
+    /// Whether the viewer's review is directly requested and not yet acted
+    /// on. Renders as a neutral grey mark: a call to act, since we may be
+    /// blocking the author, but not a "stuck" state. GitHub drops the viewer
+    /// from `reviewRequests` once they submit a review, so this clears itself
+    /// and the row falls back to plain participation. Suppressed on drafts,
+    /// like the blocked dot, so a not-ready PR never nags for a review; the
+    /// request still counts toward Participated membership (see
+    /// [`section_for`]). Same property-not-event rule as `blocked_reasons`;
+    /// team requests never set it (see [`review_requested_for`]).
+    pub review_requested: bool,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -531,6 +541,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         .pointer("/pullRequests/nodes")
         .and_then(Value::as_array);
     for node in nodes.into_iter().flatten() {
+        let is_draft = node.get("isDraft").and_then(Value::as_bool) == Some(true);
         out.push(PullRequest {
             number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
             title: node
@@ -569,7 +580,12 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .to_string(),
             section: section_for(node, viewer),
             blocked_reasons: blocked_reasons_for(node),
-            is_draft: node.get("isDraft").and_then(Value::as_bool) == Some(true),
+            is_draft,
+            // Suppressed on drafts, matching the blocked dot: a draft is the
+            // author's not-ready choice, so the row never nags you to act on
+            // it. Only the marker is hidden; `section_for` still counts the
+            // request, so the PR keeps its Participated membership.
+            review_requested: !is_draft && review_requested_for(node, viewer),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -665,6 +681,17 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     reasons
 }
 
+/// Whether the viewer appears among the PR's requested reviewers. Team
+/// requests carry no `login` (GitHub only exposes it via `... on User`), so
+/// they never match: a viewer whose team was asked is not flagged.
+fn review_requested_for(node: &Value, viewer: &str) -> bool {
+    list(node, "/reviewRequests/nodes").iter().any(|n| {
+        n.pointer("/requestedReviewer/login")
+            .and_then(Value::as_str)
+            == Some(viewer)
+    })
+}
+
 /// Mine beats Participated: the author is always a participant, so order
 /// matters. Participants covers reviewers, commenters, and mentions;
 /// reviewRequests covers requests not yet acted on, which GitHub does not
@@ -673,19 +700,10 @@ fn section_for(node: &Value, viewer: &str) -> Section {
     if node.get("viewerDidAuthor").and_then(Value::as_bool) == Some(true) {
         return Section::Mine;
     }
-    let login_matches = |list: Option<&Value>, login_path: &str| {
-        list.and_then(Value::as_array).is_some_and(|nodes| {
-            nodes
-                .iter()
-                .any(|n| n.pointer(login_path).and_then(Value::as_str) == Some(viewer))
-        })
-    };
-    if login_matches(node.pointer("/participants/nodes"), "/login")
-        || login_matches(
-            node.pointer("/reviewRequests/nodes"),
-            "/requestedReviewer/login",
-        )
-    {
+    let is_participant = list(node, "/participants/nodes")
+        .iter()
+        .any(|n| n.pointer("/login").and_then(Value::as_str) == Some(viewer));
+    if is_participant || review_requested_for(node, viewer) {
         return Section::Participated;
     }
     Section::All
@@ -733,6 +751,49 @@ mod tests {
     #[test]
     fn review_requested_prs_are_participated() {
         let node = pr_node(json!({
+            "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
+        }));
+        assert_eq!(section_for(&node, "khiet"), Section::Participated);
+    }
+
+    #[test]
+    fn review_requested_flags_only_when_the_viewer_is_a_requested_reviewer() {
+        // The viewer is one of several requested reviewers: flagged.
+        let requested = pr_node(json!({
+            "reviewRequests": { "nodes": [
+                { "requestedReviewer": { "login": "someone" } },
+                { "requestedReviewer": { "login": "khiet" } }
+            ] }
+        }));
+        assert!(review_requested_for(&requested, "khiet"));
+        // Someone else's review is requested, not the viewer's: not flagged.
+        // The common case, and what keeps the glyph off PRs awaiting others.
+        let other = pr_node(json!({
+            "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+        }));
+        assert!(!review_requested_for(&other, "khiet"));
+        // A participant who was never asked to review: not flagged.
+        let participant = pr_node(json!({
+            "participants": { "nodes": [{ "login": "khiet" }] }
+        }));
+        assert!(!review_requested_for(&participant, "khiet"));
+    }
+
+    #[test]
+    fn a_team_review_request_does_not_flag_the_viewer() {
+        // Team reviewers have no `login` field, so no user can match one.
+        let node = pr_node(json!({
+            "reviewRequests": { "nodes": [{ "requestedReviewer": {} }] }
+        }));
+        assert!(!review_requested_for(&node, "khiet"));
+    }
+
+    #[test]
+    fn a_draft_review_request_still_lands_in_participated() {
+        // Suppressing the draft's row marker must not drop the PR out of
+        // Participated: the viewer is still a requested reviewer.
+        let node = pr_node(json!({
+            "isDraft": true,
             "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
         }));
         assert_eq!(section_for(&node, "khiet"), Section::Participated);
@@ -957,6 +1018,46 @@ mod tests {
     }
 
     #[test]
+    fn a_requested_review_is_read_onto_the_row() {
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                    pr_node(json!({
+                        "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
+                    })),
+                    pr_node(json!({})),
+                ]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].review_requested);
+        assert!(!out[1].review_requested);
+    }
+
+    #[test]
+    fn a_draft_pr_never_flags_review_requested_on_the_row() {
+        // The request still stands, but a draft is the author's not-ready
+        // choice, so its row marker is suppressed like the blocked dot.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({
+                    "isDraft": true,
+                    "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
+                }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].is_draft);
+        assert!(!out[0].review_requested);
+    }
+
+    #[test]
     fn issue_comments_by_others_count_as_activity_but_the_viewers_do_not() {
         let node = pr_node(json!({
             "comments": { "nodes": [
@@ -1041,7 +1142,7 @@ mod tests {
     #[test]
     fn commits_and_status_changes_never_reach_the_activity_list() {
         // CI, mergeability, review decision, and draftness are all fetched
-        // (for the row's blocked dot and draft pill) but deliberately excluded
+        // (for the row's blocked dot and draft mark) but deliberately excluded
         // from activity: they are properties of the PR, not unread events. A
         // node with neither a comment nor a review yields nothing, whatever
         // those fields say.

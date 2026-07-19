@@ -328,14 +328,27 @@ body {
   flex: none;
 }
 
+/* The action-marker cluster (review glasses, blocked dot), pinned as one
+   group at the row's right edge, out of the metadata's way, so the marks sit
+   side by side rather than scattering across the row. The draft pill is not
+   here: the backend suppresses these markers on drafts, so it never coexists
+   with them. */
+.pr-marks {
+  display: inline-flex;
+  align-items: center;
+  /* Each mark carries 4px of transparent hover padding, so a small gap here
+     already reads as comfortable spacing. */
+  gap: 2px;
+  margin-left: auto;
+}
+
 /* The blocked-PR mark: macOS system orange, deliberately not the unread
-   badge's red so the two signals stay distinct. Pushed to the row's right
-   edge, out of the metadata's way; rendered only for blocked states (merge
-   conflict, failing CI, changes requested), so it never decorates a healthy
-   or in-flight row. Orange reads on both the light and dark card. */
+   badge's red so the two signals stay distinct. Rendered only for blocked
+   states (merge conflict, failing CI, changes requested), so it never
+   decorates a healthy or in-flight row. Orange reads on both the light and
+   dark card. */
 .pr-blocked {
   position: relative;
-  margin-left: auto;
   flex: none;
   align-self: center;
   /* The visible dot is the 8px content box; the 4px padding is an invisible
@@ -350,13 +363,13 @@ body {
   background-color: #ff9f0a;
 }
 
-/* The reasons bubble. A custom tooltip instead of the native `title` one,
-   whose OS-controlled ~1.5s delay buried the information; this one shows
-   after 200ms. It sits to the left of the dot on the same line, vertically
-   centred on it, so it reads `Merge conflict ▸ dot`; growing leftward keeps
-   it over the row rather than past the list edge. Dark in both themes, like
-   the native macOS dark tooltip. */
-.pr-blocked::after {
+/* The hover bubble, shared by every mark in the cluster (each carries
+   `.pr-tip` and a `data-tip`). A custom tooltip instead of the native `title`
+   one, whose OS-controlled ~1.5s delay buried the information; this one shows
+   after 200ms. It sits to the left of its marker on the same line, vertically
+   centred on it; growing leftward keeps it over the row rather than past the
+   list edge. Dark in both themes, like the native macOS dark tooltip. */
+.pr-tip::after {
   content: attr(data-tip);
   position: absolute;
   top: 50%;
@@ -373,8 +386,8 @@ body {
 }
 
 /* The tip: a border-triangle butted against the bubble's right edge,
-   pointing at the dot. */
-.pr-blocked::before {
+   pointing at the marker. */
+.pr-tip::before {
   content: "";
   position: absolute;
   top: 50%;
@@ -386,24 +399,41 @@ body {
   border-left-color: rgba(58, 58, 60, 0.96);
 }
 
-.pr-blocked::after,
-.pr-blocked::before {
+.pr-tip::after,
+.pr-tip::before {
   pointer-events: none;
   opacity: 0;
 }
 
-.pr-blocked:hover::after,
-.pr-blocked:hover::before {
+.pr-tip:hover::after,
+.pr-tip:hover::before {
   opacity: 1;
   /* Delay only on the way in; hiding is immediate because the non-hover
      state carries no transition. */
   transition: opacity 120ms ease-out 200ms;
 }
 
+/* A grey glyph mark in the cluster (the review glasses), deliberately never a
+   signal colour: the orange dot's vocabulary stays reserved for blockage. The
+   4px padding is an invisible hover hit area for the tooltip (matching the
+   blocked dot); the negative margin keeps the visible glyph on the text
+   baseline. */
+.pr-glyph {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  padding: 4px;
+  margin: -4px 0;
+  color: #8e8e93;
+}
+
 /* The draft pill: a neutral state marker in the metadata grey, never a signal
-   colour — a draft is the author's own choice, not something stuck. It also
-   explains why a draft row shows no blocked dot. */
+   colour, since a draft is the author's own choice, not something stuck. The
+   backend suppresses the action markers on a draft, so this pill sits alone at
+   the right edge (hence `margin-left: auto`, matching the cluster). */
 .pr-draft {
+  margin-left: auto;
   flex: none;
   align-self: center;
   padding: 0 5px;
@@ -779,6 +809,12 @@ body {
     color: #7c7c80;
   }
 
+  /* A slightly lighter grey so the glyphs read on the dark card without
+     brightening into a signal colour. */
+  .pr-glyph {
+    color: #98989d;
+  }
+
   /* The light-mode fill sinks into the dark card; a stronger fill keeps the
      pill legible without brightening its text into a signal. */
   .pr-draft {
@@ -787,11 +823,11 @@ body {
 
   /* Lifted a step above the #2c2c2e card so the bubble does not melt into
      the row it covers. */
-  .pr-blocked::after {
+  .pr-tip::after {
     background-color: #48484a;
   }
 
-  .pr-blocked::before {
+  .pr-tip::before {
     border-left-color: #48484a;
   }
 
