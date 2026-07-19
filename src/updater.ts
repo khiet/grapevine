@@ -32,6 +32,11 @@ export function useUpdateState(): UpdateState {
   );
 }
 
+/** Imperative read of the same store useUpdateState() binds to. */
+export function currentUpdateState(): UpdateState {
+  return state;
+}
+
 /** Settings-row copy for each update phase; empty when there is nothing to say. */
 export function updateStatusLabel(state: UpdateState): string {
   switch (state.phase) {
