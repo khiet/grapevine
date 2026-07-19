@@ -834,7 +834,7 @@ mod tests {
             "nameWithOwner": "acme/widgets",
             "pullRequests": {
                 "pageInfo": { "hasNextPage": false, "endCursor": "abc" },
-                "nodes": [pr_node(json!({}))]
+                "nodes": [pr_node(json!({ "additions": 256, "deletions": 55, "changedFiles": 7 }))]
             }
         });
         let mut out = Vec::new();
@@ -847,6 +847,29 @@ mod tests {
         assert_eq!(out[0].avatar_url, "https://avatars.example/someone");
         assert_eq!(out[0].created_at, "2026-07-10T12:00:00Z");
         assert_eq!(out[0].updated_at, "2026-07-11T09:30:00Z");
+        assert_eq!(out[0].additions, 256);
+        assert_eq!(out[0].deletions, 55);
+        assert_eq!(out[0].changed_files, 7);
+    }
+
+    #[test]
+    fn uncomputed_diff_counts_default_to_zero() {
+        // GitHub computes additions/deletions/changedFiles lazily, so a freshly
+        // opened PR omits them; they must arrive as 0 (not error) so the row's
+        // "hide the diffstat when all zero" rule covers the not-yet-computed
+        // case. `pr_node` deliberately leaves these fields out.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({}))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert_eq!(out[0].additions, 0);
+        assert_eq!(out[0].deletions, 0);
+        assert_eq!(out[0].changed_files, 0);
     }
 
     #[test]
