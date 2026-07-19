@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   blockedTitle,
-  diffstat,
+  changedFilesLabel,
   formatLastSync,
   formatUpdated,
   groupByRepo,
@@ -66,8 +66,6 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   blocked_reasons: [],
   is_draft: false,
   review_requested: false,
-  additions: 0,
-  deletions: 0,
   changed_files: 0,
   unread_count,
 });
@@ -77,36 +75,23 @@ test("the tray-facing total sums unread across PRs", () => {
   expect(totalUnread([prWithUnread(2), prWithUnread(0), prWithUnread(5)])).toBe(7);
 });
 
-const prWithDiff = (
-  additions: number,
-  deletions: number,
-  changed_files: number,
-): PullRequest => ({ ...prWithUnread(0), additions, deletions, changed_files });
-
-test("diffstat splits lines and a pluralized file count", () => {
-  expect(diffstat(prWithDiff(256, 55, 7))).toEqual({
-    lines: "+256 -55",
-    files: "7 files",
-  });
+const prWithFiles = (changed_files: number): PullRequest => ({
+  ...prWithUnread(0),
+  changed_files,
 });
 
-test("diffstat says '1 file', not '1 files', for a single-file PR", () => {
-  expect(diffstat(prWithDiff(3, 1, 1))).toEqual({ lines: "+3 -1", files: "1 file" });
+test("the file count pluralizes", () => {
+  expect(changedFilesLabel(prWithFiles(7))).toBe("7 files");
 });
 
-test("diffstat hides itself when nothing has changed", () => {
-  // All-zero is both a genuinely empty PR and GitHub's not-yet-computed state;
-  // the row renders no diffstat rather than a meaningless "+0 -0".
-  expect(diffstat(prWithDiff(0, 0, 0))).toBeNull();
+test("the file count says '1 file', not '1 files', for a single-file PR", () => {
+  expect(changedFilesLabel(prWithFiles(1))).toBe("1 file");
 });
 
-test("diffstat renders when only one side changed", () => {
-  // A nonzero addition alone is not the all-zero hide case, so it still shows,
-  // deletions and all, rather than being suppressed as noise.
-  expect(diffstat(prWithDiff(10, 0, 1))).toEqual({
-    lines: "+10 -0",
-    files: "1 file",
-  });
+test("the file count hides itself when nothing has changed", () => {
+  // 0 is both a genuinely empty PR and GitHub's not-yet-computed state; the row
+  // renders no count rather than a meaningless "0 files".
+  expect(changedFilesLabel(prWithFiles(0))).toBeNull();
 });
 
 const pr = (repo: string, number: number, updated_at: string): PullRequest => ({

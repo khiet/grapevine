@@ -119,8 +119,6 @@ mod tests {
             blocked_reasons: vec![],
             is_draft: false,
             review_requested: false,
-            additions: 0,
-            deletions: 0,
             changed_files: 0,
             unread_count: 0,
             activity: vec![],
