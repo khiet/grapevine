@@ -114,6 +114,9 @@ jobs:
       # but stapling and the Gatekeeper assessment only make sense once the
       # notary credentials are also present. A cert-only setup must not run
       # (and fail) the notarization checks.
+      # The updater key is detected alongside: without it the build cannot sign
+      # updater artifacts, so their creation is skipped entirely (again keeping
+      # forks green) and installed apps simply never see this release offered.
       - name: Detect whether Apple signing is configured
         id: signing
         env:
@@ -121,6 +124,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -n "$APPLE_CERTIFICATE" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -136,6 +140,13 @@ jobs:
             if [ -n "$APPLE_CERTIFICATE" ]; then
               echo "::warning::Notarization credentials are not set; producing a signed but un-notarized build."
             fi
+          fi
+
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "updater=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "updater=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set; skipping updater artifacts, so installed apps will not auto-update to this release."
           fi
 
       # Import the Developer ID cert into a throwaway keychain scoped to this
@@ -173,13 +184,28 @@ jobs:
       # tauri signs the bundle and notarizes it with Apple, then staples the
       # ticket to the .app before it is zipped below. Absent those vars the
       # bundle falls back to an ad-hoc signature.
+      # createUpdaterArtifacts lives in an overlay config merged in only here,
+      # not in tauri.conf.json: with it enabled the bundler refuses to build
+      # unless TAURI_SIGNING_PRIVATE_KEY is set, which would break every local
+      # `tauri build`. With the overlay the build also emits Grapevine.app.tar.gz
+      # plus a .sig made with the updater key, which installed apps verify
+      # against the pubkey baked into tauri.conf.json.
       - name: Build the universal app bundle
         env:
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run tauri build -- --target universal-apple-darwin
+          UPDATER: ${{ steps.signing.outputs.updater }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ "$UPDATER" = "true" ]; then
+            npm run tauri build -- --target universal-apple-darwin \
+              --config src-tauri/updater-artifacts.conf.json
+          else
+            npm run tauri build -- --target universal-apple-darwin
+          fi
 
       # Fail the release if a build we believe is signed did not actually come
       # out signed and stapled: spctl assesses it exactly as Gatekeeper will on
@@ -206,10 +232,42 @@ jobs:
             "src-tauri/target/universal-apple-darwin/release/bundle/macos/Grapevine.app" \
             "Grapevine-v${VERSION}-universal.zip"
 
+      # The manifest is what installed apps poll via the stable
+      # releases/latest/download/latest.json URL, so it is regenerated for and
+      # attached to every release. Both platform keys carry the same universal
+      # tarball: the updater reports the arch it runs on, never "universal".
+      # The tarball gets a versioned name so its per-release download URL in the
+      # manifest can never collide across releases.
+      - name: Write the updater manifest
+        if: steps.signing.outputs.updater == 'true'
+        run: |
+          BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+          TARBALL="Grapevine-v${VERSION}-universal.app.tar.gz"
+          mv "$BUNDLE_DIR/Grapevine.app.tar.gz" "$TARBALL"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${TARBALL}" \
+            --rawfile signature "$BUNDLE_DIR/Grapevine.app.tar.gz.sig" \
+            '{
+              version: $version,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $signature, url: $url },
+                "darwin-x86_64": { signature: $signature, url: $url }
+              }
+            }' > latest.json
+
       - name: Attach the build to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$TAG" "Grapevine-v${VERSION}-universal.zip" --clobber
+          UPDATER: ${{ steps.signing.outputs.updater }}
+        run: |
+          ASSETS=("Grapevine-v${VERSION}-universal.zip")
+          if [ "$UPDATER" = "true" ]; then
+            ASSETS+=("Grapevine-v${VERSION}-universal.app.tar.gz" latest.json)
+          fi
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
 
       # Notes come from CHANGELOG.md, not from what release-please derived for
       # the release body: the changelog is the copy a human may have rewritten
