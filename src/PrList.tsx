@@ -22,6 +22,12 @@ export interface PullRequest {
    * grey mark. Backend-computed, suppressed on drafts, and self-clearing once
    * the viewer reviews. */
   review_requested: boolean;
+  /** Lines added / removed / files touched, straight from GitHub. GitHub
+   * computes these lazily, so a freshly opened PR can report 0 for all three;
+   * the row hides the diffstat when all three are 0 (see {@link diffstat}). */
+  additions: number;
+  deletions: number;
+  changed_files: number;
   unread_count: number;
 }
 
@@ -95,6 +101,24 @@ export function formatUpdated(iso: string, now: Date = new Date()): string {
 
 export function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
+}
+
+// The row's size signal, split so the row can space the two pieces with the
+// same flex gap as the rest of the metadata rather than a literal separator.
+// Returns null when nothing has changed, which the row treats as "render no
+// diffstat": all-zero means either a genuinely empty PR or GitHub not having
+// computed the counts yet, and "+0 -0  0 files" reads as noise in both cases.
+// Files use a singular label so a one-file PR does not read "1 files".
+export function diffstat(
+  pr: PullRequest,
+): { lines: string; files: string } | null {
+  if (pr.additions === 0 && pr.deletions === 0 && pr.changed_files === 0) {
+    return null;
+  }
+  return {
+    lines: `+${pr.additions} -${pr.deletions}`,
+    files: pr.changed_files === 1 ? "1 file" : `${pr.changed_files} files`,
+  };
 }
 
 // The fields a filter term can match: title, repo, "#number", and author.
@@ -211,6 +235,7 @@ function RowMark({ tip, children }: { tip: string; children: ReactNode }) {
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean }) {
   const unread = pr.unread_count > 0;
+  const stat = diffstat(pr);
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
@@ -236,6 +261,16 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
               {showRepo ? `${pr.repo} #${pr.number}` : `#${pr.number}`}
             </span>
             <span className="pr-author">@{pr.author}</span>
+            {/* The diff size, split into two fixed-width spans so the flex gap
+                spaces them like the rest of the metadata. Fixed (flex: none),
+                so the repo name truncates first under a tight row. Hidden when
+                the PR has no computed changes (see diffstat). */}
+            {stat && (
+              <>
+                <span className="pr-diffstat">{stat.lines}</span>
+                <span className="pr-diffstat">{stat.files}</span>
+              </>
+            )}
             {/* A neutral state pill, never a signal. The backend suppresses
                 the other markers on a draft (the author has not declared
                 readiness), so a draft row shows only this pill, with room to

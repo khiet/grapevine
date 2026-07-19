@@ -108,6 +108,14 @@ pub struct PullRequest {
     /// [`section_for`]). Same property-not-event rule as `blocked_reasons`;
     /// team requests never set it (see [`review_requested_for`]).
     pub review_requested: bool,
+    /// Lines added / removed / files touched, straight from GitHub. Like
+    /// `mergeable`, GitHub computes these lazily, so a freshly opened PR can
+    /// report 0 for all three until a later poll; the row hides the diffstat
+    /// when all three are 0, which also covers a genuinely empty PR. Same
+    /// property-not-event rule as `blocked_reasons`: never feeds unread.
+    pub additions: u64,
+    pub deletions: u64,
+    pub changed_files: u64,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -509,6 +517,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor \
                isDraft mergeable reviewDecision \
+               additions deletions changedFiles \
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                participants(first: 50) {{ nodes {{ login }} }} \
@@ -586,6 +595,12 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
             review_requested: !is_draft && review_requested_for(node, viewer),
+            additions: node.get("additions").and_then(Value::as_u64).unwrap_or(0),
+            deletions: node.get("deletions").and_then(Value::as_u64).unwrap_or(0),
+            changed_files: node
+                .get("changedFiles")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -1174,6 +1189,7 @@ mod tests {
         assert!(field.contains("isDraft"));
         assert!(field.contains("mergeable"));
         assert!(field.contains("reviewDecision"));
+        assert!(field.contains("additions deletions changedFiles"));
     }
 
     #[test]
