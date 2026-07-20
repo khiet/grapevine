@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -32,6 +32,72 @@ export function pollLabel(secs: number): string {
   return minutes === 1 ? "1 minute" : `${minutes} minutes`;
 }
 
+export interface RepoEntry {
+  fullName: string;
+  name: string;
+  watched: boolean;
+}
+
+export interface RepoGroup {
+  owner: string;
+  repos: RepoEntry[];
+}
+
+// The browse list is the union of the fetched affiliated repos and the
+// watched list: a watched repo outside the fetch (external OSS, or beyond
+// the backend's page cap) must stay visible or it could never be unchecked.
+// Matching is case-insensitive with the fetched (canonical) casing winning.
+// Groups sort by owner, repos by name, both case-insensitively.
+export function groupRepos(available: string[], watched: string[]): RepoGroup[] {
+  const watchedKeys = new Set(watched.map((repo) => repo.toLowerCase()));
+  const availableKeys = new Set(available.map((repo) => repo.toLowerCase()));
+  const names = [
+    ...available,
+    ...watched.filter((repo) => !availableKeys.has(repo.toLowerCase())),
+  ];
+  const groups = new Map<string, RepoGroup>();
+  for (const fullName of names) {
+    const slash = fullName.indexOf("/");
+    const owner = slash === -1 ? fullName : fullName.slice(0, slash);
+    const name = slash === -1 ? fullName : fullName.slice(slash + 1);
+    const key = owner.toLowerCase();
+    let group = groups.get(key);
+    if (!group) {
+      group = { owner, repos: [] };
+      groups.set(key, group);
+    }
+    group.repos.push({
+      fullName,
+      name,
+      watched: watchedKeys.has(fullName.toLowerCase()),
+    });
+  }
+  const compare = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" });
+  const result = [...groups.values()];
+  for (const group of result) {
+    group.repos.sort((a, b) => compare(a.name, b.name));
+  }
+  result.sort((a, b) => compare(a.owner, b.owner));
+  return result;
+}
+
+// Case-insensitive substring match against the full "owner/name" string, so
+// one needle can hit the owner, the repo name, or span the slash. Groups
+// left with no matches disappear.
+export function filterGroups(groups: RepoGroup[], filter: string): RepoGroup[] {
+  const needle = filter.trim().toLowerCase();
+  if (needle === "") return groups;
+  return groups
+    .map((group) => ({
+      owner: group.owner,
+      repos: group.repos.filter((repo) =>
+        repo.fullName.toLowerCase().includes(needle),
+      ),
+    }))
+    .filter((group) => group.repos.length > 0);
+}
+
 function SettingsView() {
   const [tokenStatus, setTokenStatus] = useState<TokenStatus>({
     has_token: false,
@@ -49,6 +115,18 @@ function SettingsView() {
   const [repoError, setRepoError] = useState("");
   const [repoBusy, setRepoBusy] = useState(false);
 
+  // null until the affiliated-repo fetch resolves; [] is a real empty result.
+  const [available, setAvailable] = useState<string[] | null>(null);
+  const [browseError, setBrowseError] = useState("");
+  const [repoFilter, setRepoFilter] = useState("");
+  // Lowercased names of repos with an in-flight toggle: their checkboxes are
+  // disabled so a double click cannot fire add and remove concurrently.
+  const [toggling, setToggling] = useState<Set<string>>(new Set());
+  // add_repo/remove_repo each return the authoritative repo list; when two
+  // toggles overlap, only the response to the latest request may win, or a
+  // stale list would resurrect the earlier toggle's state.
+  const repoSeq = useRef(0);
+
   // null until the stored value arrives, so the select never flashes a
   // default the user did not pick.
   const [pollSecs, setPollSecs] = useState<number | null>(null);
@@ -65,6 +143,21 @@ function SettingsView() {
     invoke<boolean>("get_launch_at_login").then(setLaunchAtLogin).catch(() => {});
     getVersion().then(setAppVersion).catch(() => {});
   }, []);
+
+  const loadAvailable = useCallback(async () => {
+    setBrowseError("");
+    try {
+      setAvailable(await invoke<string[]>("list_affiliated_repos"));
+    } catch (error) {
+      setBrowseError(String(error));
+    }
+  }, []);
+
+  // Gated on has_token rather than run on mount: token_status resolves
+  // asynchronously, and this also re-fetches the moment a token is saved.
+  useEffect(() => {
+    if (tokenStatus.has_token) loadAvailable();
+  }, [tokenStatus.has_token, loadAvailable]);
 
   async function changePollInterval(secs: number) {
     setGeneralError("");
@@ -118,8 +211,10 @@ function SettingsView() {
     event.preventDefault();
     setRepoBusy(true);
     setRepoError("");
+    const seq = ++repoSeq.current;
     try {
-      setRepos(await invoke<string[]>("add_repo", { name: repoInput }));
+      const next = await invoke<string[]>("add_repo", { name: repoInput });
+      if (seq === repoSeq.current) setRepos(next);
       setRepoInput("");
     } catch (error) {
       setRepoError(String(error));
@@ -128,14 +223,34 @@ function SettingsView() {
     }
   }
 
-  async function removeRepo(name: string) {
+  async function toggleRepo(fullName: string, watched: boolean) {
+    const key = fullName.toLowerCase();
+    if (toggling.has(key)) return;
+    setToggling((prev) => new Set(prev).add(key));
     setRepoError("");
+    const seq = ++repoSeq.current;
     try {
-      setRepos(await invoke<string[]>("remove_repo", { name }));
+      const next = await invoke<string[]>(watched ? "remove_repo" : "add_repo", {
+        name: fullName,
+      });
+      if (seq === repoSeq.current) setRepos(next);
     } catch (error) {
       setRepoError(String(error));
+    } finally {
+      setToggling((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   }
+
+  // A failed or skipped fetch leaves `available` empty, so the union
+  // degrades to the watched repos rendered as checked rows.
+  const browseGroups = filterGroups(
+    groupRepos(available ?? [], repos),
+    repoFilter,
+  );
 
   return (
     <main className="settings">
@@ -192,24 +307,61 @@ function SettingsView() {
       <section className="settings-section">
         <h2 className="settings-label">Watched repositories</h2>
         <div className="settings-card">
-          {repos.length === 0 ? (
-            <p className="settings-row settings-empty">No repositories yet.</p>
-          ) : (
-            <ul className="repo-list">
-              {repos.map((repo) => (
-                <li key={repo} className="settings-row repo-row">
-                  <span className="repo-name">{repo}</span>
-                  <button
-                    type="button"
-                    className="repo-remove"
-                    aria-label={`Remove ${repo}`}
-                    onClick={() => removeRepo(repo)}
-                  >
-                    ×
-                  </button>
-                </li>
+          <div className="settings-row settings-input-row">
+            <input
+              type="search"
+              value={repoFilter}
+              onChange={(event) => setRepoFilter(event.target.value)}
+              placeholder="Filter repositories"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          {!tokenStatus.has_token ? (
+            <p className="settings-note">
+              Save a GitHub token above to browse your repositories.
+            </p>
+          ) : available === null && !browseError ? (
+            <p className="settings-row settings-empty">Loading repositories…</p>
+          ) : null}
+          {browseGroups.length > 0 ? (
+            <div className="repo-browser">
+              {browseGroups.map((group) => (
+                <div key={group.owner.toLowerCase()}>
+                  <div className="repo-group-label">{group.owner}</div>
+                  {group.repos.map((repo) => (
+                    <label
+                      key={repo.fullName.toLowerCase()}
+                      className="settings-row repo-check-row"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={repo.watched}
+                        disabled={toggling.has(repo.fullName.toLowerCase())}
+                        onChange={() => toggleRepo(repo.fullName, repo.watched)}
+                      />
+                      <span className="repo-name">{repo.name}</span>
+                    </label>
+                  ))}
+                </div>
               ))}
-            </ul>
+            </div>
+          ) : repoFilter.trim() !== "" ? (
+            // Only a filter can empty a non-empty list; the other empty
+            // states (no token, loading) already have their own rows.
+            <p className="settings-row settings-empty">No repositories match.</p>
+          ) : null}
+          {browseError && (
+            <p className="settings-row settings-warning">
+              <span>{browseError}</span>
+              <button
+                type="button"
+                className="settings-link"
+                onClick={loadAvailable}
+              >
+                Retry
+              </button>
+            </p>
           )}
           <form className="settings-row settings-input-row" onSubmit={addRepo}>
             <input

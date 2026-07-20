@@ -162,6 +162,16 @@ pub async fn remove_repo(app: AppHandle, name: String) -> Result<Vec<String>, St
     Ok(current.repos)
 }
 
+/// Every repo the settings browse list can offer: owned + org-member,
+/// archived excluded. Read-only, so no sync wake.
+#[tauri::command]
+pub async fn list_affiliated_repos() -> Result<Vec<String>, String> {
+    let Some(token) = keychain::load()? else {
+        return Err("Save a valid GitHub token first.".into());
+    };
+    Ok(github::fetch_affiliated_repos(&token).await?)
+}
+
 #[tauri::command]
 pub async fn get_poll_interval(app: AppHandle) -> Result<u64, String> {
     Ok(settings::load(&app)?.poll_interval_secs)

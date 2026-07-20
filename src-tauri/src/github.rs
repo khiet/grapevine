@@ -356,6 +356,68 @@ pub async fn validate_repo(token: &str, owner: &str, name: &str) -> Result<Strin
     Err(error_from_graphql(response.errors).into())
 }
 
+/// Both affiliation arguments matter: `ownerAffiliations` defaults to
+/// [OWNER, COLLABORATOR], so setting `affiliations` alone would silently
+/// drop org-member repos from the intersection. Deliberately no `rateLimit`
+/// field: this query runs outside the sync loop, and its budget report would
+/// only confuse the loop's planning.
+const AFFILIATED_REPOS_QUERY: &str = "\
+query($cursor: String) { \
+  viewer { \
+    repositories(first: 100, after: $cursor, \
+                 affiliations: [OWNER, ORGANIZATION_MEMBER], \
+                 ownerAffiliations: [OWNER, ORGANIZATION_MEMBER], \
+                 orderBy: {field: NAME, direction: ASC}) { \
+      pageInfo { hasNextPage endCursor } \
+      nodes { nameWithOwner isArchived } \
+    } \
+  } \
+}";
+
+/// Every repo the viewer owns or shares an org with, as canonical
+/// `owner/name` strings, archived repos excluded. Capped at 10 pages
+/// (1000 repos); past the cap the partial list is returned rather than an
+/// error, since the settings view unions in watched repos anyway and a
+/// truncated browse list degrades more gracefully than a blank one.
+pub async fn fetch_affiliated_repos(token: &str) -> Result<Vec<String>, GithubError> {
+    let mut repos = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10 {
+        let response = graphql(token, AFFILIATED_REPOS_QUERY, json!({ "cursor": cursor })).await?;
+        let Some(data) = response.data else {
+            return Err(error_from_graphql(response.errors));
+        };
+        cursor = collect_affiliated_page(&data, &mut repos);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(repos)
+}
+
+/// Appends one page of non-archived repo names to `out`. Returns the cursor
+/// to resume from when more pages remain.
+fn collect_affiliated_page(data: &Value, out: &mut Vec<String>) -> Option<String> {
+    let nodes = data
+        .pointer("/viewer/repositories/nodes")
+        .and_then(Value::as_array);
+    for node in nodes.into_iter().flatten() {
+        if node.get("isArchived").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        if let Some(name) = node.get("nameWithOwner").and_then(Value::as_str) {
+            out.push(name.to_string());
+        }
+    }
+    let page = data.pointer("/viewer/repositories/pageInfo")?;
+    if page.get("hasNextPage").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    page.get("endCursor")
+        .and_then(Value::as_str)
+        .map(String::from)
+}
+
 /// A completed PR fetch plus the rate-limit budget GitHub reported with it.
 pub struct FetchedPrs {
     pub prs: Vec<PullRequest>,
@@ -1321,6 +1383,67 @@ mod tests {
         assert!(field.contains("mergeable"));
         assert!(field.contains("reviewDecision"));
         assert!(field.contains("changedFiles"));
+    }
+
+    /// `ownerAffiliations` defaults to [OWNER, COLLABORATOR]; if the query
+    /// ever drops the explicit argument, org-member repos silently vanish
+    /// from the browse list.
+    #[test]
+    fn the_affiliated_query_sets_both_affiliation_arguments() {
+        assert!(AFFILIATED_REPOS_QUERY.contains("affiliations: [OWNER, ORGANIZATION_MEMBER]"));
+        assert!(AFFILIATED_REPOS_QUERY.contains("ownerAffiliations: [OWNER, ORGANIZATION_MEMBER]"));
+        assert!(AFFILIATED_REPOS_QUERY.contains("isArchived"));
+        assert!(AFFILIATED_REPOS_QUERY.contains("nameWithOwner"));
+    }
+
+    fn repo_page(nodes: Value, page_info: Value) -> Value {
+        json!({ "viewer": { "repositories": { "nodes": nodes, "pageInfo": page_info } } })
+    }
+
+    #[test]
+    fn affiliated_page_collects_names_and_skips_archived() {
+        let data = repo_page(
+            json!([
+                { "nameWithOwner": "acme/widgets", "isArchived": false },
+                { "nameWithOwner": "acme/attic", "isArchived": true },
+                // Missing isArchived is treated as live, not dropped.
+                { "nameWithOwner": "khietle/dotfiles" }
+            ]),
+            json!({ "hasNextPage": false, "endCursor": "c1" }),
+        );
+        let mut out = Vec::new();
+        assert_eq!(collect_affiliated_page(&data, &mut out), None);
+        assert_eq!(out, vec!["acme/widgets", "khietle/dotfiles"]);
+    }
+
+    #[test]
+    fn affiliated_page_returns_the_resume_cursor_only_when_more_pages_remain() {
+        let more = repo_page(json!([]), json!({ "hasNextPage": true, "endCursor": "c2" }));
+        let mut out = Vec::new();
+        assert_eq!(
+            collect_affiliated_page(&more, &mut out),
+            Some("c2".to_string())
+        );
+        let last = repo_page(
+            json!([]),
+            json!({ "hasNextPage": false, "endCursor": "c2" }),
+        );
+        assert_eq!(collect_affiliated_page(&last, &mut out), None);
+    }
+
+    #[test]
+    fn affiliated_page_tolerates_malformed_responses() {
+        let mut out = Vec::new();
+        // No pageInfo: no cursor, and no panic.
+        let no_page = json!({ "viewer": { "repositories": {
+            "nodes": [{ "nameWithOwner": "acme/widgets" }]
+        } } });
+        assert_eq!(collect_affiliated_page(&no_page, &mut out), None);
+        assert_eq!(out, vec!["acme/widgets"]);
+        // Null nodes and a node with no name: skipped.
+        let sparse = repo_page(json!(null), json!({ "hasNextPage": false }));
+        assert_eq!(collect_affiliated_page(&sparse, &mut out), None);
+        assert_eq!(out.len(), 1);
     }
 
     #[test]

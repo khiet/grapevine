@@ -62,6 +62,7 @@ pub fn run() {
             commands::list_repos,
             commands::add_repo,
             commands::remove_repo,
+            commands::list_affiliated_repos,
             commands::get_prs,
             commands::mark_read,
             commands::mark_all_read,
