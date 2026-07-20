@@ -18,10 +18,15 @@ export interface PullRequest {
   blocked_reasons: BlockedReason[];
   /** Drafts render a neutral pill; the backend suppresses their dot. */
   is_draft: boolean;
-  /** The viewer's review is requested and not yet acted on; renders a neutral
-   * grey mark. Backend-computed, suppressed on drafts, and self-clearing once
-   * the viewer reviews. */
+  /** The viewer's review is requested and not yet acted on; renders the
+   * glasses glyph with an incoming arrow. Backend-computed, suppressed on
+   * drafts, and self-clearing once the viewer reviews. */
   review_requested: boolean;
+  /** One of the viewer's own PRs is waiting on a reviewer; renders the glasses
+   * glyph with an outgoing arrow. The Mine-only mirror of review_requested
+   * (the two never share a row), suppressed on drafts, and self-clearing as
+   * reviewers submit. */
+  awaiting_review: boolean;
   /** Files touched, straight from GitHub. GitHub computes this lazily, so a
    * freshly opened PR can report 0; the row hides the count when it is 0 (see
    * {@link changedFilesLabel}). */
@@ -195,32 +200,83 @@ function PrAvatar({
   );
 }
 
-// A grey glyph in the row's right-edge marker cluster (currently the review
-// glasses): a 13px stroke icon whose meaning lives in the hover tooltip and
-// aria-label, both fed by `tip`. The draft pill and the blocked dot are not
-// these: they carry their own styling, not a grey glyph.
-function RowMark({ tip, children }: { tip: string; children: ReactNode }) {
+// A grey glyph in the row's right-edge marker cluster: a 13px stroke icon
+// whose meaning lives in the hover tooltip and aria-label, both fed by `tip`.
+// `wide` lets it hold a direction arrow beside the glasses. The draft pill and
+// the blocked dot are not these: they carry their own styling, not a glyph.
+function RowMark({
+  tip,
+  wide,
+  children,
+}: {
+  tip: string;
+  wide?: boolean;
+  children: ReactNode;
+}) {
   return (
     <span
-      className="pr-glyph pr-tip"
+      className={wide ? "pr-glyph pr-glyph-wide pr-tip" : "pr-glyph pr-tip"}
       role="img"
       data-tip={tip}
       aria-label={tip}
     >
-      <svg
-        viewBox="0 0 24 24"
-        width="13"
-        height="13"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        {children}
-      </svg>
+      {children}
     </span>
+  );
+}
+
+// The review glasses, shared by both review-request directions.
+function Glasses() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="13"
+      height="13"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="6" cy="15" r="4" />
+      <circle cx="18" cy="15" r="4" />
+      <path d="M14 15a2 2 0 0 0-4 0" />
+      <path d="M2.5 13 5 7c.7-1.3 1.4-2 3-2" />
+      <path d="M21.5 13 19 7c-.7-1.3-1.5-2-3-2" />
+    </svg>
+  );
+}
+
+// The direction arrow that pairs with the glasses. "in" points at the viewer
+// (someone requested their review); "out" points away (the viewer is waiting
+// on a reviewer). A hair heavier stroke than the glasses so it stays legible
+// at its narrow width.
+function DirectionArrow({ dir }: { dir: "in" | "out" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="9"
+      height="13"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {dir === "in" ? (
+        <>
+          <path d="M20 12H6" />
+          <path d="M11 6l-5 6 5 6" />
+        </>
+      ) : (
+        <>
+          <path d="M4 12h14" />
+          <path d="M13 6l5 6-5 6" />
+        </>
+      )}
+    </svg>
   );
 }
 
@@ -263,22 +319,32 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                 spare. */}
             {pr.is_draft && <span className="pr-draft">Draft</span>}
             {/* The action markers cluster at the row's right edge as one group
-                instead of scattering through the metadata: review requested,
-                then the blocked dot. Never shown on a draft (the backend
-                suppresses both), so this and the draft pill are exclusive. */}
-            {(pr.review_requested || pr.blocked_reasons.length > 0) && (
+                instead of scattering through the metadata: the review glyph
+                (incoming or outgoing, never both on one row), then the blocked
+                dot. Never shown on a draft (the backend suppresses all three),
+                so this and the draft pill are exclusive. */}
+            {(pr.review_requested ||
+              pr.awaiting_review ||
+              pr.blocked_reasons.length > 0) && (
               <span className="pr-marks">
-                {/* Glasses: your review is requested. A grey mark like the
-                    draft pill, not a status dot: an invitation to act, outside
-                    the orange dot's "something is stuck" vocabulary.
-                    Self-clears once you review (the backend drops it). */}
+                {/* Glasses with an incoming arrow: your review is requested. A
+                    grey mark like the draft pill, not a status dot: an
+                    invitation to act, outside the orange dot's "something is
+                    stuck" vocabulary. Self-clears once you review. */}
                 {pr.review_requested && (
-                  <RowMark tip="Review requested">
-                    <circle cx="6" cy="15" r="4" />
-                    <circle cx="18" cy="15" r="4" />
-                    <path d="M14 15a2 2 0 0 0-4 0" />
-                    <path d="M2.5 13 5 7c.7-1.3 1.4-2 3-2" />
-                    <path d="M21.5 13 19 7c-.7-1.3-1.5-2-3-2" />
+                  <RowMark tip="Review requested" wide>
+                    <DirectionArrow dir="in" />
+                    <Glasses />
+                  </RowMark>
+                )}
+                {/* Glasses with an outgoing arrow: one of your PRs is waiting on
+                    a reviewer. The Mine-only mirror of the incoming glyph, so
+                    it never shares a row with it. Self-clears as reviewers
+                    submit (the backend drops the request). */}
+                {pr.awaiting_review && (
+                  <RowMark tip="Awaiting review" wide>
+                    <Glasses />
+                    <DirectionArrow dir="out" />
                   </RowMark>
                 )}
                 {/* A single mark for a blocked PR (merge conflict, failing CI,
