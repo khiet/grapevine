@@ -363,17 +363,25 @@ function SettingsView() {
               </button>
             </p>
           )}
-          <form className="settings-row settings-input-row" onSubmit={addRepo}>
-            <input
-              value={repoInput}
-              onChange={(event) => setRepoInput(event.target.value)}
-              placeholder="owner/repo"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button type="submit" disabled={repoBusy || repoInput.trim() === ""}>
-              {repoBusy ? "Checking…" : "Add"}
-            </button>
+          {/* The browse list only offers owned and org repos, so this is the
+              path for everything else: external OSS, collaborator repos. */}
+          <form className="settings-manual" onSubmit={addRepo}>
+            <p className="manual-note">Not listed? Add any repository by name.</p>
+            <div className="settings-input-row">
+              <input
+                value={repoInput}
+                onChange={(event) => setRepoInput(event.target.value)}
+                placeholder="owner/repo"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="submit"
+                disabled={repoBusy || repoInput.trim() === ""}
+              >
+                {repoBusy ? "Checking…" : "Add"}
+              </button>
+            </div>
           </form>
         </div>
         {repoError && <p className="settings-error">{repoError}</p>}

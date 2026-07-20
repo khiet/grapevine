@@ -699,6 +699,20 @@ body {
   appearance: none;
 }
 
+/* The manual add form: an explanatory line over its input row, sharing one
+   card cell so no hairline separates the note from the field it describes. */
+.settings-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+}
+
+.manual-note {
+  font-size: 11px;
+  color: #6e6e73;
+}
+
 /* A macOS-style switch drawn on the bare checkbox: track via the input
    itself, knob via ::before sliding between the track's ends. */
 .settings-switch {
@@ -903,6 +917,10 @@ body {
 
   .repo-check-row:hover {
     background-color: rgba(10, 132, 255, 0.28);
+  }
+
+  .manual-note {
+    color: #98989d;
   }
 
   .settings-switch {
