@@ -432,9 +432,17 @@ body {
   display: inline-flex;
   flex: none;
   align-self: center;
+  align-items: center;
   padding: 4px;
   margin: -4px 0;
   color: #8e8e93;
+}
+
+/* The directional review glyph: glasses plus an arrow svg beside it. A small
+   gap keeps the arrow off the lens without widening the mark cluster's own
+   spacing. */
+.pr-glyph-wide {
+  gap: 1px;
 }
 
 /* The draft pill: a neutral state marker in the metadata grey, never a signal

@@ -378,6 +378,7 @@ mod tests {
             blocked_reasons: vec![],
             is_draft: false,
             review_requested: false,
+            awaiting_review: false,
             changed_files: 0,
             unread_count: 0,
             activity: vec![],
@@ -462,6 +463,7 @@ mod tests {
                 blocked_reasons: vec![BlockedReason::Ci],
                 is_draft: true,
                 review_requested: false,
+                awaiting_review: false,
                 changed_files: 7,
                 unread_count: 3,
                 // Internal working data; must not leak into the payload.
@@ -498,6 +500,7 @@ mod tests {
                     "blocked_reasons": ["ci"],
                     "is_draft": true,
                     "review_requested": false,
+                    "awaiting_review": false,
                     "changed_files": 7,
                     "unread_count": 3
                 }],
@@ -628,6 +631,7 @@ mod tests {
             blocked_reasons: vec![],
             is_draft: false,
             review_requested: false,
+            awaiting_review: false,
             changed_files: 0,
             unread_count,
             activity: vec![],

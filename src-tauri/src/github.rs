@@ -108,6 +108,18 @@ pub struct PullRequest {
     /// [`section_for`]). Same property-not-event rule as `blocked_reasons`;
     /// team requests never set it (see [`review_requested_for`]).
     pub review_requested: bool,
+    /// Whether one of the viewer's own PRs is waiting on a reviewer: it has at
+    /// least one outstanding requested reviewer. The outgoing mirror of
+    /// `review_requested` (see [`has_pending_review_request`]), set only on
+    /// `Mine` PRs, so the two never coexist on a row. Renders as the glasses
+    /// glyph with an outgoing arrow, a neutral property ("the ball is in a
+    /// reviewer's court"), not a "stuck" state. GitHub drops a reviewer from
+    /// `reviewRequests` once they submit, so this clears itself as reviews
+    /// arrive. Suppressed on drafts, matching `review_requested` and the
+    /// blocked dot. Unlike `review_requested`, team requests count: it is an
+    /// existence check, with no `login` to match. Same property-not-event rule
+    /// as `blocked_reasons`.
+    pub awaiting_review: bool,
     /// Files touched, straight from GitHub. Like `mergeable`, GitHub computes
     /// this lazily, so a freshly opened PR can report 0 until a later poll; the
     /// row hides the count when it is 0, which also covers a genuinely empty
@@ -549,6 +561,9 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         .and_then(Value::as_array);
     for node in nodes.into_iter().flatten() {
         let is_draft = node.get("isDraft").and_then(Value::as_bool) == Some(true);
+        // Computed once and reused: `awaiting_review` is gated to Mine, so the
+        // outgoing marker never lights up on a PR the viewer merely reviews.
+        let section = section_for(node, viewer);
         out.push(PullRequest {
             number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
             title: node
@@ -585,7 +600,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            section: section_for(node, viewer),
+            section,
             blocked_reasons: blocked_reasons_for(node),
             is_draft,
             // Suppressed on drafts, matching the blocked dot: a draft is the
@@ -593,6 +608,12 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
             review_requested: !is_draft && review_requested_for(node, viewer),
+            // The outgoing mirror: your own PR waiting on a reviewer. Gated to
+            // Mine so it cannot fire on a PR you merely participate in, and
+            // suppressed on drafts like `review_requested`.
+            awaiting_review: section == Section::Mine
+                && !is_draft
+                && has_pending_review_request(node),
             changed_files: node
                 .get("changedFiles")
                 .and_then(Value::as_u64)
@@ -703,6 +724,16 @@ fn review_requested_for(node: &Value, viewer: &str) -> bool {
     })
 }
 
+/// Whether the PR has any outstanding requested reviewer. The outgoing
+/// counterpart to [`review_requested_for`]: it asks only whether a request
+/// exists, not who was asked, so unlike that helper it counts team requests
+/// too (a team node carries no `login`, but it is still a pending request).
+/// GitHub lists only reviewers who have not yet submitted, so an empty list
+/// means the reviews are in.
+fn has_pending_review_request(node: &Value) -> bool {
+    !list(node, "/reviewRequests/nodes").is_empty()
+}
+
 /// Mine beats Participated: the author is always a participant, so order
 /// matters. Participants covers reviewers, commenters, and mentions;
 /// reviewRequests covers requests not yet acted on, which GitHub does not
@@ -797,6 +828,24 @@ mod tests {
             "reviewRequests": { "nodes": [{ "requestedReviewer": {} }] }
         }));
         assert!(!review_requested_for(&node, "khiet"));
+    }
+
+    #[test]
+    fn awaiting_review_tracks_any_outstanding_request() {
+        // No requested reviewers: the reviews are in (or none were asked).
+        let none = pr_node(json!({ "reviewRequests": { "nodes": [] } }));
+        assert!(!has_pending_review_request(&none));
+        // A named reviewer is still pending: waiting on them.
+        let user = pr_node(json!({
+            "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+        }));
+        assert!(has_pending_review_request(&user));
+        // A team request counts too, unlike the incoming direction: the check
+        // is existence, and a team node needs no `login`.
+        let team = pr_node(json!({
+            "reviewRequests": { "nodes": [{ "requestedReviewer": {} }] }
+        }));
+        assert!(has_pending_review_request(&team));
     }
 
     #[test]
@@ -1085,6 +1134,73 @@ mod tests {
         collect_repo_prs(&repo, "khiet", &mut out);
         assert!(out[0].is_draft);
         assert!(!out[0].review_requested);
+    }
+
+    #[test]
+    fn an_awaiting_review_is_read_onto_a_mine_row() {
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                    pr_node(json!({
+                        "viewerDidAuthor": true,
+                        "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+                    })),
+                    pr_node(json!({ "viewerDidAuthor": true })),
+                ]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].awaiting_review);
+        assert!(!out[1].awaiting_review);
+    }
+
+    #[test]
+    fn awaiting_review_is_gated_to_your_own_prs() {
+        // A PR the viewer merely participates in still carries an outstanding
+        // request (for someone else), so the helper matches, but the outgoing
+        // marker is for your own PRs and must stay off here. The viewer is a
+        // participant, not the requested reviewer, so no incoming glyph either:
+        // this isolates the Mine gate on its own.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({
+                    "participants": { "nodes": [{ "login": "khiet" }] },
+                    "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+                }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert_eq!(out[0].section, Section::Participated);
+        assert!(!out[0].review_requested);
+        assert!(!out[0].awaiting_review);
+    }
+
+    #[test]
+    fn a_draft_mine_pr_never_flags_awaiting_review() {
+        // Matches review_requested and the blocked dot: a draft is the author's
+        // not-ready choice, so its row marker is suppressed while the request
+        // still stands.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({
+                    "viewerDidAuthor": true,
+                    "isDraft": true,
+                    "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+                }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].is_draft);
+        assert!(!out[0].awaiting_review);
     }
 
     #[test]
