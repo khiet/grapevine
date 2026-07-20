@@ -184,11 +184,16 @@ function SettingsView() {
     setTokenBusy(true);
     setTokenError("");
     setTokenWarning("");
+    // A first save flips has_token and the effect above fetches; a
+    // replacement leaves has_token true, so the effect stays quiet and the
+    // refetch must be explicit — the new token may see different repos.
+    const replacing = tokenStatus.has_token;
     try {
       const saved = await invoke<SavedToken>("save_token", { token: tokenInput });
       setTokenStatus({ has_token: true, login: saved.login });
       setTokenWarning(saved.scope_warning ?? "");
       setTokenInput("");
+      if (replacing) loadAvailable();
     } catch (error) {
       setTokenError(String(error));
     } finally {
@@ -202,6 +207,10 @@ function SettingsView() {
     try {
       await invoke("clear_token");
       setTokenStatus({ has_token: false, login: null });
+      // The browse list came from the removed token; dropping it leaves the
+      // union rendering just the watched repos under the save-a-token note.
+      setAvailable(null);
+      setBrowseError("");
     } catch (error) {
       setTokenError(String(error));
     }
