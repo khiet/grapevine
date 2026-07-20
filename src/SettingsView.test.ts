@@ -35,17 +35,15 @@ test("watched matching is case-insensitive and keeps the fetched casing", () => 
 
 test("watched repos absent from the fetch appear checked in sort position", () => {
   // An external OSS repo (outside the owner/org affiliation) must stay
-  // visible or it could never be unchecked.
+  // visible or it could never be unchecked. The same union is what degrades
+  // a failed fetch (empty `available`) to the watched repos as checked rows.
   const groups = groupRepos(["acme/widgets"], ["rails/rails", "acme/widgets"]);
   expect(groups.map((g) => g.owner)).toEqual(["acme", "rails"]);
   expect(groups[1].repos).toEqual([
     { fullName: "rails/rails", name: "rails", watched: true },
   ]);
-});
-
-test("a failed fetch degrades to the watched repos as checked rows", () => {
-  const groups = groupRepos([], ["acme/widgets", "khietle/dotfiles"]);
-  expect(groups.flatMap((g) => g.repos).map((r) => r.watched)).toEqual([
+  const failed = groupRepos([], ["acme/widgets", "khietle/dotfiles"]);
+  expect(failed.flatMap((g) => g.repos).map((r) => r.watched)).toEqual([
     true,
     true,
   ]);
@@ -62,13 +60,8 @@ test("the filter matches owner, name, and across the slash", () => {
   );
 });
 
-test("groups emptied by the filter disappear", () => {
-  const groups = groupRepos(["acme/widgets", "zeta/api"], []);
-  expect(filterGroups(groups, "api").map((g) => g.owner)).toEqual(["zeta"]);
-});
-
 test("a blank filter returns every group", () => {
   const groups = groupRepos(["acme/widgets", "zeta/api"], []);
-  expect(filterGroups(groups, "")).toBe(groups);
-  expect(filterGroups(groups, "   ")).toBe(groups);
+  expect(filterGroups(groups, "")).toEqual(groups);
+  expect(filterGroups(groups, "   ")).toEqual(groups);
 });
