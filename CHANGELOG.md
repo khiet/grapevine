@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/khiet/grapevine/compare/grapevine-v0.6.0...grapevine-v0.7.0) (2026-07-20)
+
+
+### Features
+
+* Browse and select watched repositories in settings ([#30](https://github.com/khiet/grapevine/issues/30)) ([e5cdffa](https://github.com/khiet/grapevine/commit/e5cdffa9abdc60baa3532aaf65d17b7271bfcea9))
+
 ## [0.6.0](https://github.com/khiet/grapevine/compare/grapevine-v0.5.0...grapevine-v0.6.0) (2026-07-19)
 
 
