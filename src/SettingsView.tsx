@@ -186,7 +186,7 @@ function SettingsView() {
     setTokenWarning("");
     // A first save flips has_token and the effect above fetches; a
     // replacement leaves has_token true, so the effect stays quiet and the
-    // refetch must be explicit — the new token may see different repos.
+    // refetch must be explicit, since the new token may see different repos.
     const replacing = tokenStatus.has_token;
     try {
       const saved = await invoke<SavedToken>("save_token", { token: tokenInput });
