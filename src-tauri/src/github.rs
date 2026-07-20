@@ -1137,6 +1137,73 @@ mod tests {
     }
 
     #[test]
+    fn an_awaiting_review_is_read_onto_a_mine_row() {
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                    pr_node(json!({
+                        "viewerDidAuthor": true,
+                        "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+                    })),
+                    pr_node(json!({ "viewerDidAuthor": true })),
+                ]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].awaiting_review);
+        assert!(!out[1].awaiting_review);
+    }
+
+    #[test]
+    fn awaiting_review_is_gated_to_your_own_prs() {
+        // A PR the viewer merely participates in still carries an outstanding
+        // request (for someone else), so the helper matches, but the outgoing
+        // marker is for your own PRs and must stay off here. The viewer is a
+        // participant, not the requested reviewer, so no incoming glyph either:
+        // this isolates the Mine gate on its own.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({
+                    "participants": { "nodes": [{ "login": "khiet" }] },
+                    "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+                }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert_eq!(out[0].section, Section::Participated);
+        assert!(!out[0].review_requested);
+        assert!(!out[0].awaiting_review);
+    }
+
+    #[test]
+    fn a_draft_mine_pr_never_flags_awaiting_review() {
+        // Matches review_requested and the blocked dot: a draft is the author's
+        // not-ready choice, so its row marker is suppressed while the request
+        // still stands.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({
+                    "viewerDidAuthor": true,
+                    "isDraft": true,
+                    "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
+                }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].is_draft);
+        assert!(!out[0].awaiting_review);
+    }
+
+    #[test]
     fn issue_comments_by_others_count_as_activity_but_the_viewers_do_not() {
         let node = pr_node(json!({
             "comments": { "nodes": [
