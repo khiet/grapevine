@@ -107,9 +107,10 @@ pub async fn save_token(app: AppHandle, token: String) -> Result<SavedToken, Str
     }
     let validated = github::validate_token(&token).await?;
     keychain::store(&token)?;
-    let mut current = settings::load(&app)?;
-    current.github_login = Some(validated.login.clone());
-    settings::save(&app, &current)?;
+    settings::update(&app, |settings| {
+        settings.github_login = Some(validated.login.clone());
+        Ok(())
+    })?;
     request_sync(&app);
     Ok(SavedToken {
         login: validated.login,
@@ -120,9 +121,10 @@ pub async fn save_token(app: AppHandle, token: String) -> Result<SavedToken, Str
 #[tauri::command]
 pub async fn clear_token(app: AppHandle) -> Result<(), String> {
     keychain::clear()?;
-    let mut current = settings::load(&app)?;
-    current.github_login = None;
-    settings::save(&app, &current)?;
+    settings::update(&app, |settings| {
+        settings.github_login = None;
+        Ok(())
+    })?;
     request_sync(&app);
     Ok(())
 }
@@ -139,27 +141,41 @@ pub async fn add_repo(app: AppHandle, name: String) -> Result<Vec<String>, Strin
         return Err("Save a valid GitHub token first.".into());
     };
     let canonical = github::validate_repo(&token, owner, repo).await?;
-    let mut current = settings::load(&app)?;
-    if current
-        .repos
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(&canonical))
-    {
-        return Err(format!("{canonical} is already in the list."));
-    }
-    current.repos.push(canonical);
-    settings::save(&app, &current)?;
+    let updated = settings::update(&app, |settings| {
+        // Checked inside the lock: a concurrent duplicate add must lose here,
+        // not slip past a check made against a stale read.
+        if settings
+            .repos
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(&canonical))
+        {
+            return Err(format!("{canonical} is already in the list."));
+        }
+        settings.repos.push(canonical.clone());
+        Ok(())
+    })?;
     request_sync(&app);
-    Ok(current.repos)
+    Ok(updated.repos)
 }
 
 #[tauri::command]
 pub async fn remove_repo(app: AppHandle, name: String) -> Result<Vec<String>, String> {
-    let mut current = settings::load(&app)?;
-    current.repos.retain(|r| !r.eq_ignore_ascii_case(&name));
-    settings::save(&app, &current)?;
+    let updated = settings::update(&app, |settings| {
+        settings.repos.retain(|r| !r.eq_ignore_ascii_case(&name));
+        Ok(())
+    })?;
     request_sync(&app);
-    Ok(current.repos)
+    Ok(updated.repos)
+}
+
+/// Every repo the settings browse list can offer: owned + org-member,
+/// archived excluded. Read-only, so no sync wake.
+#[tauri::command]
+pub async fn list_affiliated_repos() -> Result<Vec<String>, String> {
+    let Some(token) = keychain::load()? else {
+        return Err("Save a valid GitHub token first.".into());
+    };
+    Ok(github::fetch_affiliated_repos(&token).await?)
 }
 
 #[tauri::command]
@@ -171,9 +187,10 @@ pub async fn get_poll_interval(app: AppHandle) -> Result<u64, String> {
 #[tauri::command]
 pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String> {
     let secs = settings::clamp_poll_secs(secs);
-    let mut current = settings::load(&app)?;
-    current.poll_interval_secs = secs;
-    settings::save(&app, &current)?;
+    settings::update(&app, |settings| {
+        settings.poll_interval_secs = secs;
+        Ok(())
+    })?;
     request_sync(&app);
     Ok(secs)
 }

@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -67,6 +67,26 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) -> Result<(), String> {
     }
     let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     fs::write(&path, raw).map_err(|e| format!("cannot write settings: {e}"))
+}
+
+/// Serializes every load-modify-save on the settings file. Tauri commands run
+/// concurrently, and two overlapping updates (e.g. rapid checkbox toggles in
+/// the repo browser) would otherwise both read the same base state and the
+/// later save would silently drop the earlier change.
+static UPDATE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Applies `mutate` to the stored settings under [`UPDATE_LOCK`] and returns
+/// the saved result. An error from `mutate` aborts without writing. `mutate`
+/// must not block: the lock is held across the reload and the write.
+pub fn update(
+    app: &tauri::AppHandle,
+    mutate: impl FnOnce(&mut Settings) -> Result<(), String>,
+) -> Result<Settings, String> {
+    let _guard = UPDATE_LOCK.lock().unwrap();
+    let mut settings = load(app)?;
+    mutate(&mut settings)?;
+    save(app, &settings)?;
+    Ok(settings)
 }
 
 #[cfg(test)]

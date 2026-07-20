@@ -645,8 +645,7 @@ body {
   overflow: hidden;
 }
 
-.settings-card > * + *,
-.repo-list li + li {
+.settings-card > * + * {
   border-top: 1px solid rgba(0, 0, 0, 0.08);
 }
 
@@ -658,28 +657,60 @@ body {
   padding: 9px 11px;
 }
 
-.repo-list {
-  list-style: none;
+/* Scrolls inside the card at a fixed cap so General/Updates stay one flick
+   away no matter how many repositories the account can browse. */
+.repo-browser {
+  max-height: 260px;
+  overflow-y: auto;
 }
 
-.repo-row:hover {
+/* Owner headers inside the browser, echoing .settings-label a size down. */
+.repo-group-label {
+  padding: 8px 11px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #8e8e93;
+}
+
+/* Left-aligned override of .settings-row's space-between: the checkbox
+   belongs beside the name, not across the row from it. */
+.repo-check-row {
+  justify-content: flex-start;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.repo-check-row:hover {
   background-color: rgba(10, 132, 255, 0.12);
 }
 
-/* Hidden until the row is hovered, matching the Merged rows' dismiss. */
-.repo-remove {
-  border: none;
-  background: none;
-  padding: 0 2px;
-  color: #8e8e93;
-  font: inherit;
-  font-size: 15px;
-  opacity: 0;
+/* An in-flight toggle: the row dims instead of spinning, since the round
+   trip is normally too quick for a spinner to read as anything but flicker. */
+.repo-check-row input:disabled + .repo-name {
+  opacity: 0.5;
 }
 
-.repo-row:hover .repo-remove,
-.repo-remove:focus-visible {
-  opacity: 1;
+/* Match the header search field: Escape-free clearing via selection is the
+   app's convention, not WebKit's inset cancel button. */
+.settings-input-row input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* The manual add form: an explanatory line over its input row, sharing one
+   card cell so no hairline separates the note from the field it describes. */
+.settings-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+}
+
+.manual-note {
+  font-size: 11px;
+  color: #6e6e73;
 }
 
 /* A macOS-style switch drawn on the bare checkbox: track via the input
@@ -876,17 +907,20 @@ body {
     background-color: #2c2c2e;
   }
 
-  .settings-card > * + *,
-  .repo-list li + li {
+  .settings-card > * + * {
     border-top-color: rgba(255, 255, 255, 0.12);
   }
 
-  .repo-row:hover {
+  .repo-group-label {
+    color: #98989d;
+  }
+
+  .repo-check-row:hover {
     background-color: rgba(10, 132, 255, 0.28);
   }
 
-  .repo-remove {
-    color: #7c7c80;
+  .manual-note {
+    color: #98989d;
   }
 
   .settings-switch {
