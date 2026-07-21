@@ -6,7 +6,7 @@ use std::{
 
 use tauri::Manager;
 
-use crate::github::PullRequest;
+use crate::github::{PullRequest, Section};
 
 /// Per-PR last-read watermarks, keyed by `owner/repo#number`. A PR's unread
 /// count is its activity strictly newer than the watermark; ISO-8601 UTC
@@ -32,6 +32,10 @@ pub fn read_watermark(pr: &PullRequest) -> String {
 /// so a fresh install (or a lost state file) never flags historical discussion;
 /// watermarks for PRs that left the list are dropped. Returns true when the
 /// state changed and needs persisting.
+///
+/// Only PRs you authored or take part in can carry unread activity. The All
+/// section is a browse list: a teammate's PR, or a bot commenting on one, is
+/// not a signal you owe anything to.
 pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
     let live: HashSet<String> = prs.iter().map(key).collect();
     let before = state.len();
@@ -39,18 +43,25 @@ pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
     let mut changed = state.len() != before;
 
     for pr in prs.iter_mut() {
-        match state.get(&key(pr)) {
-            Some(watermark) => {
+        let seen = state.get(&key(pr)).cloned();
+        match seen {
+            Some(watermark) if pr.section != Section::All => {
                 pr.unread_count = pr
                     .activity
                     .iter()
                     .filter(|t| t.as_str() > watermark.as_str())
                     .count() as u64;
             }
-            None => {
-                state.insert(key(pr), read_watermark(pr));
+            // Browse-only PRs are re-baselined every sync rather than left
+            // frozen, so that joining one later starts its count from that
+            // moment instead of dumping the whole backlog as unread.
+            seen => {
+                let watermark = read_watermark(pr);
                 pr.unread_count = 0;
-                changed = true;
+                if seen.as_deref() != Some(watermark.as_str()) {
+                    state.insert(key(pr), watermark);
+                    changed = true;
+                }
             }
         }
     }
@@ -95,7 +106,16 @@ mod tests {
     use super::*;
     use crate::github::Section;
 
+    /// A PR that can carry unread activity. Use `browsing` for an All-section
+    /// one, which by design cannot.
     fn pr(repo: &str, number: u64, activity: &[&str]) -> PullRequest {
+        PullRequest {
+            section: Section::Participated,
+            ..browsing(repo, number, activity)
+        }
+    }
+
+    fn browsing(repo: &str, number: u64, activity: &[&str]) -> PullRequest {
         PullRequest {
             number,
             title: "Fix the thing".into(),
@@ -188,6 +208,46 @@ mod tests {
             "2026-07-01T00:00:00Z".to_string(),
         )]);
         assert!(!apply(&mut prs, &mut state));
+        assert_eq!(prs[0].unread_count, 1);
+    }
+
+    #[test]
+    fn browse_only_prs_never_badge_and_keep_their_watermark_current() {
+        let mut prs = vec![browsing(
+            "acme/widgets",
+            7,
+            &["2026-07-10T12:00:00Z", "2026-07-12T09:30:00Z"],
+        )];
+        let mut state = ReadState::from([(
+            "acme/widgets#7".to_string(),
+            "2026-07-10T12:00:00Z".to_string(),
+        )]);
+        let changed = apply(&mut prs, &mut state);
+        assert!(changed);
+        assert_eq!(prs[0].unread_count, 0);
+        assert_eq!(
+            state.get("acme/widgets#7").map(String::as_str),
+            Some("2026-07-12T09:30:00Z")
+        );
+        // A quiet browse-only PR must not rewrite the state file every sync.
+        assert!(!apply(&mut prs, &mut state));
+    }
+
+    #[test]
+    fn joining_a_browse_only_pr_counts_only_activity_after_you_joined() {
+        let mut state = ReadState::new();
+        let mut prs = vec![browsing(
+            "acme/widgets",
+            7,
+            &["2026-07-10T12:00:00Z", "2026-07-12T09:30:00Z"],
+        )];
+        apply(&mut prs, &mut state);
+
+        // Someone requests your review, then comments; the earlier discussion
+        // stays read.
+        prs[0].section = Section::Participated;
+        prs[0].activity.push("2026-07-13T10:00:00Z".into());
+        apply(&mut prs, &mut state);
         assert_eq!(prs[0].unread_count, 1);
     }
 

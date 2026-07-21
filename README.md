@@ -25,8 +25,8 @@ Grapevine lives in the menubar only, with no Dock icon. Clicking the tray icon
 toggles a popover with the PR list, and clicking away dismisses it. You give it
 a GitHub token and a list of repos; it polls them every few minutes and shows
 the open PRs, split into the ones you authored, the ones you are involved in,
-and everything else, with a badge for comments and reviews you have not seen
-yet. Each row badges the organization's avatar onto the author's, flags drafts
+and everything else. The first two badge comments and reviews you have not seen
+yet; everything else is a browse list and stays silent. Each row badges the organization's avatar onto the author's, flags drafts
 with a pill, and shows a red dot when the PR cannot merge (merge conflict,
 failing CI, or changes requested) with the reasons in its tooltip. The list is
 ordered by most recently updated. Merged PRs get their own section until you
