@@ -33,9 +33,9 @@ pub fn read_watermark(pr: &PullRequest) -> String {
 /// watermarks for PRs that left the list are dropped. Returns true when the
 /// state changed and needs persisting.
 ///
-/// Only PRs you authored or take part in can carry unread activity. The All
-/// section is a browse list: a teammate's PR, or a bot commenting on one, is
-/// not a signal you owe anything to.
+/// Only PRs you authored or take part in can carry unread activity: the All
+/// section is a browse list, and activity on a PR you have no part in is not a
+/// signal you owe anything to.
 pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
     let live: HashSet<String> = prs.iter().map(key).collect();
     let before = state.len();
@@ -52,12 +52,12 @@ pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
                     .filter(|t| t.as_str() > watermark.as_str())
                     .count() as u64;
             }
-            // Everything else is browse-only, whether or not it has a
-            // watermark already. Re-baselining it every sync rather than
-            // leaving it frozen means joining one later starts its count from
-            // that moment instead of dumping the whole backlog as unread. The
-            // watermark only ever moves forward: a deleted comment shrinks the
-            // activity list, and rewinding would resurface the backlog.
+            // First sight of any PR, and every sync of a browse-only one.
+            // Re-baselining browse-only PRs rather than freezing them means
+            // joining one later counts from that moment instead of dumping the
+            // backlog as unread. The watermark only moves forward: a deleted
+            // comment shrinks the activity list, and rewinding would resurface
+            // that backlog.
             current => {
                 let fresh = read_watermark(pr);
                 pr.unread_count = 0;
@@ -215,8 +215,8 @@ mod tests {
     }
 
     /// The rule the tray badge rests on. Mine and Participated share a branch
-    /// today, so nothing else would catch an edit that narrowed the badge to
-    /// one of them.
+    /// today, and every other test here uses Participated, so an edit that
+    /// narrowed the badge to that section alone would pass all of them.
     #[test]
     fn only_prs_you_authored_or_take_part_in_accrue_unread() {
         for (section, expected) in [
