@@ -43,8 +43,8 @@ pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
     let mut changed = state.len() != before;
 
     for pr in prs.iter_mut() {
-        let seen = state.get(&key(pr)).cloned();
-        match seen {
+        let key = key(pr);
+        match state.get(&key) {
             Some(watermark) if pr.section != Section::All => {
                 pr.unread_count = pr
                     .activity
@@ -52,14 +52,17 @@ pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
                     .filter(|t| t.as_str() > watermark.as_str())
                     .count() as u64;
             }
-            // Browse-only PRs are re-baselined every sync rather than left
-            // frozen, so that joining one later starts its count from that
-            // moment instead of dumping the whole backlog as unread.
-            seen => {
-                let watermark = read_watermark(pr);
+            // Everything else is browse-only, whether or not it has a
+            // watermark already. Re-baselining it every sync rather than
+            // leaving it frozen means joining one later starts its count from
+            // that moment instead of dumping the whole backlog as unread. The
+            // watermark only ever moves forward: a deleted comment shrinks the
+            // activity list, and rewinding would resurface the backlog.
+            current => {
+                let fresh = read_watermark(pr);
                 pr.unread_count = 0;
-                if seen.as_deref() != Some(watermark.as_str()) {
-                    state.insert(key(pr), watermark);
+                if current.is_none_or(|w| w.as_str() < fresh.as_str()) {
+                    state.insert(key, fresh);
                     changed = true;
                 }
             }
@@ -247,6 +250,23 @@ mod tests {
         )]);
         let changed = apply(&mut prs, &mut state);
         assert!(changed);
+        assert_eq!(
+            state.get("acme/widgets#7").map(String::as_str),
+            Some("2026-07-12T09:30:00Z")
+        );
+    }
+
+    /// A deleted comment shrinks the activity list, dropping `read_watermark`
+    /// back to the creation time. Following it down would resurface the whole
+    /// discussion the moment you were pulled into the PR.
+    #[test]
+    fn a_browse_only_watermark_never_rewinds_when_activity_disappears() {
+        let mut prs = vec![browse_only("acme/widgets", 7, &[])];
+        let mut state = ReadState::from([(
+            "acme/widgets#7".to_string(),
+            "2026-07-12T09:30:00Z".to_string(),
+        )]);
+        assert!(!apply(&mut prs, &mut state));
         assert_eq!(
             state.get("acme/widgets#7").map(String::as_str),
             Some("2026-07-12T09:30:00Z")
