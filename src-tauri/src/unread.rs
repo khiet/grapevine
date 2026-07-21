@@ -106,16 +106,8 @@ mod tests {
     use super::*;
     use crate::github::Section;
 
-    /// A PR that can carry unread activity. Use `browsing` for an All-section
-    /// one, which by design cannot.
+    /// A PR you take part in, so one that can carry unread activity.
     fn pr(repo: &str, number: u64, activity: &[&str]) -> PullRequest {
-        PullRequest {
-            section: Section::Participated,
-            ..browsing(repo, number, activity)
-        }
-    }
-
-    fn browsing(repo: &str, number: u64, activity: &[&str]) -> PullRequest {
         PullRequest {
             number,
             title: "Fix the thing".into(),
@@ -126,7 +118,7 @@ mod tests {
             owner_avatar_url: "https://avatars.example/acme".into(),
             created_at: "2026-07-01T00:00:00Z".into(),
             updated_at: "2026-07-01T00:00:00Z".into(),
-            section: Section::All,
+            section: Section::Participated,
             blocked_reasons: vec![],
             is_draft: false,
             review_requested: false,
@@ -134,6 +126,14 @@ mod tests {
             changed_files: 0,
             unread_count: 0,
             activity: activity.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// A PR you neither authored nor take part in: the All section.
+    fn browse_only(repo: &str, number: u64, activity: &[&str]) -> PullRequest {
+        PullRequest {
+            section: Section::All,
+            ..pr(repo, number, activity)
         }
     }
 
@@ -211,9 +211,32 @@ mod tests {
         assert_eq!(prs[0].unread_count, 1);
     }
 
+    /// The rule the tray badge rests on. Mine and Participated share a branch
+    /// today, so nothing else would catch an edit that narrowed the badge to
+    /// one of them.
     #[test]
-    fn browse_only_prs_never_badge_and_keep_their_watermark_current() {
-        let mut prs = vec![browsing(
+    fn only_prs_you_authored_or_take_part_in_accrue_unread() {
+        for (section, expected) in [
+            (Section::Mine, 1),
+            (Section::Participated, 1),
+            (Section::All, 0),
+        ] {
+            let mut prs = vec![PullRequest {
+                section,
+                ..pr("acme/widgets", 7, &["2026-07-12T09:30:00Z"])
+            }];
+            let mut state = ReadState::from([(
+                "acme/widgets#7".to_string(),
+                "2026-07-10T12:00:00Z".to_string(),
+            )]);
+            apply(&mut prs, &mut state);
+            assert_eq!(prs[0].unread_count, expected, "{section:?}");
+        }
+    }
+
+    #[test]
+    fn a_browse_only_pr_keeps_its_watermark_level_with_its_activity() {
+        let mut prs = vec![browse_only(
             "acme/widgets",
             7,
             &["2026-07-10T12:00:00Z", "2026-07-12T09:30:00Z"],
@@ -224,27 +247,34 @@ mod tests {
         )]);
         let changed = apply(&mut prs, &mut state);
         assert!(changed);
-        assert_eq!(prs[0].unread_count, 0);
         assert_eq!(
             state.get("acme/widgets#7").map(String::as_str),
             Some("2026-07-12T09:30:00Z")
         );
-        // A quiet browse-only PR must not rewrite the state file every sync.
+    }
+
+    #[test]
+    fn a_quiet_browse_only_pr_reports_nothing_to_persist() {
+        let mut prs = vec![browse_only("acme/widgets", 7, &["2026-07-12T09:30:00Z"])];
+        let mut state = ReadState::from([(
+            "acme/widgets#7".to_string(),
+            "2026-07-12T09:30:00Z".to_string(),
+        )]);
         assert!(!apply(&mut prs, &mut state));
     }
 
     #[test]
     fn joining_a_browse_only_pr_counts_only_activity_after_you_joined() {
         let mut state = ReadState::new();
-        let mut prs = vec![browsing(
-            "acme/widgets",
-            7,
-            &["2026-07-10T12:00:00Z", "2026-07-12T09:30:00Z"],
-        )];
+        let mut prs = vec![browse_only("acme/widgets", 7, &["2026-07-10T12:00:00Z"])];
         apply(&mut prs, &mut state);
 
-        // Someone requests your review, then comments; the earlier discussion
-        // stays read.
+        // The team discusses it while you are only watching.
+        prs[0].activity.push("2026-07-12T09:30:00Z".into());
+        apply(&mut prs, &mut state);
+
+        // Someone requests your review, then comments. Only that comment is
+        // unread; the backlog you were never part of is not.
         prs[0].section = Section::Participated;
         prs[0].activity.push("2026-07-13T10:00:00Z".into());
         apply(&mut prs, &mut state);
