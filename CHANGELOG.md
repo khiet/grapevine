@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/khiet/grapevine/compare/grapevine-v0.7.0...grapevine-v0.7.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* only badge unread activity on your own and involved PRs ([#32](https://github.com/khiet/grapevine/issues/32)) ([9ebf154](https://github.com/khiet/grapevine/commit/9ebf154e1dd0a4af80297cd84e780b744b2865ad))
+
 ## [0.7.0](https://github.com/khiet/grapevine/compare/grapevine-v0.6.0...grapevine-v0.7.0) (2026-07-20)
 
 
