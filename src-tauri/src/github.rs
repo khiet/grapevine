@@ -1313,7 +1313,8 @@ mod tests {
         let node = pr_node(json!({
             "mergeable": "UNKNOWN",
             "commits": ci_commits("FAILURE"),
-            "reviewDecision": "CHANGES_REQUESTED"
+            "reviewDecision": "CHANGES_REQUESTED",
+            "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());
     }
