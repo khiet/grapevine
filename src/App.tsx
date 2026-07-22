@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import PrList, {
   formatLastSync,
+  hasQuery,
   matchesFilter,
   Snapshot,
   totalUnread,
@@ -107,7 +108,7 @@ function App() {
         <PrList
           prs={visiblePrs}
           merged={visibleMerged}
-          filtering={filter.trim() !== ""}
+          filtering={hasQuery(filter)}
         />
       ) : hasAny ? (
         /* Rows exist but the filter hid them all. */
