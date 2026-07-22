@@ -13,7 +13,7 @@ export interface PullRequest {
   created_at: string;
   updated_at: string;
   section: "mine" | "participated" | "all";
-  /** Why the PR is blocked, already in tooltip order; empty means no dot.
+  /** Why the PR is blocked, already in severity order; empty means no pill.
    * Composed at the Rust boundary — the row only maps keys to labels. */
   blocked_reasons: BlockedReason[];
   /** Drafts render a neutral pill; the backend suppresses their dot. */
@@ -44,9 +44,21 @@ const BLOCKED_LABELS: Record<BlockedReason, string> = {
   review: "Changes requested",
 };
 
-// The dot's tooltip: every active reason, in the backend's fixed order.
+// Joined reason labels in the backend's fixed order; feeds the +N pill's
+// tooltip (called with the reasons the primary pill did not show).
 export function blockedTitle(reasons: BlockedReason[]): string {
   return reasons.map((reason) => BLOCKED_LABELS[reason]).join("; ");
+}
+
+// The visible pill texts for a blocked row: the first reason spelled out,
+// then "+N" for the rest, so a doubly-blocked row stays width-bounded
+// ("Merge conflict" "+1") instead of listing everything inline. The first
+// reason wins because the backend orders by severity (conflict, ci, review).
+export function blockedPills(reasons: BlockedReason[]): string[] {
+  if (reasons.length === 0) return [];
+  const pills = [BLOCKED_LABELS[reasons[0]]];
+  if (reasons.length > 1) pills.push(`+${reasons.length - 1}`);
+  return pills;
 }
 
 export interface MergedPr {
@@ -311,8 +323,12 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
             <span className="pr-author">@{pr.author}</span>
             {/* The PR's size: files touched. Fixed width (flex: none), so the
                 repo name truncates first under a tight row. Hidden when the PR
-                has no computed changes (see changedFilesLabel). */}
-            {files && <span className="pr-diffstat">{files}</span>}
+                has no computed changes (see changedFilesLabel), and yields on
+                a blocked row: the reason pill matters more than the size, and
+                the count returns the moment the block clears. */}
+            {files && pr.blocked_reasons.length === 0 && (
+              <span className="pr-diffstat">{files}</span>
+            )}
             {/* A neutral state pill, never a signal. The backend suppresses
                 the other markers on a draft (the author has not declared
                 readiness), so a draft row shows only this pill, with room to
@@ -321,8 +337,8 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
             {/* The action markers cluster at the row's right edge as one group
                 instead of scattering through the metadata: the review glyph
                 (incoming or outgoing, never both on one row), then the blocked
-                dot. Never shown on a draft (the backend suppresses all three),
-                so this and the draft pill are exclusive. */}
+                pills. Never shown on a draft (the backend suppresses all
+                three), so this and the draft pill are exclusive. */}
             {(pr.review_requested ||
               pr.awaiting_review ||
               pr.blocked_reasons.length > 0) && (
@@ -347,19 +363,29 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                     <DirectionArrow dir="out" />
                   </RowMark>
                 )}
-                {/* A single mark for a blocked PR (merge conflict, failing CI,
-                    changes requested). In-flight and healthy states stay
-                    undecorated so a quiet row keeps meaning "nothing is stuck".
-                    Distinct from the red unread badge in hue and meaning:
-                    orange here says "this PR is blocked", red there says
-                    "someone spoke". */}
+                {/* The blocked reason, spelled out in a pill (the Draft
+                    pill's shape in the blocked orange) so "why is this stuck"
+                    reads without hovering. Extra reasons collapse into a +N
+                    pill whose tooltip names them; the primary pill needs no
+                    tooltip because it IS its own label. In-flight and healthy
+                    states stay undecorated so a quiet row keeps meaning
+                    "nothing is stuck". Distinct from the red unread badge in
+                    hue and meaning: orange here says "this PR is blocked",
+                    red there says "someone spoke". */}
                 {pr.blocked_reasons.length > 0 && (
+                  <span className="pr-blocked-pill">
+                    {blockedPills(pr.blocked_reasons)[0]}
+                  </span>
+                )}
+                {pr.blocked_reasons.length > 1 && (
                   <span
-                    className="pr-blocked pr-tip"
+                    className="pr-blocked-pill pr-tip"
                     role="img"
-                    data-tip={blockedTitle(pr.blocked_reasons)}
-                    aria-label={blockedTitle(pr.blocked_reasons)}
-                  />
+                    data-tip={blockedTitle(pr.blocked_reasons.slice(1))}
+                    aria-label={blockedTitle(pr.blocked_reasons.slice(1))}
+                  >
+                    {blockedPills(pr.blocked_reasons)[1]}
+                  </span>
                 )}
               </span>
             )}

@@ -337,7 +337,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* The action-marker cluster (review glasses, blocked dot), pinned as one
+/* The action-marker cluster (review glasses, blocked pills), pinned as one
    group at the row's right edge, out of the metadata's way, so the marks sit
    side by side rather than scattering across the row. The draft pill is not
    here: the backend suppresses these markers on drafts, so it never coexists
@@ -345,31 +345,32 @@ body {
 .pr-marks {
   display: inline-flex;
   align-items: center;
-  /* Each mark carries 4px of transparent hover padding, so a small gap here
-     already reads as comfortable spacing. */
-  gap: 2px;
+  /* Glyphs carry 4px of transparent hover padding; pills carry none, so the
+     gap does the spacing between a pill pair on its own. */
+  gap: 4px;
   margin-left: auto;
 }
 
-/* The blocked-PR mark: macOS system orange, deliberately not the unread
-   badge's red so the two signals stay distinct. Rendered only for blocked
-   states (merge conflict, failing CI, changes requested), so it never
-   decorates a healthy or in-flight row. Orange reads on both the light and
-   dark card. */
-.pr-blocked {
+/* The blocked-reason pill: the Draft pill's shape in the blocked orange, so
+   "Merge conflict" / "CI failing" / "Changes requested" reads without
+   hovering. A tinted fill rather than solid orange keeps it in the metadata
+   line's register, and the text is the legible amber (matching .sync-error),
+   not raw #ff9f0a, which fails contrast on the white card. Deliberately not
+   the unread badge's red so the two signals stay distinct: orange says "this
+   PR is blocked", red says "someone spoke". position: relative anchors the
+   +N pill's tooltip. */
+.pr-blocked-pill {
   position: relative;
   flex: none;
   align-self: center;
-  /* The visible dot is the 8px content box; the 4px padding is an invisible
-     hit area, since an 8px hover target is too fiddly for the tooltip. The
-     negative margin keeps the visible dot flush with the timestamp edge. */
-  width: 16px;
-  height: 16px;
-  padding: 4px;
-  margin-right: -4px;
-  background-clip: content-box;
-  border-radius: 50%;
-  background-color: #ff9f0a;
+  padding: 0 5px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  white-space: nowrap;
+  background-color: rgba(255, 159, 10, 0.16);
+  color: #c76b00;
 }
 
 /* The hover bubble, shared by every mark in the cluster (each carries
@@ -884,6 +885,13 @@ body {
      pill legible without brightening its text into a signal. */
   .pr-draft {
     background-color: rgba(120, 120, 128, 0.32);
+  }
+
+  /* Same lift as the draft pill, and the brighter amber (matching
+     .sync-error's dark value) so the label reads on the dark card. */
+  .pr-blocked-pill {
+    background-color: rgba(255, 159, 10, 0.22);
+    color: #ffb340;
   }
 
   /* Lifted a step above the #2c2c2e card so the bubble does not melt into

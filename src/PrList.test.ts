@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  blockedPills,
   blockedTitle,
   changedFilesLabel,
   formatLastSync,
@@ -177,10 +178,27 @@ test("multiple terms are AND'd across the searchable fields", () => {
 });
 
 // The keys are the wire contract with the Rust BlockedReason enum; the labels
-// are the tooltip copy, kept neutral (a PR property, never "you must act").
-test("the dot's tooltip names every reason in the backend's order", () => {
+// are kept neutral (a PR property, never "you must act").
+test("the +N pill's tooltip names its reasons in the backend's order", () => {
   expect(blockedTitle(["conflict", "ci", "review"])).toBe(
     "Merge conflict; CI failing; Changes requested",
   );
   expect(blockedTitle(["ci"])).toBe("CI failing");
+});
+
+test("a single blocked reason renders as one pill, spelled out", () => {
+  expect(blockedPills(["ci"])).toEqual(["CI failing"]);
+  expect(blockedPills(["review"])).toEqual(["Changes requested"]);
+});
+
+test("extra reasons collapse into a +N pill after the primary one", () => {
+  expect(blockedPills(["conflict", "ci"])).toEqual(["Merge conflict", "+1"]);
+  expect(blockedPills(["conflict", "ci", "review"])).toEqual([
+    "Merge conflict",
+    "+2",
+  ]);
+});
+
+test("no blocked reasons means no pills", () => {
+  expect(blockedPills([])).toEqual([]);
 });
