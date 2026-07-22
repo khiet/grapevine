@@ -62,15 +62,19 @@ pub enum Section {
     All,
 }
 
-/// One reason a PR is blocked, for the row's indicator dot. Declaration order
-/// is the fixed tooltip order (conflict, then CI, then review); the frontend
-/// renders the list verbatim and never re-derives or re-sorts it.
+/// One reason a PR is blocked, for the row's reason pills. Declaration order
+/// is the fixed severity order (conflict, then CI, then review, then behind);
+/// the frontend shows the first as the primary pill and renders the list
+/// verbatim, never re-deriving or re-sorting it. Behind sorts last because it
+/// is the cheapest to clear (an update/rebase, often one click), where the
+/// others need real work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BlockedReason {
     Conflict,
     Ci,
     Review,
+    Behind,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -588,7 +592,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
-               isDraft mergeable reviewDecision \
+               isDraft mergeable mergeStateStatus reviewDecision \
                changedFiles \
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
@@ -743,14 +747,21 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 }
 
 /// Composes the row's blocked indicator from mergeability, the head commit's
-/// CI rollup, and the review decision, in the fixed tooltip order. Only
-/// negative states light it: a mergeable, in-flight, or quiet PR yields an
-/// empty list so an undecorated row keeps meaning "nothing is stuck".
+/// CI rollup, the review decision, and the merge-state status, in the fixed
+/// severity order. Only negative states light it: a mergeable, in-flight, or
+/// quiet PR yields an empty list so an undecorated row keeps meaning "nothing
+/// is stuck".
 ///
 /// Suppressed entirely for drafts (the author has not declared readiness) and
 /// while `mergeable` is `UNKNOWN`: GitHub computes mergeability lazily and
 /// reports `UNKNOWN` until it settles, which must read as "no flag yet", not
 /// as a blocked state; it resolves on the next poll.
+///
+/// `BEHIND` never coexists with a conflict: `mergeStateStatus` is a single
+/// value and a conflicting head reports `DIRTY` instead. GitHub also only
+/// reports `BEHIND` on repos whose branch protection requires branches to be
+/// up to date before merging — elsewhere a stale-but-clean head stays `CLEAN`
+/// and rightly shows no pill, since being behind does not block it.
 fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     let field = |name: &str| node.get(name).and_then(Value::as_str);
     if node.get("isDraft").and_then(Value::as_bool) == Some(true)
@@ -770,6 +781,9 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     }
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
         reasons.push(BlockedReason::Review);
+    }
+    if field("mergeStateStatus") == Some("BEHIND") {
+        reasons.push(BlockedReason::Behind);
     }
     reasons
 }
@@ -1094,6 +1108,10 @@ mod tests {
             reasons(json!({ "reviewDecision": "CHANGES_REQUESTED" })),
             vec![BlockedReason::Review]
         );
+        assert_eq!(
+            reasons(json!({ "mergeStateStatus": "BEHIND" })),
+            vec![BlockedReason::Behind]
+        );
     }
 
     #[test]
@@ -1123,23 +1141,38 @@ mod tests {
             reasons(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
             Vec::new()
         );
+        // Every non-BEHIND merge state is either fine (CLEAN), covered by a
+        // dedicated reason (DIRTY -> conflict), or a state we deliberately do
+        // not flag (BLOCKED: branch protection, e.g. missing approvals).
+        assert_eq!(
+            reasons(json!({ "mergeStateStatus": "CLEAN" })),
+            Vec::new()
+        );
+        assert_eq!(
+            reasons(json!({ "mergeStateStatus": "BLOCKED" })),
+            Vec::new()
+        );
     }
 
-    /// Fixed tooltip order regardless of which fields say what: conflict,
-    /// then CI, then review.
+    /// Fixed severity order regardless of which fields say what: conflict,
+    /// then CI, then review, then behind. The conflict+behind combination is
+    /// synthetic (a conflicting head reports `DIRTY`, not `BEHIND`), but it
+    /// pins the ordering contract for every pair that can occur.
     #[test]
     fn concurrent_triggers_list_every_reason_in_fixed_order() {
         let node = pr_node(json!({
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
-            "reviewDecision": "CHANGES_REQUESTED"
+            "reviewDecision": "CHANGES_REQUESTED",
+            "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(
             blocked_reasons_for(&node),
             vec![
                 BlockedReason::Conflict,
                 BlockedReason::Ci,
-                BlockedReason::Review
+                BlockedReason::Review,
+                BlockedReason::Behind
             ]
         );
     }
@@ -1152,7 +1185,8 @@ mod tests {
             "isDraft": true,
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
-            "reviewDecision": "CHANGES_REQUESTED"
+            "reviewDecision": "CHANGES_REQUESTED",
+            "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());
     }
@@ -1178,6 +1212,7 @@ mod tests {
             (BlockedReason::Conflict, "conflict"),
             (BlockedReason::Ci, "ci"),
             (BlockedReason::Review, "review"),
+            (BlockedReason::Behind, "behind"),
         ] {
             assert_eq!(serde_json::to_value(reason).unwrap(), json!(expected));
         }
@@ -1426,6 +1461,7 @@ mod tests {
         assert!(field.contains("statusCheckRollup { state }"));
         assert!(field.contains("isDraft"));
         assert!(field.contains("mergeable"));
+        assert!(field.contains("mergeStateStatus"));
         assert!(field.contains("reviewDecision"));
         assert!(field.contains("changedFiles"));
     }

@@ -34,7 +34,7 @@ export interface PullRequest {
   unread_count: number;
 }
 
-export type BlockedReason = "conflict" | "ci" | "review";
+export type BlockedReason = "conflict" | "ci" | "review" | "behind";
 
 /* Neutral PR-property wording, deliberately not "you must act": the section
    the row sits in supplies the "is this mine to fix?" context. */
@@ -42,6 +42,7 @@ const BLOCKED_LABELS: Record<BlockedReason, string> = {
   conflict: "Merge conflict",
   ci: "CI failing",
   review: "Changes requested",
+  behind: "Behind base",
 };
 
 // Joined reason labels in the backend's fixed order; feeds the +N pill's
@@ -53,7 +54,8 @@ export function blockedTitle(reasons: BlockedReason[]): string {
 // The visible pill texts for a blocked row: the first reason spelled out,
 // then "+N" for the rest, so a doubly-blocked row stays width-bounded
 // ("Merge conflict" "+1") instead of listing everything inline. The first
-// reason wins because the backend orders by severity (conflict, ci, review).
+// reason wins because the backend orders by severity (conflict, ci, review,
+// behind).
 export function blockedPills(reasons: BlockedReason[]): string[] {
   if (reasons.length === 0) return [];
   const pills = [BLOCKED_LABELS[reasons[0]]];
