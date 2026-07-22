@@ -62,15 +62,21 @@ pub enum Section {
     All,
 }
 
-/// One reason a PR is blocked, for the row's indicator dot. Declaration order
-/// is the fixed tooltip order (conflict, then CI, then review); the frontend
-/// renders the list verbatim and never re-derives or re-sorts it.
+/// One reason a PR is blocked, for the row's reason pills. Declaration order
+/// is the fixed severity order (conflict, CI, review, threads, behind); the
+/// frontend shows the first as the primary pill and renders the list
+/// verbatim, never re-deriving or re-sorting it. The order tracks how much
+/// work clearing each takes: a conflict needs a manual rebase, CI an
+/// investigation, review new code, threads an answer, and behind often just
+/// one update-branch click.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BlockedReason {
     Conflict,
     Ci,
     Review,
+    Threads,
+    Behind,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,14 +94,14 @@ pub struct PullRequest {
     pub created_at: String,
     pub updated_at: String,
     pub section: Section,
-    /// Why the PR is blocked, in tooltip order; empty means no dot. Composed
+    /// Why the PR is blocked, in severity order; empty means no pills. Composed
     /// here rather than shipping GitHub's raw enums so the frontend renders
-    /// one dot plus tooltip instead of re-deriving the logic. A property of
+    /// the reason pills instead of re-deriving the logic. A property of
     /// the PR, never an unread event: it does not feed [`collect_activity`]
     /// and must never move a badge or the tray count.
     pub blocked_reasons: Vec<BlockedReason>,
     /// Whether the PR is a draft. Renders as a neutral grey mark, and
-    /// suppresses the blocked dot (see [`blocked_reasons_for`]). Same
+    /// suppresses the blocked pills (see [`blocked_reasons_for`]). Same
     /// property-not-event rule as `blocked_reasons`.
     pub is_draft: bool,
     /// Whether the viewer's review is directly requested and not yet acted
@@ -103,7 +109,7 @@ pub struct PullRequest {
     /// blocking the author, but not a "stuck" state. GitHub drops the viewer
     /// from `reviewRequests` once they submit a review, so this clears itself
     /// and the row falls back to plain participation. Suppressed on drafts,
-    /// like the blocked dot, so a not-ready PR never nags for a review; the
+    /// like the blocked pills, so a not-ready PR never nags for a review; the
     /// request still counts toward Participated membership (see
     /// [`section_for`]). Same property-not-event rule as `blocked_reasons`;
     /// team requests never set it (see [`review_requested_for`]).
@@ -116,7 +122,7 @@ pub struct PullRequest {
     /// reviewer's court"), not a "stuck" state. GitHub drops a reviewer from
     /// `reviewRequests` once they submit, so this clears itself as reviews
     /// arrive. Suppressed on drafts, matching `review_requested` and the
-    /// blocked dot. Unlike `review_requested`, team requests count: it is an
+    /// blocked pills. Unlike `review_requested`, team requests count: it is an
     /// existence check, with no `login` to match. Same property-not-event rule
     /// as `blocked_reasons`.
     pub awaiting_review: bool,
@@ -588,11 +594,12 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
-               isDraft mergeable reviewDecision \
+               isDraft mergeable mergeStateStatus reviewDecision \
                changedFiles \
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
+               reviewThreads(last: 10) {{ nodes {{ isResolved }} }} \
                comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} \
                reviews(last: {REVIEW_PAGE}) {{ nodes {{ state submittedAt author {{ login }} \
                  comments(last: {REVIEW_COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} }} }} \
@@ -664,7 +671,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             section,
             blocked_reasons: blocked_reasons_for(node),
             is_draft,
-            // Suppressed on drafts, matching the blocked dot: a draft is the
+            // Suppressed on drafts, matching the blocked pills: a draft is the
             // author's not-ready choice, so the row never nags you to act on
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
@@ -743,14 +750,29 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 }
 
 /// Composes the row's blocked indicator from mergeability, the head commit's
-/// CI rollup, and the review decision, in the fixed tooltip order. Only
-/// negative states light it: a mergeable, in-flight, or quiet PR yields an
-/// empty list so an undecorated row keeps meaning "nothing is stuck".
+/// CI rollup, the review decision, unresolved review threads, and the
+/// merge-state status, in the fixed severity order. Only negative states
+/// light it: a mergeable, in-flight, or quiet PR yields an empty list so an
+/// undecorated row keeps meaning "nothing is stuck".
 ///
 /// Suppressed entirely for drafts (the author has not declared readiness) and
 /// while `mergeable` is `UNKNOWN`: GitHub computes mergeability lazily and
 /// reports `UNKNOWN` until it settles, which must read as "no flag yet", not
 /// as a blocked state; it resolves on the next poll.
+///
+/// `BEHIND` never coexists with a conflict: `mergeStateStatus` is a single
+/// value and a conflicting head reports `DIRTY` instead. GitHub also only
+/// reports `BEHIND` on repos whose branch protection requires branches to be
+/// up to date before merging; elsewhere a stale-but-clean head stays `CLEAN`
+/// and rightly shows no pill, since being behind does not block it.
+///
+/// `mergeStateStatus` is matched on `BEHIND` alone, never on its other
+/// variants, which is what makes it safe to read here at all: GitHub computes
+/// it reliably only for tokens with push access and answers `UNKNOWN`
+/// otherwise, and its `BLOCKED`/`UNSTABLE` variants conflate wait-states with
+/// act-states. An exact `BEHIND` match degrades to no pill on a repo we
+/// cannot see into, rather than to a wrong one; the cost is that the behind
+/// signal is simply absent for PRs in repos the viewer cannot push to.
 fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     let field = |name: &str| node.get(name).and_then(Value::as_str);
     if node.get("isDraft").and_then(Value::as_bool) == Some(true)
@@ -770,6 +792,34 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     }
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
         reasons.push(BlockedReason::Review);
+    }
+    // Unresolved threads only count as the blocker when everything else reads
+    // done: no harder reason above, review explicitly approved, and CI green
+    // or absent. Mid-review threads are normal conversation, and flagging
+    // them would decorate half the list; this scoping keeps the pill meaning
+    // "the only thing left is answering comments". A null reviewDecision is
+    // not "done": GitHub reports null both when the repo requires no reviews
+    // and while a comment-only review is in progress (exactly how unresolved
+    // threads arise), so only an explicit APPROVED opens the gate. Like the
+    // BEHIND match below, that degrades to no pill where the signal is
+    // ambiguous; the cost is that repos without required reviews never show
+    // this pill. Deliberately checked before behind, which does not gate it:
+    // a stale branch does not make the threads any less the thing to act on.
+    // Reads the newest 10 threads (the query pages from the end, where the
+    // still-open threads skew; a full-history page would also bloat the
+    // batched query's node budget); a PR whose unresolved threads all sit
+    // deeper than that is beyond what one page can see.
+    let otherwise_done = reasons.is_empty()
+        && field("reviewDecision") == Some("APPROVED")
+        && !matches!(ci, Some("PENDING") | Some("EXPECTED"));
+    let unresolved = list(node, "/reviewThreads/nodes")
+        .iter()
+        .any(|t| t.get("isResolved").and_then(Value::as_bool) == Some(false));
+    if otherwise_done && unresolved {
+        reasons.push(BlockedReason::Threads);
+    }
+    if field("mergeStateStatus") == Some("BEHIND") {
+        reasons.push(BlockedReason::Behind);
     }
     reasons
 }
@@ -1075,8 +1125,18 @@ mod tests {
         json!({ "nodes": [{ "commit": { "statusCheckRollup": { "state": state } } }] })
     }
 
+    /// A `reviewThreads` connection with one thread per flag, for embedding
+    /// in a `pr_node` overrides literal.
+    fn review_threads(resolved: &[bool]) -> Value {
+        let nodes: Vec<Value> = resolved
+            .iter()
+            .map(|r| json!({ "isResolved": r }))
+            .collect();
+        json!({ "nodes": nodes })
+    }
+
     #[test]
-    fn each_blocked_trigger_lights_the_dot_on_its_own() {
+    fn each_blocked_trigger_lights_the_marker_on_its_own() {
         let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
         assert_eq!(
             reasons(json!({ "mergeable": "CONFLICTING" })),
@@ -1093,6 +1153,94 @@ mod tests {
         assert_eq!(
             reasons(json!({ "reviewDecision": "CHANGES_REQUESTED" })),
             vec![BlockedReason::Review]
+        );
+        assert_eq!(
+            reasons(json!({ "mergeStateStatus": "BEHIND" })),
+            vec![BlockedReason::Behind]
+        );
+        // Threads additionally need the review to read as done, so this
+        // trigger carries an explicit approval alongside it; absent CI still
+        // counts as done.
+        assert_eq!(
+            reasons(json!({
+                "reviewDecision": "APPROVED",
+                "reviewThreads": review_threads(&[true, false])
+            })),
+            vec![BlockedReason::Threads]
+        );
+    }
+
+    /// Threads are only the blocker when nothing harder remains: a harder
+    /// reason, an unfinished review, or running CI keeps them a normal
+    /// conversation rather than a flag.
+    #[test]
+    fn unresolved_threads_yield_to_everything_short_of_done() {
+        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        let unresolved = || review_threads(&[false]);
+        assert_eq!(
+            reasons(json!({
+                "reviewDecision": "CHANGES_REQUESTED",
+                "reviewThreads": unresolved()
+            })),
+            vec![BlockedReason::Review]
+        );
+        assert_eq!(
+            reasons(json!({
+                "commits": ci_commits("FAILURE"),
+                "reviewThreads": unresolved()
+            })),
+            vec![BlockedReason::Ci]
+        );
+        assert_eq!(
+            reasons(json!({
+                "reviewDecision": "REVIEW_REQUIRED",
+                "reviewThreads": unresolved()
+            })),
+            Vec::new()
+        );
+        // A null reviewDecision is ambiguous: it means "no required reviews"
+        // but also "comment-only review in progress", so it never opens the
+        // gate.
+        assert_eq!(reasons(json!({ "reviewThreads": unresolved() })), Vec::new());
+        assert_eq!(
+            reasons(json!({
+                "commits": ci_commits("PENDING"),
+                "reviewThreads": unresolved()
+            })),
+            Vec::new()
+        );
+        // Fully resolved threads never flag, however done the PR is.
+        assert_eq!(
+            reasons(json!({
+                "reviewDecision": "APPROVED",
+                "commits": ci_commits("SUCCESS"),
+                "reviewThreads": review_threads(&[true, true])
+            })),
+            Vec::new()
+        );
+        // An approved, green PR with an open thread is the reason's home case.
+        assert_eq!(
+            reasons(json!({
+                "reviewDecision": "APPROVED",
+                "commits": ci_commits("SUCCESS"),
+                "reviewThreads": unresolved()
+            })),
+            vec![BlockedReason::Threads]
+        );
+    }
+
+    /// Behind does not gate threads (a stale branch makes the open thread no
+    /// less the thing to act on), and threads lead in the fixed order.
+    #[test]
+    fn threads_and_behind_can_share_a_row_with_threads_leading() {
+        let node = pr_node(json!({
+            "reviewDecision": "APPROVED",
+            "mergeStateStatus": "BEHIND",
+            "reviewThreads": review_threads(&[false])
+        }));
+        assert_eq!(
+            blocked_reasons_for(&node),
+            vec![BlockedReason::Threads, BlockedReason::Behind]
         );
     }
 
@@ -1123,23 +1271,38 @@ mod tests {
             reasons(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
             Vec::new()
         );
+        // Every non-BEHIND merge state is either fine (CLEAN), covered by a
+        // dedicated reason (DIRTY -> conflict), or a state we deliberately do
+        // not flag (BLOCKED: branch protection, e.g. missing approvals).
+        assert_eq!(
+            reasons(json!({ "mergeStateStatus": "CLEAN" })),
+            Vec::new()
+        );
+        assert_eq!(
+            reasons(json!({ "mergeStateStatus": "BLOCKED" })),
+            Vec::new()
+        );
     }
 
-    /// Fixed tooltip order regardless of which fields say what: conflict,
-    /// then CI, then review.
+    /// Fixed severity order regardless of which fields say what: conflict,
+    /// then CI, then review, then behind. The conflict+behind combination is
+    /// synthetic (a conflicting head reports `DIRTY`, not `BEHIND`), but it
+    /// pins the ordering contract for every pair that can occur.
     #[test]
     fn concurrent_triggers_list_every_reason_in_fixed_order() {
         let node = pr_node(json!({
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
-            "reviewDecision": "CHANGES_REQUESTED"
+            "reviewDecision": "CHANGES_REQUESTED",
+            "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(
             blocked_reasons_for(&node),
             vec![
                 BlockedReason::Conflict,
                 BlockedReason::Ci,
-                BlockedReason::Review
+                BlockedReason::Review,
+                BlockedReason::Behind
             ]
         );
     }
@@ -1147,24 +1310,26 @@ mod tests {
     /// The author has not declared readiness, so "needs action now" does not
     /// apply — whatever the CI, conflict, or review state says.
     #[test]
-    fn drafts_suppress_the_dot_entirely() {
+    fn drafts_suppress_the_marker_entirely() {
         let node = pr_node(json!({
             "isDraft": true,
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
-            "reviewDecision": "CHANGES_REQUESTED"
+            "reviewDecision": "CHANGES_REQUESTED",
+            "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());
     }
 
     /// GitHub computes `mergeable` lazily and answers `UNKNOWN` until it
-    /// settles; that transient must render as no dot, not as a blocked state.
+    /// settles; that transient must render as no marker, not as a blocked state.
     #[test]
-    fn an_unknown_mergeability_suppresses_the_dot_until_the_next_poll() {
+    fn an_unknown_mergeability_suppresses_the_marker_until_the_next_poll() {
         let node = pr_node(json!({
             "mergeable": "UNKNOWN",
             "commits": ci_commits("FAILURE"),
-            "reviewDecision": "CHANGES_REQUESTED"
+            "reviewDecision": "CHANGES_REQUESTED",
+            "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());
     }
@@ -1178,6 +1343,8 @@ mod tests {
             (BlockedReason::Conflict, "conflict"),
             (BlockedReason::Ci, "ci"),
             (BlockedReason::Review, "review"),
+            (BlockedReason::Threads, "threads"),
+            (BlockedReason::Behind, "behind"),
         ] {
             assert_eq!(serde_json::to_value(reason).unwrap(), json!(expected));
         }
@@ -1226,7 +1393,7 @@ mod tests {
     #[test]
     fn a_draft_pr_never_flags_review_requested_on_the_row() {
         // The request still stands, but a draft is the author's not-ready
-        // choice, so its row marker is suppressed like the blocked dot.
+        // choice, so its row marker is suppressed like the blocked pills.
         let repo = json!({
             "nameWithOwner": "acme/widgets",
             "pullRequests": {
@@ -1290,7 +1457,7 @@ mod tests {
 
     #[test]
     fn a_draft_mine_pr_never_flags_awaiting_review() {
-        // Matches review_requested and the blocked dot: a draft is the author's
+        // Matches review_requested and the blocked pills: a draft is the author's
         // not-ready choice, so its row marker is suppressed while the request
         // still stands.
         let repo = json!({
@@ -1395,7 +1562,7 @@ mod tests {
     #[test]
     fn commits_and_status_changes_never_reach_the_activity_list() {
         // CI, mergeability, review decision, and draftness are all fetched
-        // (for the row's blocked dot and draft mark) but deliberately excluded
+        // (for the row's blocked pills and draft mark) but deliberately excluded
         // from activity: they are properties of the PR, not unread events. A
         // node with neither a comment nor a review yields nothing, whatever
         // those fields say.
@@ -1426,7 +1593,9 @@ mod tests {
         assert!(field.contains("statusCheckRollup { state }"));
         assert!(field.contains("isDraft"));
         assert!(field.contains("mergeable"));
+        assert!(field.contains("mergeStateStatus"));
         assert!(field.contains("reviewDecision"));
+        assert!(field.contains("reviewThreads(last: 10) { nodes { isResolved } }"));
         assert!(field.contains("changedFiles"));
     }
 
