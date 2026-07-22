@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -87,6 +87,40 @@ const SECTIONS = [
   { key: "participated", label: "Participated" },
   { key: "all", label: "All" },
 ] as const;
+
+/** Every collapsible top-level section; repo sub-groups inside "All" are
+ * deliberately not collapsible. */
+export type SectionKey = "mine" | "participated" | "all" | "merged";
+
+/* Mine and All start collapsed: they are ambient context, not act-now queues,
+   so the popover opens on what needs attention (Participated, Merged). */
+export const DEFAULT_COLLAPSED: Record<SectionKey, boolean> = {
+  mine: true,
+  participated: false,
+  all: true,
+  merged: false,
+};
+
+const COLLAPSED_STORAGE_KEY = "collapsed-sections";
+
+// Turns the persisted blob back into collapse state. Unknown keys and
+// non-boolean values fall back to the defaults, so a stale or corrupt blob
+// can never poison the state shape.
+export function parseCollapsed(raw: string | null): Record<SectionKey, boolean> {
+  const state = { ...DEFAULT_COLLAPSED };
+  if (!raw) return state;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return state;
+    for (const key of Object.keys(state) as SectionKey[]) {
+      const value = (parsed as Record<string, unknown>)[key];
+      if (typeof value === "boolean") state[key] = value;
+    }
+  } catch {
+    // Corrupt JSON: keep the defaults.
+  }
+  return state;
+}
 
 // Neutral grey silhouette shown while an avatar loads and when it fails.
 const AVATAR_PLACEHOLDER =
@@ -439,7 +473,89 @@ function MergedRow({ pr }: { pr: MergedPr }) {
   );
 }
 
-function PrList({ prs, merged }: { prs: PullRequest[]; merged: MergedPr[] }) {
+/* A section heading that is one whole-row disclosure button, Finder-style:
+   chevron, label, and count share a single click target instead of a small
+   icon. The h2 keeps the heading in the accessibility outline; its
+   display: contents lets the button lay out directly in the header's flex
+   row, so trailing siblings (Merged's "Clear all") stay outside the toggle
+   and out of nested-button territory. */
+function SectionHeader({
+  label,
+  count,
+  expanded,
+  onToggle,
+  children,
+}: {
+  label: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="pr-section-header">
+      <h2 className="pr-section-heading">
+        <button
+          type="button"
+          className="pr-section-toggle"
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          <svg
+            className="pr-section-chevron"
+            viewBox="0 0 24 24"
+            width="10"
+            height="10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="pr-section-label">{label}</span>
+          <span className="pr-section-count">{count}</span>
+        </button>
+      </h2>
+      {children}
+    </div>
+  );
+}
+
+function PrList({
+  prs,
+  merged,
+  filtering = false,
+}: {
+  prs: PullRequest[];
+  merged: MergedPr[];
+  /** True while the header filter has a query. Filtering force-expands every
+   * section (a match hidden inside a collapsed section would read as "no
+   * match") and suspends toggling; the stored state returns untouched when
+   * the query clears. */
+  filtering?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return parseCollapsed(localStorage.getItem(COLLAPSED_STORAGE_KEY));
+    } catch {
+      return { ...DEFAULT_COLLAPSED };
+    }
+  });
+  const isExpanded = (key: SectionKey) => filtering || !collapsed[key];
+  const toggle = (key: SectionKey) => {
+    if (filtering) return;
+    const next = { ...collapsed, [key]: !collapsed[key] };
+    setCollapsed(next);
+    // Persisted outside the state updater: StrictMode double-invokes updaters.
+    try {
+      localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Private-mode storage failures just lose persistence, not the toggle.
+    }
+  };
   return (
     <main className="pr-list">
       {SECTIONS.map(({ key, label }) => {
@@ -447,11 +563,13 @@ function PrList({ prs, merged }: { prs: PullRequest[]; merged: MergedPr[] }) {
         if (rows.length === 0) return null;
         return (
           <section key={key} className="pr-section">
-            <div className="pr-section-header">
-              <h2 className="pr-section-label">{label}</h2>
-              <span className="pr-section-count">{rows.length}</span>
-            </div>
-            {key === "all" ? (
+            <SectionHeader
+              label={label}
+              count={rows.length}
+              expanded={isExpanded(key)}
+              onToggle={() => toggle(key)}
+            />
+            {!isExpanded(key) ? null : key === "all" ? (
               groupByRepo(rows).map(({ repo, prs: group }) => (
                 <div key={repo} className="pr-repo-group">
                   <div className="pr-repo-header">
@@ -481,9 +599,12 @@ function PrList({ prs, merged }: { prs: PullRequest[]; merged: MergedPr[] }) {
       })}
       {merged.length > 0 && (
         <section className="pr-section">
-          <div className="pr-section-header">
-            <h2 className="pr-section-label">Merged</h2>
-            <span className="pr-section-count">{merged.length}</span>
+          <SectionHeader
+            label="Merged"
+            count={merged.length}
+            expanded={isExpanded("merged")}
+            onToggle={() => toggle("merged")}
+          >
             <button
               type="button"
               className="pr-section-clear"
@@ -491,12 +612,14 @@ function PrList({ prs, merged }: { prs: PullRequest[]; merged: MergedPr[] }) {
             >
               Clear all
             </button>
-          </div>
-          <ul>
-            {merged.map((pr) => (
-              <MergedRow key={`${pr.repo}#${pr.number}`} pr={pr} />
-            ))}
-          </ul>
+          </SectionHeader>
+          {isExpanded("merged") && (
+            <ul>
+              {merged.map((pr) => (
+                <MergedRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </main>

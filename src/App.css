@@ -82,6 +82,37 @@ body {
   background-color: #f2f2f7;
 }
 
+/* The heading generates no box of its own: the toggle button inside it lays
+   out directly in the header's flex row, so it can flex-grow past the count
+   while "Clear all" keeps its own slot at the row's end. */
+.pr-section-heading {
+  display: contents;
+}
+
+/* The whole heading row is the disclosure target, not just the chevron. */
+.pr-section-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.pr-section-chevron {
+  flex: none;
+  color: #a1a1a6;
+  transition: transform 0.15s ease;
+}
+
+.pr-section-toggle[aria-expanded="true"] .pr-section-chevron {
+  transform: rotate(90deg);
+}
+
 .pr-section-label {
   font-size: 12px;
   font-weight: 700;
@@ -831,6 +862,10 @@ body {
 
   .pr-section-header {
     background-color: #1e1e1e;
+  }
+
+  .pr-section-chevron {
+    color: #7c7c80;
   }
 
   .pr-section-label {

@@ -104,7 +104,11 @@ function App() {
       {inSettings ? (
         <SettingsView />
       ) : hasVisible ? (
-        <PrList prs={visiblePrs} merged={visibleMerged} />
+        <PrList
+          prs={visiblePrs}
+          merged={visibleMerged}
+          filtering={filter.trim() !== ""}
+        />
       ) : hasAny ? (
         /* Rows exist but the filter hid them all. */
         <main className="popover-body">
