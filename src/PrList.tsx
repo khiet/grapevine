@@ -314,9 +314,11 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
             <span className="pr-updated">{formatUpdated(pr.updated_at)}</span>
           </span>
           <span className="pr-origin">
-            <span className="pr-repo">
-              {showRepo ? `${pr.repo} #${pr.number}` : `#${pr.number}`}
-            </span>
+            {/* Number first, in its own non-shrinking span, so "PR 510" is
+                findable at a fixed x-position on every row: the repo and
+                author give way to truncation, the number never does. */}
+            <span className="pr-number">#{pr.number}</span>
+            {showRepo && <span className="pr-repo">{pr.repo}</span>}
             <span className="pr-author">@{pr.author}</span>
             {/* A neutral state pill, never a signal. The backend suppresses
                 the other markers on a draft (the author has not declared
@@ -401,9 +403,8 @@ function MergedRow({ pr }: { pr: MergedPr }) {
             <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
           </span>
           <span className="pr-origin">
-            <span className="pr-repo">
-              {pr.repo} #{pr.number}
-            </span>
+            <span className="pr-number">#{pr.number}</span>
+            <span className="pr-repo">{pr.repo}</span>
             <span className="pr-author">@{pr.author}</span>
           </span>
         </span>

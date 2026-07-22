@@ -325,6 +325,14 @@ body {
   font-size: 12px;
 }
 
+/* Leads the metadata line and never shrinks: "PR 510" must be findable at a
+   fixed x-position on every row, so the repo and author truncate around it.
+   Deliberately the same type as the rest of the line - the fixed position is
+   the emphasis; the number is not a signal. */
+.pr-number {
+  flex: none;
+}
+
 .pr-repo {
   overflow: hidden;
   text-overflow: ellipsis;
