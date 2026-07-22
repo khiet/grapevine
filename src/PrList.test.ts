@@ -190,6 +190,7 @@ test("a single blocked reason renders as one pill, spelled out", () => {
   expect(blockedPills(["ci"])).toEqual(["CI failing"]);
   expect(blockedPills(["review"])).toEqual(["Changes requested"]);
   expect(blockedPills(["behind"])).toEqual(["Behind base"]);
+  expect(blockedPills(["threads"])).toEqual(["Unresolved threads"]);
 });
 
 test("extra reasons collapse into a +N pill after the primary one", () => {
@@ -201,6 +202,12 @@ test("extra reasons collapse into a +N pill after the primary one", () => {
   // Behind sorts last in the backend's severity order, so it only leads a
   // pill when it is the sole reason.
   expect(blockedPills(["ci", "behind"])).toEqual(["CI failing", "+1"]);
+  // The only pair the threads scoping allows through (it yields to harder
+  // reasons at the backend): threads lead over behind.
+  expect(blockedPills(["threads", "behind"])).toEqual([
+    "Unresolved threads",
+    "+1",
+  ]);
 });
 
 test("no blocked reasons means no pills", () => {
