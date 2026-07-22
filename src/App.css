@@ -198,6 +198,13 @@ body {
   border-top: 1px solid rgba(0, 0, 0, 0.08);
 }
 
+/* Row-height padding so the empty slab matches a one-row section's shape. */
+.pr-empty {
+  padding: 13px 11px;
+  color: #8e8e93;
+  font-size: 12px;
+}
+
 .pr-row {
   display: grid;
   grid-template-columns: 30px 1fr;
@@ -944,6 +951,10 @@ body {
   }
 
   .pr-dismiss {
+    color: #7c7c80;
+  }
+
+  .pr-empty {
     color: #7c7c80;
   }
 

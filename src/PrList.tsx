@@ -591,7 +591,12 @@ function PrList({
     <main className="pr-list">
       {SECTIONS.map(({ key, label }) => {
         const rows = prs.filter((pr) => pr.section === key);
-        if (rows.length === 0) return null;
+        /* The three PR sections always render, empty or not, so the popover
+           keeps one stable scaffold (an absent "Mine" would read as broken,
+           not empty). Filtering is the exception: rows are pre-filtered, so
+           an empty section there means "no matches here" and showing it
+           would clutter the force-expanded results. */
+        if (rows.length === 0 && filtering) return null;
         return (
           <section key={key} className="pr-section">
             <SectionHeader
@@ -603,7 +608,13 @@ function PrList({
               unread={totalUnread(rows)}
             />
             {isExpanded(key) &&
-              (key === "all" ? (
+              (rows.length === 0 ? (
+                /* Inside the slab, not bare text, so an empty section keeps
+                   the shape rows will appear in. */
+                <ul>
+                  <li className="pr-empty">No pull requests</li>
+                </ul>
+              ) : key === "all" ? (
               groupByRepo(rows).map(({ repo, prs: group }) => (
                 <div key={repo} className="pr-repo-group">
                   <div className="pr-repo-header">
