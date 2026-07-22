@@ -612,7 +612,7 @@ function PrList({
                 /* Inside the slab, not bare text, so an empty section keeps
                    the shape rows will appear in. */
                 <ul>
-                  <li className="pr-empty">No pull requests</li>
+                  <li className="pr-empty">Nothing to wine about</li>
                 </ul>
               ) : key === "all" ? (
               groupByRepo(rows).map(({ repo, prs: group }) => (
