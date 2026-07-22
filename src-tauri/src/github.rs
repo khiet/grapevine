@@ -587,12 +587,11 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
                         orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
-               number title url createdAt updatedAt viewerDidAuthor \
+               number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
                isDraft mergeable reviewDecision \
                changedFiles \
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
-               participants(first: 50) {{ nodes {{ login }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
                comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} \
                reviews(last: {REVIEW_PAGE}) {{ nodes {{ state submittedAt author {{ login }} \
@@ -796,18 +795,30 @@ fn has_pending_review_request(node: &Value) -> bool {
     !list(node, "/reviewRequests/nodes").is_empty()
 }
 
-/// Mine beats Participated: the author is always a participant, so order
-/// matters. Participants covers reviewers, commenters, and mentions;
-/// reviewRequests covers requests not yet acted on, which GitHub does not
-/// count as participation.
+/// Whether GitHub considers the viewer involved enough to notify them about
+/// this PR. GitHub subscribes them the moment they comment, review, are
+/// mentioned, are assigned, or have a review requested, including through a
+/// team, whose membership nothing else in the response resolves. Unlike
+/// `participants`, it is unpaged and survives an org's member-privacy setting,
+/// so involvement can neither fall out of a page window nor be hidden; unlike
+/// watching a repo, it is per-thread. Muting a thread clears it, by design:
+/// the section decides what may badge (see `unread::apply`), and a thread the
+/// viewer muted should stop badging them.
+fn viewer_subscribed(node: &Value) -> bool {
+    node.get("viewerSubscription").and_then(Value::as_str) == Some("SUBSCRIBED")
+}
+
+/// Mine beats Participated: authors are subscribed to their own PRs, so order
+/// matters. A pending review request is checked alongside the subscription
+/// rather than trusted to it, so muting a thread cannot hide a review the
+/// viewer was named for. That cover stops at named requests: a team request
+/// carries no `login` for [`review_requested_for`] to match, so a muted
+/// CODEOWNERS thread falls to All until the viewer re-subscribes.
 fn section_for(node: &Value, viewer: &str) -> Section {
     if node.get("viewerDidAuthor").and_then(Value::as_bool) == Some(true) {
         return Section::Mine;
     }
-    let is_participant = list(node, "/participants/nodes")
-        .iter()
-        .any(|n| n.pointer("/login").and_then(Value::as_str) == Some(viewer));
-    if is_participant || review_requested_for(node, viewer) {
+    if viewer_subscribed(node) || review_requested_for(node, viewer) {
         return Section::Participated;
     }
     Section::All
@@ -826,7 +837,7 @@ mod tests {
             "updatedAt": "2026-07-11T09:30:00Z",
             "viewerDidAuthor": false,
             "author": { "login": "someone", "avatarUrl": "https://avatars.example/someone" },
-            "participants": { "nodes": [{ "login": "someone" }] },
+            "viewerSubscription": "UNSUBSCRIBED",
             "reviewRequests": { "nodes": [] }
         });
         node.as_object_mut()
@@ -836,25 +847,47 @@ mod tests {
     }
 
     #[test]
-    fn authored_prs_are_mine_even_though_the_author_participates() {
+    fn authored_prs_are_mine_even_though_the_author_is_subscribed() {
         let node = pr_node(json!({
             "viewerDidAuthor": true,
-            "participants": { "nodes": [{ "login": "khiet" }] }
+            "viewerSubscription": "SUBSCRIBED"
         }));
         assert_eq!(section_for(&node, "khiet"), Section::Mine);
     }
 
     #[test]
-    fn participant_prs_are_participated() {
+    fn subscribed_prs_are_participated() {
+        // GitHub subscribes the viewer when they comment, review, are
+        // mentioned, or are assigned, so one field answers all of those.
+        let node = pr_node(json!({ "viewerSubscription": "SUBSCRIBED" }));
+        assert_eq!(section_for(&node, "khiet"), Section::Participated);
+    }
+
+    #[test]
+    fn an_ignored_thread_is_not_involvement() {
+        // Muting a thread is its own subscription state, not the absence of
+        // one: only SUBSCRIBED counts. Reading the field as merely present
+        // would sweep every browsed PR into Participated and badge it.
+        let node = pr_node(json!({ "viewerSubscription": "IGNORED" }));
+        assert_eq!(section_for(&node, "khiet"), Section::All);
+    }
+
+    #[test]
+    fn review_requested_prs_are_participated() {
+        // `pr_node` defaults to UNSUBSCRIBED, so the request alone places this
+        // PR: one GitHub never subscribed the viewer to still counts.
         let node = pr_node(json!({
-            "participants": { "nodes": [{ "login": "other" }, { "login": "khiet" }] }
+            "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
         }));
         assert_eq!(section_for(&node, "khiet"), Section::Participated);
     }
 
     #[test]
-    fn review_requested_prs_are_participated() {
+    fn muting_a_thread_does_not_hide_a_review_you_were_named_for() {
+        // A mute must not outrank a review the viewer was asked for by name,
+        // so IGNORED loses to the request rather than winning outright.
         let node = pr_node(json!({
+            "viewerSubscription": "IGNORED",
             "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
         }));
         assert_eq!(section_for(&node, "khiet"), Section::Participated);
@@ -876,11 +909,9 @@ mod tests {
             "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
         }));
         assert!(!review_requested_for(&other, "khiet"));
-        // A participant who was never asked to review: not flagged.
-        let participant = pr_node(json!({
-            "participants": { "nodes": [{ "login": "khiet" }] }
-        }));
-        assert!(!review_requested_for(&participant, "khiet"));
+        // The viewer takes part but was never asked to review: not flagged.
+        let involved = pr_node(json!({ "viewerSubscription": "SUBSCRIBED" }));
+        assert!(!review_requested_for(&involved, "khiet"));
     }
 
     #[test]
@@ -922,12 +953,26 @@ mod tests {
     }
 
     #[test]
-    fn team_review_requests_do_not_match_the_viewer() {
-        // Team reviewers have no `login` field in the response.
+    fn a_team_review_request_alone_leaves_the_pr_in_all() {
+        // A team request names no user, so on its own it places nothing. This
+        // is what stops `section_for` from being widened to
+        // `has_pending_review_request` to "fix" team requests, which would
+        // sweep every PR still waiting on any reviewer into Participated.
         let node = pr_node(json!({
             "reviewRequests": { "nodes": [{ "requestedReviewer": {} }] }
         }));
         assert_eq!(section_for(&node, "khiet"), Section::All);
+    }
+
+    #[test]
+    fn a_team_review_request_reaches_the_viewer_through_the_subscription() {
+        // GitHub subscribes the team's members, which is the only way the app
+        // learns a request aimed at a team is the viewer's.
+        let node = pr_node(json!({
+            "viewerSubscription": "SUBSCRIBED",
+            "reviewRequests": { "nodes": [{ "requestedReviewer": {} }] }
+        }));
+        assert_eq!(section_for(&node, "khiet"), Section::Participated);
     }
 
     #[test]
@@ -1221,17 +1266,17 @@ mod tests {
 
     #[test]
     fn awaiting_review_is_gated_to_your_own_prs() {
-        // A PR the viewer merely participates in still carries an outstanding
+        // A PR the viewer merely takes part in still carries an outstanding
         // request (for someone else), so the helper matches, but the outgoing
-        // marker is for your own PRs and must stay off here. The viewer is a
-        // participant, not the requested reviewer, so no incoming glyph either:
+        // marker is for your own PRs and must stay off here. The viewer is
+        // subscribed, not the requested reviewer, so no incoming glyph either:
         // this isolates the Mine gate on its own.
         let repo = json!({
             "nameWithOwner": "acme/widgets",
             "pullRequests": {
                 "pageInfo": { "hasNextPage": false, "endCursor": null },
                 "nodes": [pr_node(json!({
-                    "participants": { "nodes": [{ "login": "khiet" }] },
+                    "viewerSubscription": "SUBSCRIBED",
                     "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "someone" } }] }
                 }))]
             }
@@ -1383,6 +1428,18 @@ mod tests {
         assert!(field.contains("mergeable"));
         assert!(field.contains("reviewDecision"));
         assert!(field.contains("changedFiles"));
+    }
+
+    /// Sectioning reads these fields off the node, so the fixture-driven tests
+    /// pass whether or not the query ever asked for them. Drop
+    /// `viewerSubscription` and nothing else fails: every PR reads as
+    /// unsubscribed, the list collapses into All, and unread badges stop.
+    #[test]
+    fn repo_field_asks_for_the_involvement_field() {
+        let field = repo_field("r0", "acme", "widgets", None);
+        assert!(field.contains("viewerSubscription"));
+        assert!(field.contains("viewerDidAuthor"));
+        assert!(field.contains("reviewRequests(first: 50)"));
     }
 
     /// `ownerAffiliations` defaults to [OWNER, COLLABORATOR]; if the query
