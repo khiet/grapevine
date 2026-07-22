@@ -599,7 +599,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
-               reviewThreads(first: 50) {{ nodes {{ isResolved }} }} \
+               reviewThreads(last: 10) {{ nodes {{ isResolved }} }} \
                comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} \
                reviews(last: {REVIEW_PAGE}) {{ nodes {{ state submittedAt author {{ login }} \
                  comments(last: {REVIEW_COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} }} }} \
@@ -763,7 +763,7 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 /// `BEHIND` never coexists with a conflict: `mergeStateStatus` is a single
 /// value and a conflicting head reports `DIRTY` instead. GitHub also only
 /// reports `BEHIND` on repos whose branch protection requires branches to be
-/// up to date before merging — elsewhere a stale-but-clean head stays `CLEAN`
+/// up to date before merging; elsewhere a stale-but-clean head stays `CLEAN`
 /// and rightly shows no pill, since being behind does not block it.
 ///
 /// `mergeStateStatus` is matched on `BEHIND` alone, never on its other
@@ -794,17 +794,23 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
         reasons.push(BlockedReason::Review);
     }
     // Unresolved threads only count as the blocker when everything else reads
-    // done: no harder reason above, review approved (or the repo requires
-    // none, which GitHub reports as a null reviewDecision), and CI green or
-    // absent. Mid-review threads are normal conversation, and flagging them
-    // would decorate half the list; this scoping keeps the pill meaning "the
-    // only thing left is answering comments". Deliberately checked before
-    // behind, which does not gate it: a stale branch does not make the
-    // threads any less the thing to act on. Reads the first 50 threads (the
-    // query's page); a PR with more and all of its unresolved ones past that
-    // horizon is beyond what one page can see.
+    // done: no harder reason above, review explicitly approved, and CI green
+    // or absent. Mid-review threads are normal conversation, and flagging
+    // them would decorate half the list; this scoping keeps the pill meaning
+    // "the only thing left is answering comments". A null reviewDecision is
+    // not "done": GitHub reports null both when the repo requires no reviews
+    // and while a comment-only review is in progress (exactly how unresolved
+    // threads arise), so only an explicit APPROVED opens the gate. Like the
+    // BEHIND match below, that degrades to no pill where the signal is
+    // ambiguous; the cost is that repos without required reviews never show
+    // this pill. Deliberately checked before behind, which does not gate it:
+    // a stale branch does not make the threads any less the thing to act on.
+    // Reads the newest 10 threads (the query pages from the end, where the
+    // still-open threads skew; a full-history page would also bloat the
+    // batched query's node budget); a PR whose unresolved threads all sit
+    // deeper than that is beyond what one page can see.
     let otherwise_done = reasons.is_empty()
-        && matches!(field("reviewDecision"), Some("APPROVED") | None)
+        && field("reviewDecision") == Some("APPROVED")
         && !matches!(ci, Some("PENDING") | Some("EXPECTED"));
     let unresolved = list(node, "/reviewThreads/nodes")
         .iter()
@@ -1152,10 +1158,14 @@ mod tests {
             reasons(json!({ "mergeStateStatus": "BEHIND" })),
             vec![BlockedReason::Behind]
         );
-        // The fixture carries no reviewDecision or CI, which reads as done
-        // (no review requirement, no checks), so the threads gate is open.
+        // Threads additionally need the review to read as done, so this
+        // trigger carries an explicit approval alongside it; absent CI still
+        // counts as done.
         assert_eq!(
-            reasons(json!({ "reviewThreads": review_threads(&[true, false]) })),
+            reasons(json!({
+                "reviewDecision": "APPROVED",
+                "reviewThreads": review_threads(&[true, false])
+            })),
             vec![BlockedReason::Threads]
         );
     }
@@ -1188,6 +1198,10 @@ mod tests {
             })),
             Vec::new()
         );
+        // A null reviewDecision is ambiguous: it means "no required reviews"
+        // but also "comment-only review in progress", so it never opens the
+        // gate.
+        assert_eq!(reasons(json!({ "reviewThreads": unresolved() })), Vec::new());
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("PENDING"),
@@ -1220,6 +1234,7 @@ mod tests {
     #[test]
     fn threads_and_behind_can_share_a_row_with_threads_leading() {
         let node = pr_node(json!({
+            "reviewDecision": "APPROVED",
             "mergeStateStatus": "BEHIND",
             "reviewThreads": review_threads(&[false])
         }));
@@ -1580,7 +1595,7 @@ mod tests {
         assert!(field.contains("mergeable"));
         assert!(field.contains("mergeStateStatus"));
         assert!(field.contains("reviewDecision"));
-        assert!(field.contains("reviewThreads(first: 50) { nodes { isResolved } }"));
+        assert!(field.contains("reviewThreads(last: 10) { nodes { isResolved } }"));
         assert!(field.contains("changedFiles"));
     }
 
