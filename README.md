@@ -28,9 +28,10 @@ the open PRs, split into the ones you authored, the ones you are involved in,
 and everything else. The first two badge comments and reviews you have not seen
 yet; everything else is a browse list and stays silent. Each row badges the
 organization's avatar onto the author's, flags drafts with a pill, and shows a
-red dot when the PR cannot merge (merge conflict, failing CI, or changes
-requested) with the reasons in its tooltip. The list is ordered by most recently
-updated. Merged PRs get their own section until you dismiss them.
+pill naming why a PR cannot merge (merge conflict, CI failing, changes
+requested, unresolved threads, or behind base), collapsing the rest into a count
+when more than one applies. The list is ordered by most recently updated.
+Merged PRs get their own section until you dismiss them.
 
 Grapevine is inspired by [Trailer](https://github.com/ptsochantaris/trailer),
 which I used for years and still recommend. It is not a fork or a port, and
