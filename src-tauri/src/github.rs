@@ -765,6 +765,14 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 /// reports `BEHIND` on repos whose branch protection requires branches to be
 /// up to date before merging — elsewhere a stale-but-clean head stays `CLEAN`
 /// and rightly shows no pill, since being behind does not block it.
+///
+/// `mergeStateStatus` is matched on `BEHIND` alone, never on its other
+/// variants, which is what makes it safe to read here at all: GitHub computes
+/// it reliably only for tokens with push access and answers `UNKNOWN`
+/// otherwise, and its `BLOCKED`/`UNSTABLE` variants conflate wait-states with
+/// act-states. An exact `BEHIND` match degrades to no pill on a repo we
+/// cannot see into, rather than to a wrong one; the cost is that the behind
+/// signal is simply absent for PRs in repos the viewer cannot push to.
 fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     let field = |name: &str| node.get(name).and_then(Value::as_str);
     if node.get("isDraft").and_then(Value::as_bool) == Some(true)
