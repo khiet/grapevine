@@ -174,14 +174,25 @@ export function groupByRepo(prs: PullRequest[]): RepoGroup[] {
 function PrAvatar({
   avatarUrl,
   ownerAvatarUrl,
+  author,
   unreadCount = 0,
 }: {
   avatarUrl: string;
   ownerAvatarUrl: string;
+  author: string;
   unreadCount?: number;
 }) {
   return (
-    <span className="pr-avatar-wrap">
+    <span
+      /* The author's name lives here as a hover reveal, not in the metadata
+         line: the face already says who, so spelling the handle out on every
+         row bought little. pr-tip-right because the avatar sits at the card's
+         left edge, where the default leftward bubble would clip. */
+      className="pr-avatar-wrap pr-tip pr-tip-right"
+      role="img"
+      data-tip={`@${author}`}
+      aria-label={`@${author}`}
+    >
       <img
         className="pr-avatar"
         alt=""
@@ -306,6 +317,7 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
         <PrAvatar
           avatarUrl={pr.avatar_url}
           ownerAvatarUrl={pr.owner_avatar_url}
+          author={pr.author}
           unreadCount={pr.unread_count}
         />
         <span className="pr-text">
@@ -314,10 +326,11 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
             <span className="pr-updated">{formatUpdated(pr.updated_at)}</span>
           </span>
           <span className="pr-origin">
-            <span className="pr-repo">
-              {showRepo ? `${pr.repo} #${pr.number}` : `#${pr.number}`}
-            </span>
-            <span className="pr-author">@{pr.author}</span>
+            {/* Number first, in its own non-shrinking span, so "PR 510" is
+                findable at a fixed x-position on every row: the repo and
+                author give way to truncation, the number never does. */}
+            <span className="pr-number">#{pr.number}</span>
+            {showRepo && <span className="pr-repo">{pr.repo}</span>}
             {/* A neutral state pill, never a signal. The backend suppresses
                 the other markers on a draft (the author has not declared
                 readiness), so a draft row shows only this pill, with room to
@@ -394,17 +407,19 @@ function MergedRow({ pr }: { pr: MergedPr }) {
         className="pr-row"
         onClick={() => openUrl(pr.url).catch(() => {})}
       >
-        <PrAvatar avatarUrl={pr.avatar_url} ownerAvatarUrl={pr.owner_avatar_url} />
+        <PrAvatar
+          avatarUrl={pr.avatar_url}
+          ownerAvatarUrl={pr.owner_avatar_url}
+          author={pr.author}
+        />
         <span className="pr-text">
           <span className="pr-title-row">
             <span className="pr-title">{pr.title}</span>
             <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
           </span>
           <span className="pr-origin">
-            <span className="pr-repo">
-              {pr.repo} #{pr.number}
-            </span>
-            <span className="pr-author">@{pr.author}</span>
+            <span className="pr-number">#{pr.number}</span>
+            <span className="pr-repo">{pr.repo}</span>
           </span>
         </span>
       </button>

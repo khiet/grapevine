@@ -325,16 +325,15 @@ body {
   font-size: 12px;
 }
 
-.pr-repo {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Leads the metadata line and never shrinks: "PR 510" must be findable at a
+   fixed x-position on every row, so the repo and author truncate around it.
+   Deliberately the same type as the rest of the line - the fixed position is
+   the emphasis; the number is not a signal. */
+.pr-number {
+  flex: none;
 }
 
-/* Shrinkable with an ellipsis, like the repo name: letting the author give
-   way keeps the right-edge markers (reason pills, glyphs) inside the card on
-   a tight row instead of clipping at its edge. */
-.pr-author {
+.pr-repo {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -432,6 +431,23 @@ body {
   /* Delay only on the way in; hiding is immediate because the non-hover
      state carries no transition. */
   transition: opacity 120ms ease-out 200ms;
+}
+
+/* The rightward mirror of the bubble, for marks at the row's left edge (the
+   avatar's author reveal), where the default leftward growth would clip at
+   the card boundary. */
+.pr-tip-right::after {
+  right: auto;
+  left: calc(100% + 2px);
+}
+
+.pr-tip-right::before {
+  right: auto;
+  left: calc(100% - 2px);
+  border-right-width: 4px;
+  border-left-width: 0;
+  border-left-color: transparent;
+  border-right-color: rgba(58, 58, 60, 0.96);
 }
 
 /* A grey glyph mark in the cluster (the review glasses), deliberately never a
@@ -907,6 +923,13 @@ body {
 
   .pr-tip::before {
     border-left-color: #48484a;
+  }
+
+  /* The mirrored triangle needs the mirrored colour override, and this rule
+     must follow the .pr-tip one above so the transparent left edge wins. */
+  .pr-tip-right::before {
+    border-left-color: transparent;
+    border-right-color: #48484a;
   }
 
   /* Recessed against the #2c2c2e card, so the field reads as a well
