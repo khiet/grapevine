@@ -676,13 +676,17 @@ function PrList({
             onToggle={() => toggle("merged")}
             disabled={filtering}
           >
-            <button
-              type="button"
-              className="pr-section-clear"
-              onClick={() => invoke("clear_merged").catch(() => {})}
-            >
-              Clear all
-            </button>
+            {/* Hidden while collapsed: clearing rows you cannot see invites
+                a destructive misclick from the adjacent whole-row toggle. */}
+            {isExpanded("merged") && (
+              <button
+                type="button"
+                className="pr-section-clear"
+                onClick={() => invoke("clear_merged").catch(() => {})}
+              >
+                Clear all
+              </button>
+            )}
           </SectionHeader>
           {isExpanded("merged") && (
             <ul>
