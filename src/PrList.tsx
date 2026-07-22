@@ -113,6 +113,19 @@ function loadCollapsed(): Record<SectionKey, boolean> {
   }
 }
 
+// The write half of loadCollapsed's pair; kept beside it so a second writer
+// cannot forget the key or the failure handling.
+function saveCollapsed(state: Record<SectionKey, boolean>): void {
+  try {
+    localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // After a failed write the toggle lives only until this component next
+    // remounts and re-reads the stale store (a Settings visit or a no-match
+    // filter); acceptable for the exotic failures a persistent WKWebView
+    // can hit.
+  }
+}
+
 // Turns the persisted blob back into collapse state. Unknown keys and
 // non-boolean values fall back to the defaults, so a stale or corrupt blob
 // can never poison the state shape.
@@ -513,7 +526,8 @@ function SectionHeader({
   expanded: boolean;
   onToggle: () => void;
   /** Suspends toggling (used while a filter force-expands every section);
-   * a disabled button, not a silent no-op, so the control never lies. */
+   * aria-disabled rather than disabled so the header stays focusable and
+   * announced to assistive tech while inert. */
   disabled?: boolean;
   /** Unread total inside the section; shown as a red badge only while
    * collapsed, when the rows carrying the per-PR badges are hidden. */
@@ -527,8 +541,8 @@ function SectionHeader({
           type="button"
           className="pr-section-toggle"
           aria-expanded={expanded}
-          disabled={disabled}
-          onClick={onToggle}
+          aria-disabled={disabled}
+          onClick={disabled ? undefined : onToggle}
         >
           <svg
             className="pr-section-chevron"
@@ -545,13 +559,23 @@ function SectionHeader({
             <path d="M9 5l7 7-7 7" />
           </svg>
           <span className="pr-section-label">{label}</span>
-          <span className="pr-section-count">{count}</span>
+          <span className="pr-section-count" aria-hidden="true">
+            {count}
+          </span>
           {/* The tray badge counts these rows even when the section hides
               them; without this cue a collapsed Mine makes the popover look
               read while the tray says otherwise. */}
           {!expanded && unread > 0 && (
-            <span className="pr-section-unread">{unread}</span>
+            <span className="pr-section-unread" aria-hidden="true">
+              {unread}
+            </span>
           )}
+          {/* The pills are bare numbers whose meaning is carried by colour,
+              so the spoken name gets a worded equivalent instead. */}
+          <span className="visually-hidden">
+            {`${count} pull request${count === 1 ? "" : "s"}` +
+              (!expanded && unread > 0 ? `, ${unread} unread` : "")}
+          </span>
         </button>
       </h2>
       {children}
@@ -575,18 +599,13 @@ function PrList({
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const isExpanded = (key: SectionKey) => filtering || !collapsed[key];
   const toggle = (key: SectionKey) => {
+    // aria-disabled buttons still fire clicks, so the suspend-while-filtering
+    // rule is enforced here, not by the button.
     if (filtering) return;
     const next = { ...collapsed, [key]: !collapsed[key] };
     setCollapsed(next);
     // Persisted outside the state updater: StrictMode double-invokes updaters.
-    try {
-      localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // After a failed write the toggle lives only until this component next
-      // remounts and re-reads the stale store (a Settings visit or a no-match
-      // filter); acceptable for the exotic failures a persistent WKWebView
-      // can hit.
-    }
+    saveCollapsed(next);
   };
   return (
     <main className="pr-list">
@@ -598,6 +617,42 @@ function PrList({
            an empty section there means "no matches here" and showing it
            would clutter the force-expanded results. */
         if (rows.length === 0 && filtering) return null;
+        let body: ReactNode;
+        if (rows.length === 0) {
+          /* Inside the slab, not bare text, so an empty section keeps the
+             shape rows will appear in. */
+          body = (
+            <ul>
+              <li className="pr-empty">Nothing to wine about</li>
+            </ul>
+          );
+        } else if (key === "all") {
+          body = groupByRepo(rows).map(({ repo, prs: group }) => (
+            <div key={repo} className="pr-repo-group">
+              <div className="pr-repo-header">
+                <h3 className="pr-repo-name">{repo}</h3>
+                <span className="pr-repo-count">{group.length}</span>
+              </div>
+              <ul>
+                {group.map((pr) => (
+                  <PrRow
+                    key={`${pr.repo}#${pr.number}`}
+                    pr={pr}
+                    showRepo={false}
+                  />
+                ))}
+              </ul>
+            </div>
+          ));
+        } else {
+          body = (
+            <ul>
+              {rows.map((pr) => (
+                <PrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+              ))}
+            </ul>
+          );
+        }
         return (
           <section key={key} className="pr-section">
             <SectionHeader
@@ -608,38 +663,7 @@ function PrList({
               disabled={filtering}
               unread={totalUnread(rows)}
             />
-            {isExpanded(key) &&
-              (rows.length === 0 ? (
-                /* Inside the slab, not bare text, so an empty section keeps
-                   the shape rows will appear in. */
-                <ul>
-                  <li className="pr-empty">Nothing to wine about</li>
-                </ul>
-              ) : key === "all" ? (
-              groupByRepo(rows).map(({ repo, prs: group }) => (
-                <div key={repo} className="pr-repo-group">
-                  <div className="pr-repo-header">
-                    <h3 className="pr-repo-name">{repo}</h3>
-                    <span className="pr-repo-count">{group.length}</span>
-                  </div>
-                  <ul>
-                    {group.map((pr) => (
-                      <PrRow
-                        key={`${pr.repo}#${pr.number}`}
-                        pr={pr}
-                        showRepo={false}
-                      />
-                    ))}
-                  </ul>
-                </div>
-              ))
-            ) : (
-              <ul>
-                {rows.map((pr) => (
-                  <PrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
-                ))}
-              </ul>
-            ))}
+            {isExpanded(key) && body}
           </section>
         );
       })}
