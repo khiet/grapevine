@@ -92,14 +92,14 @@ pub struct PullRequest {
     pub created_at: String,
     pub updated_at: String,
     pub section: Section,
-    /// Why the PR is blocked, in tooltip order; empty means no dot. Composed
+    /// Why the PR is blocked, in severity order; empty means no pills. Composed
     /// here rather than shipping GitHub's raw enums so the frontend renders
-    /// one dot plus tooltip instead of re-deriving the logic. A property of
+    /// the reason pills instead of re-deriving the logic. A property of
     /// the PR, never an unread event: it does not feed [`collect_activity`]
     /// and must never move a badge or the tray count.
     pub blocked_reasons: Vec<BlockedReason>,
     /// Whether the PR is a draft. Renders as a neutral grey mark, and
-    /// suppresses the blocked dot (see [`blocked_reasons_for`]). Same
+    /// suppresses the blocked pills (see [`blocked_reasons_for`]). Same
     /// property-not-event rule as `blocked_reasons`.
     pub is_draft: bool,
     /// Whether the viewer's review is directly requested and not yet acted
@@ -107,7 +107,7 @@ pub struct PullRequest {
     /// blocking the author, but not a "stuck" state. GitHub drops the viewer
     /// from `reviewRequests` once they submit a review, so this clears itself
     /// and the row falls back to plain participation. Suppressed on drafts,
-    /// like the blocked dot, so a not-ready PR never nags for a review; the
+    /// like the blocked pills, so a not-ready PR never nags for a review; the
     /// request still counts toward Participated membership (see
     /// [`section_for`]). Same property-not-event rule as `blocked_reasons`;
     /// team requests never set it (see [`review_requested_for`]).
@@ -120,7 +120,7 @@ pub struct PullRequest {
     /// reviewer's court"), not a "stuck" state. GitHub drops a reviewer from
     /// `reviewRequests` once they submit, so this clears itself as reviews
     /// arrive. Suppressed on drafts, matching `review_requested` and the
-    /// blocked dot. Unlike `review_requested`, team requests count: it is an
+    /// blocked pills. Unlike `review_requested`, team requests count: it is an
     /// existence check, with no `login` to match. Same property-not-event rule
     /// as `blocked_reasons`.
     pub awaiting_review: bool,
@@ -668,7 +668,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             section,
             blocked_reasons: blocked_reasons_for(node),
             is_draft,
-            // Suppressed on drafts, matching the blocked dot: a draft is the
+            // Suppressed on drafts, matching the blocked pills: a draft is the
             // author's not-ready choice, so the row never nags you to act on
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
@@ -1090,7 +1090,7 @@ mod tests {
     }
 
     #[test]
-    fn each_blocked_trigger_lights_the_dot_on_its_own() {
+    fn each_blocked_trigger_lights_the_marker_on_its_own() {
         let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
         assert_eq!(
             reasons(json!({ "mergeable": "CONFLICTING" })),
@@ -1180,7 +1180,7 @@ mod tests {
     /// The author has not declared readiness, so "needs action now" does not
     /// apply — whatever the CI, conflict, or review state says.
     #[test]
-    fn drafts_suppress_the_dot_entirely() {
+    fn drafts_suppress_the_marker_entirely() {
         let node = pr_node(json!({
             "isDraft": true,
             "mergeable": "CONFLICTING",
@@ -1192,9 +1192,9 @@ mod tests {
     }
 
     /// GitHub computes `mergeable` lazily and answers `UNKNOWN` until it
-    /// settles; that transient must render as no dot, not as a blocked state.
+    /// settles; that transient must render as no marker, not as a blocked state.
     #[test]
-    fn an_unknown_mergeability_suppresses_the_dot_until_the_next_poll() {
+    fn an_unknown_mergeability_suppresses_the_marker_until_the_next_poll() {
         let node = pr_node(json!({
             "mergeable": "UNKNOWN",
             "commits": ci_commits("FAILURE"),
@@ -1261,7 +1261,7 @@ mod tests {
     #[test]
     fn a_draft_pr_never_flags_review_requested_on_the_row() {
         // The request still stands, but a draft is the author's not-ready
-        // choice, so its row marker is suppressed like the blocked dot.
+        // choice, so its row marker is suppressed like the blocked pills.
         let repo = json!({
             "nameWithOwner": "acme/widgets",
             "pullRequests": {
@@ -1325,7 +1325,7 @@ mod tests {
 
     #[test]
     fn a_draft_mine_pr_never_flags_awaiting_review() {
-        // Matches review_requested and the blocked dot: a draft is the author's
+        // Matches review_requested and the blocked pills: a draft is the author's
         // not-ready choice, so its row marker is suppressed while the request
         // still stands.
         let repo = json!({
@@ -1430,7 +1430,7 @@ mod tests {
     #[test]
     fn commits_and_status_changes_never_reach_the_activity_list() {
         // CI, mergeability, review decision, and draftness are all fetched
-        // (for the row's blocked dot and draft mark) but deliberately excluded
+        // (for the row's blocked pills and draft mark) but deliberately excluded
         // from activity: they are properties of the PR, not unread events. A
         // node with neither a comment nor a review yields nothing, whatever
         // those fields say.
