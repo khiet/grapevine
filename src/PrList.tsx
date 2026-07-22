@@ -582,9 +582,10 @@ function PrList({
     try {
       localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next));
     } catch {
-      // A failed write survives only until this component next remounts and
-      // re-reads the stale store (a Settings visit or a no-match filter);
-      // acceptable for the exotic failures a persistent WKWebView can hit.
+      // After a failed write the toggle lives only until this component next
+      // remounts and re-reads the stale store (a Settings visit or a no-match
+      // filter); acceptable for the exotic failures a persistent WKWebView
+      // can hit.
     }
   };
   return (
