@@ -324,14 +324,19 @@ body {
   white-space: nowrap;
 }
 
+/* Shrinkable with an ellipsis, like the repo name: letting the author give
+   way keeps the right-edge markers (reason pills, glyphs) inside the card on
+   a tight row instead of clipping at its edge. */
 .pr-author {
-  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The diff-size text (files touched). Same muted metadata color, held at its
-   natural width so the repo name is what truncates when the row is tight.
-   Tabular figures keep the digits from jittering as the count changes between
-   polls. */
+   natural width so the repo name and author are what truncate when the row is
+   tight. Tabular figures keep the digits from jittering as the count changes
+   between polls. */
 .pr-diffstat {
   flex: none;
   font-variant-numeric: tabular-nums;
@@ -351,16 +356,11 @@ body {
   margin-left: auto;
 }
 
-/* The blocked-reason pill: the Draft pill's shape in the blocked orange, so
-   "Merge conflict" / "CI failing" / "Changes requested" reads without
-   hovering. A tinted fill rather than solid orange keeps it in the metadata
-   line's register, and the text is the legible amber (matching .sync-error),
-   not raw #ff9f0a, which fails contrast on the white card. Deliberately not
-   the unread badge's red so the two signals stay distinct: orange says "this
-   PR is blocked", red says "someone spoke". position: relative anchors the
-   +N pill's tooltip. */
+/* The one pill shape, shared so the state pills read as one vocabulary and a
+   later tune (radius, size, padding) cannot let them drift apart. Each rule
+   below adds only its colors and placement. */
+.pr-draft,
 .pr-blocked-pill {
-  position: relative;
   flex: none;
   align-self: center;
   padding: 0 5px;
@@ -368,9 +368,22 @@ body {
   font-size: 10px;
   font-weight: 600;
   line-height: 14px;
+}
+
+/* The blocked-reason pill: the shared pill shape in the blocked orange, so
+   "Merge conflict" / "CI failing" / "Changes requested" reads without
+   hovering. A tinted fill rather than solid orange keeps it in the metadata
+   line's register. The text amber is darker than .sync-error's: at this 10px
+   size WCAG AA wants 4.5:1, which #c76b00 misses on the tinted card (3.4:1);
+   this one holds 4.5:1 even over a hovered row's blue tint. Deliberately not
+   the unread badge's red so the two signals stay distinct: orange says "this
+   PR is blocked", red says "someone spoke". position: relative anchors the
+   +N pill's tooltip. */
+.pr-blocked-pill {
+  position: relative;
   white-space: nowrap;
   background-color: rgba(255, 159, 10, 0.16);
-  color: #c76b00;
+  color: #995200;
 }
 
 /* The hover bubble, shared by every mark in the cluster (each carries
@@ -424,10 +437,9 @@ body {
 }
 
 /* A grey glyph mark in the cluster (the review glasses), deliberately never a
-   signal colour: the orange dot's vocabulary stays reserved for blockage. The
-   4px padding is an invisible hover hit area for the tooltip (matching the
-   blocked dot); the negative margin keeps the visible glyph on the text
-   baseline. */
+   signal colour: the blocked pill's orange stays reserved for blockage. The
+   4px padding is an invisible hover hit area for the tooltip; the negative
+   margin keeps the visible glyph on the text baseline. */
 .pr-glyph {
   position: relative;
   display: inline-flex;
@@ -446,19 +458,12 @@ body {
   gap: 1px;
 }
 
-/* The draft pill: a neutral state marker in the metadata grey, never a signal
+/* The draft pill: the shared pill shape in the metadata grey, never a signal
    colour, since a draft is the author's own choice, not something stuck. The
    backend suppresses the action markers on a draft, so this pill sits alone at
    the right edge (hence `margin-left: auto`, matching the cluster). */
 .pr-draft {
   margin-left: auto;
-  flex: none;
-  align-self: center;
-  padding: 0 5px;
-  border-radius: 7px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 14px;
   background-color: rgba(120, 120, 128, 0.16);
 }
 

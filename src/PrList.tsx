@@ -16,7 +16,8 @@ export interface PullRequest {
   /** Why the PR is blocked, already in severity order; empty means no pill.
    * Composed at the Rust boundary — the row only maps keys to labels. */
   blocked_reasons: BlockedReason[];
-  /** Drafts render a neutral pill; the backend suppresses their dot. */
+  /** Drafts render a neutral pill; the backend suppresses their blocked
+   * reasons and review markers. */
   is_draft: boolean;
   /** The viewer's review is requested and not yet acted on; renders the
    * glasses glyph with an incoming arrow. Backend-computed, suppressed on
@@ -217,8 +218,8 @@ function PrAvatar({
 
 // A grey glyph in the row's right-edge marker cluster: a 13px stroke icon
 // whose meaning lives in the hover tooltip and aria-label, both fed by `tip`.
-// `wide` lets it hold a direction arrow beside the glasses. The draft pill and
-// the blocked dot are not these: they carry their own styling, not a glyph.
+// `wide` lets it hold a direction arrow beside the glasses. The draft and
+// blocked pills are not these: they carry their own styling, not a glyph.
 function RowMark({
   tip,
   wide,
@@ -299,6 +300,9 @@ function DirectionArrow({ dir }: { dir: "in" | "out" }) {
 function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean }) {
   const unread = pr.unread_count > 0;
   const files = changedFilesLabel(pr);
+  const pills = blockedPills(pr.blocked_reasons);
+  // The +N pill's tooltip: the reasons its count stands for.
+  const overflowTitle = blockedTitle(pr.blocked_reasons.slice(1));
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
@@ -325,10 +329,11 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
             </span>
             <span className="pr-author">@{pr.author}</span>
             {/* The PR's size: files touched. Fixed width (flex: none), so the
-                repo name truncates first under a tight row. Hidden when the PR
-                has no computed changes (see changedFilesLabel), and yields on
-                a blocked row: the reason pill matters more than the size, and
-                the count returns the moment the block clears. */}
+                repo name and author are what truncate under a tight row.
+                Hidden when the PR has no computed changes (see
+                changedFilesLabel), and yields on a blocked row: the reason
+                pill matters more than the size, and the count returns the
+                moment the block clears. */}
             {files && pr.blocked_reasons.length === 0 && (
               <span className="pr-diffstat">{files}</span>
             )}
@@ -347,8 +352,8 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
               pr.blocked_reasons.length > 0) && (
               <span className="pr-marks">
                 {/* Glasses with an incoming arrow: your review is requested. A
-                    grey mark like the draft pill, not a status dot: an
-                    invitation to act, outside the orange dot's "something is
+                    grey mark like the draft pill, not a blocked signal: an
+                    invitation to act, outside the blocked pill's "something is
                     stuck" vocabulary. Self-clears once you review. */}
                 {pr.review_requested && (
                   <RowMark tip="Review requested" wide>
@@ -375,19 +380,17 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                     "nothing is stuck". Distinct from the red unread badge in
                     hue and meaning: orange here says "this PR is blocked",
                     red there says "someone spoke". */}
-                {pr.blocked_reasons.length > 0 && (
-                  <span className="pr-blocked-pill">
-                    {blockedPills(pr.blocked_reasons)[0]}
-                  </span>
+                {pills.length > 0 && (
+                  <span className="pr-blocked-pill">{pills[0]}</span>
                 )}
-                {pr.blocked_reasons.length > 1 && (
+                {pills.length > 1 && (
                   <span
                     className="pr-blocked-pill pr-tip"
                     role="img"
-                    data-tip={blockedTitle(pr.blocked_reasons.slice(1))}
-                    aria-label={blockedTitle(pr.blocked_reasons.slice(1))}
+                    data-tip={overflowTitle}
+                    aria-label={overflowTitle}
                   >
-                    {blockedPills(pr.blocked_reasons)[1]}
+                    {pills[1]}
                   </span>
                 )}
               </span>
