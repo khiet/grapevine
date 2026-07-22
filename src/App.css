@@ -333,15 +333,6 @@ body {
   white-space: nowrap;
 }
 
-/* The diff-size text (files touched). Same muted metadata color, held at its
-   natural width so the repo name and author are what truncate when the row is
-   tight. Tabular figures keep the digits from jittering as the count changes
-   between polls. */
-.pr-diffstat {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-}
-
 /* The action-marker cluster (review glasses, blocked pills), pinned as one
    group at the row's right edge, out of the metadata's way, so the marks sit
    side by side rather than scattering across the row. The draft pill is not
