@@ -2,7 +2,6 @@ import { expect, test } from "vitest";
 import {
   blockedPills,
   blockedTitle,
-  changedFilesLabel,
   formatLastSync,
   formatUpdated,
   groupByRepo,
@@ -68,32 +67,12 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   is_draft: false,
   review_requested: false,
   awaiting_review: false,
-  changed_files: 0,
   unread_count,
 });
 
 test("the tray-facing total sums unread across PRs", () => {
   expect(totalUnread([])).toBe(0);
   expect(totalUnread([prWithUnread(2), prWithUnread(0), prWithUnread(5)])).toBe(7);
-});
-
-const prWithFiles = (changed_files: number): PullRequest => ({
-  ...prWithUnread(0),
-  changed_files,
-});
-
-test("the file count pluralizes", () => {
-  expect(changedFilesLabel(prWithFiles(7))).toBe("7 files");
-});
-
-test("the file count says '1 file', not '1 files', for a single-file PR", () => {
-  expect(changedFilesLabel(prWithFiles(1))).toBe("1 file");
-});
-
-test("the file count hides itself when nothing has changed", () => {
-  // 0 is both a genuinely empty PR and GitHub's not-yet-computed state; the row
-  // renders no count rather than a meaningless "0 files".
-  expect(changedFilesLabel(prWithFiles(0))).toBeNull();
 });
 
 const pr = (repo: string, number: number, updated_at: string): PullRequest => ({

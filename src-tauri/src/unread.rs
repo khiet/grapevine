@@ -126,7 +126,6 @@ mod tests {
             is_draft: false,
             review_requested: false,
             awaiting_review: false,
-            changed_files: 0,
             unread_count: 0,
             activity: activity.iter().map(|s| s.to_string()).collect(),
         }
