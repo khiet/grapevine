@@ -144,11 +144,9 @@ body {
   border-top: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-/* The first column is a fixed gutter for the unread counter, reserved even
-   when a row has no badge so avatars stay aligned down the list. */
 .pr-row {
   display: grid;
-  grid-template-columns: 22px 30px 1fr;
+  grid-template-columns: 30px 1fr;
   align-items: center;
   gap: 9px;
   width: 100%;
@@ -224,19 +222,28 @@ body {
 }
 
 /* macOS system red, the standard notification-counter colour — the only
-   colour in an otherwise greyscale list. */
+   colour in an otherwise greyscale list. Perched on the avatar's top-right
+   corner, iOS app-icon style, rather than in a reserved gutter column that
+   would cost every row title width. The card-colour ring is the org badge's
+   notch trick, and the two badges own opposite corners so they never touch:
+   top-right says "new activity", bottom-right says "which org". Smaller than
+   a free-standing badge could be, which is fine — the bold title carries the
+   unread signal too. */
 .pr-unread {
-  justify-self: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
   background-color: #ff3b30;
   color: #ffffff;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  line-height: 18px;
+  line-height: 16px;
   text-align: center;
+  box-shadow: 0 0 0 2px #ffffff;
 }
 
 /* Occupies the fixed 30px avatar column; the org badge overflows it via
@@ -862,8 +869,10 @@ body {
     color: #7c7c80;
   }
 
+  /* Ring matches the dark card, like the org badge's. */
   .pr-unread {
     background-color: #ff453a;
+    box-shadow: 0 0 0 2px #2c2c2e;
   }
 
   .pr-updated,

@@ -165,16 +165,20 @@ export function groupByRepo(prs: PullRequest[]): RepoGroup[] {
     .sort((a, b) => latest(b.prs) - latest(a.prs));
 }
 
-// The round author avatar with a small square organization badge (the repo
-// owner's avatar) on its corner: the face says who, the badge says which org.
-// The badge has no placeholder by design — a missing or broken owner avatar
-// simply shows no badge, keeping the corner clean rather than grey.
+// The round author avatar with badged corners, app-icon style: the face says
+// who, the bottom-right square (the repo owner's avatar) says which org, and
+// the top-right red counter says how much is new. Opposite corners keep the
+// two badges from ever colliding. The org badge has no placeholder by design —
+// a missing or broken owner avatar simply shows no badge, keeping the corner
+// clean rather than grey.
 function PrAvatar({
   avatarUrl,
   ownerAvatarUrl,
+  unreadCount = 0,
 }: {
   avatarUrl: string;
   ownerAvatarUrl: string;
+  unreadCount?: number;
 }) {
   return (
     <span className="pr-avatar-wrap">
@@ -196,6 +200,7 @@ function PrAvatar({
           }}
         />
       )}
+      {unreadCount > 0 && <span className="pr-unread">{unreadCount}</span>}
     </span>
   );
 }
@@ -298,9 +303,11 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
         className={unread ? "pr-row is-unread" : "pr-row"}
         onClick={open}
       >
-        {/* The gutter span stays even without a badge so avatars align. */}
-        {unread ? <span className="pr-unread">{pr.unread_count}</span> : <span />}
-        <PrAvatar avatarUrl={pr.avatar_url} ownerAvatarUrl={pr.owner_avatar_url} />
+        <PrAvatar
+          avatarUrl={pr.avatar_url}
+          ownerAvatarUrl={pr.owner_avatar_url}
+          unreadCount={pr.unread_count}
+        />
         <span className="pr-text">
           <span className="pr-title-row">
             <span className="pr-title">{pr.title}</span>
@@ -387,8 +394,6 @@ function MergedRow({ pr }: { pr: MergedPr }) {
         className="pr-row"
         onClick={() => openUrl(pr.url).catch(() => {})}
       >
-        {/* The gutter span stays even without a badge so avatars align. */}
-        <span />
         <PrAvatar avatarUrl={pr.avatar_url} ownerAvatarUrl={pr.owner_avatar_url} />
         <span className="pr-text">
           <span className="pr-title-row">
