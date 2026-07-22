@@ -864,29 +864,21 @@ mod tests {
     }
 
     #[test]
-    fn a_muted_thread_is_not_involvement() {
-        // Only SUBSCRIBED counts. IGNORED is the viewer muting the thread, and
-        // treating any subscription value as involvement would sweep every
-        // browsed PR into Participated and badge it.
-        for state in ["UNSUBSCRIBED", "IGNORED"] {
-            let node = pr_node(json!({ "viewerSubscription": state }));
-            assert_eq!(section_for(&node, "khiet"), Section::All, "{state}");
-        }
-    }
-
-    #[test]
-    fn a_muted_thread_still_shows_a_review_the_viewer_owes() {
-        // Muting silences discussion, but a request the viewer has not acted on
-        // is work owed to someone: the request is checked independently.
-        let node = pr_node(json!({
-            "viewerSubscription": "IGNORED",
-            "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
-        }));
-        assert_eq!(section_for(&node, "khiet"), Section::Participated);
+    fn an_ignored_thread_is_not_involvement() {
+        // Muting a thread is its own subscription state, not the absence of
+        // one: only SUBSCRIBED counts. Reading the field as merely present
+        // would sweep every browsed PR into Participated and badge it.
+        let node = pr_node(json!({ "viewerSubscription": "IGNORED" }));
+        assert_eq!(section_for(&node, "khiet"), Section::All);
     }
 
     #[test]
     fn review_requested_prs_are_participated() {
+        // The request is checked on its own rather than trusted to the
+        // subscription, so an unsubscribed thread (muted, or a request GitHub
+        // did not subscribe them to) still cannot hide a review the viewer
+        // owes someone. `pr_node` defaults to UNSUBSCRIBED, so this is that
+        // case: the request is the only thing placing the PR.
         let node = pr_node(json!({
             "reviewRequests": { "nodes": [{ "requestedReviewer": { "login": "khiet" } }] }
         }));
@@ -1417,6 +1409,18 @@ mod tests {
         assert!(field.contains("mergeable"));
         assert!(field.contains("reviewDecision"));
         assert!(field.contains("changedFiles"));
+    }
+
+    /// Sectioning reads `viewerSubscription` off the node, so every test below
+    /// that feeds a fixture passes whether or not the query ever asked for it.
+    /// Drop the field and nothing else fails: every PR reads as unsubscribed,
+    /// the whole list collapses into All, and unread badges stop entirely.
+    #[test]
+    fn repo_field_asks_for_the_involvement_field() {
+        let field = repo_field("r0", "acme", "widgets", None);
+        assert!(field.contains("viewerSubscription"));
+        assert!(field.contains("viewerDidAuthor"));
+        assert!(field.contains("reviewRequests(first: 50)"));
     }
 
     /// `ownerAffiliations` defaults to [OWNER, COLLABORATOR]; if the query
