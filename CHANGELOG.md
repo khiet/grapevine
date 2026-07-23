@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/khiet/grapevine/compare/grapevine-v0.7.2...grapevine-v0.8.0) (2026-07-23)
+
+
+### Features
+
+* collapsible sections with Mine and All collapsed by default ([#41](https://github.com/khiet/grapevine/issues/41)) ([26c14ed](https://github.com/khiet/grapevine/commit/26c14ed30e93d7ec9824be813bd99fda1241b532))
+* lead card metadata with the PR number, author on avatar hover ([#40](https://github.com/khiet/grapevine/issues/40)) ([7b0c37b](https://github.com/khiet/grapevine/commit/7b0c37bbc6d1533c32941584f6ed2d47baccac8b))
+* move the unread badge onto the avatar corner ([#39](https://github.com/khiet/grapevine/issues/39)) ([cb486d1](https://github.com/khiet/grapevine/commit/cb486d1f1f0337bcf3ee58f76fa94cf6bc164b62))
+* remove the files-changed count from PR rows ([#38](https://github.com/khiet/grapevine/issues/38)) ([564e467](https://github.com/khiet/grapevine/commit/564e4674137bf33b54305b95fb2b4f5406185b69))
+* show blocked reasons as pills, flag behind-base and open threads ([#36](https://github.com/khiet/grapevine/issues/36)) ([24bc7d5](https://github.com/khiet/grapevine/commit/24bc7d5f6211d86b6127252f8b8b072ea3e9dd98))
+
 ## [0.7.2](https://github.com/khiet/grapevine/compare/grapevine-v0.7.1...grapevine-v0.7.2) (2026-07-22)
 
 
