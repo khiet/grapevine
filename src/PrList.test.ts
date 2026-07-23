@@ -2,10 +2,13 @@ import { expect, test } from "vitest";
 import {
   blockedPills,
   blockedTitle,
+  DEFAULT_COLLAPSED,
   formatLastSync,
   formatUpdated,
   groupByRepo,
+  hasQuery,
   matchesFilter,
+  parseCollapsed,
   totalUnread,
   PullRequest,
 } from "./PrList";
@@ -191,4 +194,53 @@ test("extra reasons collapse into a +N pill after the primary one", () => {
 
 test("no blocked reasons means no pills", () => {
   expect(blockedPills([])).toEqual([]);
+});
+
+// hasQuery and matchesFilter must agree on what an empty query is, so
+// force-expand-while-filtering can never fire for a query that matches
+// everything.
+test("hasQuery mirrors matchesFilter's empty-query rule", () => {
+  const emptyRow = { title: "", repo: "", author: "", number: 0 };
+  for (const query of ["", "   ", "\t \n"]) {
+    expect(hasQuery(query)).toBe(false);
+    // No terms: matches everything, even an empty row.
+    expect(matchesFilter(emptyRow, query)).toBe(true);
+  }
+  expect(hasQuery("fix")).toBe(true);
+  expect(hasQuery(" fix  bug ")).toBe(true);
+});
+
+test("nothing stored yields the defaults: Mine and All collapsed", () => {
+  expect(parseCollapsed(null)).toEqual({
+    mine: true,
+    participated: false,
+    all: true,
+    merged: false,
+  });
+});
+
+test("stored toggles override their defaults, others keep theirs", () => {
+  expect(parseCollapsed('{"mine":false,"merged":true}')).toEqual({
+    mine: false,
+    participated: false,
+    all: true,
+    merged: true,
+  });
+});
+
+test("corrupt or wrong-shaped blobs fall back to the defaults", () => {
+  expect(parseCollapsed("not json")).toEqual(DEFAULT_COLLAPSED);
+  expect(parseCollapsed('"a string"')).toEqual(DEFAULT_COLLAPSED);
+  expect(parseCollapsed("null")).toEqual(DEFAULT_COLLAPSED);
+  // Unknown keys and non-boolean values are dropped, valid ones kept.
+  expect(parseCollapsed('{"mine":"yes","bogus":true,"all":false}')).toEqual({
+    ...DEFAULT_COLLAPSED,
+    all: false,
+  });
+});
+
+test("parseCollapsed never returns the shared defaults object", () => {
+  const state = parseCollapsed(null);
+  state.mine = false;
+  expect(DEFAULT_COLLAPSED.mine).toBe(true);
 });

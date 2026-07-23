@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import PrList, {
   formatLastSync,
+  hasQuery,
   matchesFilter,
   Snapshot,
   totalUnread,
@@ -29,6 +30,7 @@ function App() {
   const visibleMerged = snapshot.merged.filter((pr) => matchesFilter(pr, filter));
   const hasAny = snapshot.prs.length > 0 || snapshot.merged.length > 0;
   const hasVisible = visiblePrs.length > 0 || visibleMerged.length > 0;
+  const filtering = hasQuery(filter);
 
   useEffect(() => {
     startUpdateChecks();
@@ -103,25 +105,26 @@ function App() {
       )}
       {inSettings ? (
         <SettingsView />
-      ) : hasVisible ? (
-        <PrList prs={visiblePrs} merged={visibleMerged} />
-      ) : hasAny ? (
-        /* Rows exist but the filter hid them all. */
+      ) : !snapshot.has_synced && !hasAny ? (
+        /* Pre-setup only; once a sync has happened the scaffold below owns
+           the empty state. */
+        <main className="popover-body">
+          <p className="placeholder-heading">No pull requests yet</p>
+          <p className="placeholder-detail">
+            Configure a token and repositories to start watching.
+          </p>
+        </main>
+      ) : hasVisible || !filtering ? (
+        /* Renders even fully empty: the section scaffold is the one stable
+           layout for every synced state, so nothing flips wholesale when the
+           last row clears. */
+        <PrList prs={visiblePrs} merged={visibleMerged} filtering={filtering} />
+      ) : (
+        /* A filter is active and hid every row. */
         <main className="popover-body">
           <p className="placeholder-heading">No matches</p>
           <p className="placeholder-detail">
             No pull requests match "{filter}".
-          </p>
-        </main>
-      ) : (
-        <main className="popover-body">
-          <p className="placeholder-heading">
-            {snapshot.has_synced ? "No open pull requests" : "No pull requests yet"}
-          </p>
-          <p className="placeholder-detail">
-            {snapshot.has_synced
-              ? "The watched repositories have no open PRs."
-              : "Configure a token and repositories to start watching."}
           </p>
         </main>
       )}

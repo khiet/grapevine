@@ -78,8 +78,56 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 14px 4px 6px;
+  padding: 0 4px;
   background-color: #f2f2f7;
+}
+
+/* Screen-reader-only text; the header pills are bare numbers whose meaning
+   is carried by colour, so the toggle speaks a worded equivalent instead. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* A real flex box, not display: contents (which older WebKit drops from the
+   accessibility tree, losing the heading): the h2 grows past the count so
+   the toggle inside spans the row, while "Clear all" keeps its own slot at
+   the row's end. */
+.pr-section-heading {
+  flex: 1;
+  display: flex;
+  margin: 0;
+}
+
+/* The whole heading row is the disclosure target, not just the chevron: the
+   slab's vertical padding lives on the button, not the header, so clicks in
+   the padded band toggle too. */
+.pr-section-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 6px;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.pr-section-chevron {
+  flex: none;
+  color: #a1a1a6;
+  transition: transform 0.15s ease;
+}
+
+.pr-section-toggle[aria-expanded="true"] .pr-section-chevron {
+  transform: rotate(90deg);
 }
 
 .pr-section-label {
@@ -88,16 +136,31 @@ body {
   color: #6e6e73;
 }
 
-.pr-section-count {
+/* The one header-pill shape (grey count, red unread), shared so a later
+   tune cannot let them drift apart. */
+.pr-section-count,
+.pr-section-unread {
   min-width: 16px;
   padding: 0 5px;
   border-radius: 8px;
-  background-color: #d8d8dc;
-  color: #3a3a3c;
   font-size: 10px;
   font-weight: 700;
   line-height: 15px;
   text-align: center;
+}
+
+.pr-section-count {
+  background-color: #d8d8dc;
+  color: #3a3a3c;
+}
+
+/* The unread red, declared once for the row badge and the collapsed-header
+   badge (which stands in for the hidden rows' badges) so the two cannot
+   drift apart. */
+.pr-unread,
+.pr-section-unread {
+  background-color: #ff3b30;
+  color: #ffffff;
 }
 
 /* Repo sub-groups inside "All". Deliberately not sticky: .pr-section-header
@@ -142,6 +205,13 @@ body {
 
 .pr-section li + li .pr-row {
   border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* Row-height padding so the empty slab matches a one-row section's shape. */
+.pr-empty {
+  padding: 13px 11px;
+  color: #8e8e93;
+  font-size: 12px;
 }
 
 .pr-row {
@@ -237,8 +307,6 @@ body {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background-color: #ff3b30;
-  color: #ffffff;
   font-size: 9px;
   font-weight: 700;
   line-height: 16px;
@@ -833,6 +901,10 @@ body {
     background-color: #1e1e1e;
   }
 
+  .pr-section-chevron {
+    color: #7c7c80;
+  }
+
   .pr-section-label {
     color: #98989d;
   }
@@ -885,9 +957,18 @@ body {
     color: #7c7c80;
   }
 
+  .pr-empty {
+    color: #7c7c80;
+  }
+
+  /* The shared unread red, as in light mode. */
+  .pr-unread,
+  .pr-section-unread {
+    background-color: #ff453a;
+  }
+
   /* Ring matches the dark card, like the org badge's. */
   .pr-unread {
-    background-color: #ff453a;
     box-shadow: 0 0 0 2px #2c2c2e;
   }
 

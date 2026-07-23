@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -88,6 +88,63 @@ const SECTIONS = [
   { key: "all", label: "All" },
 ] as const;
 
+/** Every collapsible top-level section; repo sub-groups inside "All" are
+ * deliberately not collapsible. */
+export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
+
+/* Mine and All start collapsed: they are ambient context, not act-now queues,
+   so the popover opens on what needs attention (Participated, Merged). */
+export const DEFAULT_COLLAPSED: Record<SectionKey, boolean> = {
+  mine: true,
+  participated: false,
+  all: true,
+  merged: false,
+};
+
+const COLLAPSED_STORAGE_KEY = "collapsed-sections";
+
+// The one loader for persisted collapse state: every failure path, storage
+// throwing included, recovers through parseCollapsed.
+function loadCollapsed(): Record<SectionKey, boolean> {
+  try {
+    return parseCollapsed(localStorage.getItem(COLLAPSED_STORAGE_KEY));
+  } catch {
+    return parseCollapsed(null);
+  }
+}
+
+// The write half of loadCollapsed's pair; kept beside it so a second writer
+// cannot forget the key or the failure handling.
+function saveCollapsed(state: Record<SectionKey, boolean>): void {
+  try {
+    localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // After a failed write the toggle lives only until this component next
+    // remounts and re-reads the stale store (a Settings visit or a no-match
+    // filter); acceptable for the exotic failures a persistent WKWebView
+    // can hit.
+  }
+}
+
+// Turns the persisted blob back into collapse state. Unknown keys and
+// non-boolean values fall back to the defaults, so a stale or corrupt blob
+// can never poison the state shape.
+export function parseCollapsed(raw: string | null): Record<SectionKey, boolean> {
+  const state = { ...DEFAULT_COLLAPSED };
+  if (!raw) return state;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return state;
+    for (const key of Object.keys(state) as SectionKey[]) {
+      const value = (parsed as Record<string, unknown>)[key];
+      if (typeof value === "boolean") state[key] = value;
+    }
+  } catch {
+    // Corrupt JSON: keep the defaults.
+  }
+  return state;
+}
+
 // Neutral grey silhouette shown while an avatar loads and when it fails.
 const AVATAR_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23b8b8bd'/%3E%3Ccircle cx='20' cy='15' r='6.5' fill='%236e6e73'/%3E%3Cpath d='M6 40a14 14 0 0 1 28 0z' fill='%236e6e73'/%3E%3C/svg%3E";
@@ -122,11 +179,21 @@ export function totalUnread(prs: PullRequest[]): number {
 // Only PullRequest and MergedPr flow through here, and both carry these.
 type Filterable = Pick<PullRequest, "title" | "repo" | "author" | "number">;
 
+const queryTerms = (query: string) =>
+  query.toLowerCase().split(/\s+/).filter(Boolean);
+
+// True when the query carries at least one searchable term. The single owner
+// of "is a filter active": it shares matchesFilter's tokenization, so it can
+// never disagree with "an empty query matches everything".
+export function hasQuery(query: string): boolean {
+  return queryTerms(query).length > 0;
+}
+
 // True when every whitespace-separated term appears somewhere in the row's
 // searchable text (case-insensitive). Terms are AND'd, so "acme fix" narrows
 // rather than widens. An empty or whitespace-only query matches everything.
 export function matchesFilter(item: Filterable, query: string): boolean {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = queryTerms(query);
   if (terms.length === 0) return true;
   const haystack =
     `${item.title} ${item.repo} #${item.number} ${item.author}`.toLowerCase();
@@ -439,64 +506,195 @@ function MergedRow({ pr }: { pr: MergedPr }) {
   );
 }
 
-function PrList({ prs, merged }: { prs: PullRequest[]; merged: MergedPr[] }) {
+/* A section heading that is one whole-row disclosure button, Finder-style:
+   chevron, label, and count share a single click target instead of a small
+   icon. The h2 keeps the heading in the accessibility outline as a real box
+   (not display: contents, which older WebKit drops from the AX tree); the
+   button fills it, and trailing siblings (Merged's "Clear all") stay outside
+   the toggle and out of nested-button territory. */
+function SectionHeader({
+  label,
+  count,
+  expanded,
+  onToggle,
+  disabled = false,
+  unread = 0,
+  children,
+}: {
+  label: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  /** Suspends toggling (used while a filter force-expands every section);
+   * aria-disabled rather than disabled so the header stays focusable and
+   * announced to assistive tech while inert. */
+  disabled?: boolean;
+  /** Unread total inside the section; shown as a red badge only while
+   * collapsed, when the rows carrying the per-PR badges are hidden. */
+  unread?: number;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="pr-section-header">
+      <h2 className="pr-section-heading">
+        <button
+          type="button"
+          className="pr-section-toggle"
+          aria-expanded={expanded}
+          aria-disabled={disabled}
+          onClick={disabled ? undefined : onToggle}
+        >
+          <svg
+            className="pr-section-chevron"
+            viewBox="0 0 24 24"
+            width="10"
+            height="10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="pr-section-label">{label}</span>
+          <span className="pr-section-count" aria-hidden="true">
+            {count}
+          </span>
+          {/* The tray badge counts these rows even when the section hides
+              them; without this cue a collapsed Mine makes the popover look
+              read while the tray says otherwise. */}
+          {!expanded && unread > 0 && (
+            <span className="pr-section-unread" aria-hidden="true">
+              {unread}
+            </span>
+          )}
+          {/* The pills are bare numbers whose meaning is carried by colour,
+              so the spoken name gets a worded equivalent instead. */}
+          <span className="visually-hidden">
+            {`${count} pull request${count === 1 ? "" : "s"}` +
+              (!expanded && unread > 0 ? `, ${unread} unread` : "")}
+          </span>
+        </button>
+      </h2>
+      {children}
+    </div>
+  );
+}
+
+function PrList({
+  prs,
+  merged,
+  filtering = false,
+}: {
+  prs: PullRequest[];
+  merged: MergedPr[];
+  /** True while the header filter has a query. Filtering force-expands every
+   * section (a match hidden inside a collapsed section would read as "no
+   * match") and suspends toggling; the stored state returns untouched when
+   * the query clears. */
+  filtering?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const isExpanded = (key: SectionKey) => filtering || !collapsed[key];
+  const toggle = (key: SectionKey) => {
+    // aria-disabled buttons still fire clicks, so the suspend-while-filtering
+    // rule is enforced here, not by the button.
+    if (filtering) return;
+    const next = { ...collapsed, [key]: !collapsed[key] };
+    setCollapsed(next);
+    // Persisted outside the state updater: StrictMode double-invokes updaters.
+    saveCollapsed(next);
+  };
   return (
     <main className="pr-list">
       {SECTIONS.map(({ key, label }) => {
         const rows = prs.filter((pr) => pr.section === key);
-        if (rows.length === 0) return null;
-        return (
-          <section key={key} className="pr-section">
-            <div className="pr-section-header">
-              <h2 className="pr-section-label">{label}</h2>
-              <span className="pr-section-count">{rows.length}</span>
-            </div>
-            {key === "all" ? (
-              groupByRepo(rows).map(({ repo, prs: group }) => (
-                <div key={repo} className="pr-repo-group">
-                  <div className="pr-repo-header">
-                    <h3 className="pr-repo-name">{repo}</h3>
-                    <span className="pr-repo-count">{group.length}</span>
-                  </div>
-                  <ul>
-                    {group.map((pr) => (
-                      <PrRow
-                        key={`${pr.repo}#${pr.number}`}
-                        pr={pr}
-                        showRepo={false}
-                      />
-                    ))}
-                  </ul>
-                </div>
-              ))
-            ) : (
+        /* The three PR sections always render, empty or not, so the popover
+           keeps one stable scaffold (an absent "Mine" would read as broken,
+           not empty). Filtering is the exception: rows are pre-filtered, so
+           an empty section there means "no matches here" and showing it
+           would clutter the force-expanded results. */
+        if (rows.length === 0 && filtering) return null;
+        let body: ReactNode;
+        if (rows.length === 0) {
+          /* Inside the slab, not bare text, so an empty section keeps the
+             shape rows will appear in. */
+          body = (
+            <ul>
+              <li className="pr-empty">Nothing to wine about</li>
+            </ul>
+          );
+        } else if (key === "all") {
+          body = groupByRepo(rows).map(({ repo, prs: group }) => (
+            <div key={repo} className="pr-repo-group">
+              <div className="pr-repo-header">
+                <h3 className="pr-repo-name">{repo}</h3>
+                <span className="pr-repo-count">{group.length}</span>
+              </div>
               <ul>
-                {rows.map((pr) => (
-                  <PrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+                {group.map((pr) => (
+                  <PrRow
+                    key={`${pr.repo}#${pr.number}`}
+                    pr={pr}
+                    showRepo={false}
+                  />
                 ))}
               </ul>
-            )}
+            </div>
+          ));
+        } else {
+          body = (
+            <ul>
+              {rows.map((pr) => (
+                <PrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+              ))}
+            </ul>
+          );
+        }
+        return (
+          <section key={key} className="pr-section">
+            <SectionHeader
+              label={label}
+              count={rows.length}
+              expanded={isExpanded(key)}
+              onToggle={() => toggle(key)}
+              disabled={filtering}
+              unread={totalUnread(rows)}
+            />
+            {isExpanded(key) && body}
           </section>
         );
       })}
       {merged.length > 0 && (
         <section className="pr-section">
-          <div className="pr-section-header">
-            <h2 className="pr-section-label">Merged</h2>
-            <span className="pr-section-count">{merged.length}</span>
-            <button
-              type="button"
-              className="pr-section-clear"
-              onClick={() => invoke("clear_merged").catch(() => {})}
-            >
-              Clear all
-            </button>
-          </div>
-          <ul>
-            {merged.map((pr) => (
-              <MergedRow key={`${pr.repo}#${pr.number}`} pr={pr} />
-            ))}
-          </ul>
+          <SectionHeader
+            label="Merged"
+            count={merged.length}
+            expanded={isExpanded("merged")}
+            onToggle={() => toggle("merged")}
+            disabled={filtering}
+          >
+            {/* Hidden while collapsed: clearing rows you cannot see invites
+                a destructive misclick from the adjacent whole-row toggle. */}
+            {isExpanded("merged") && (
+              <button
+                type="button"
+                className="pr-section-clear"
+                onClick={() => invoke("clear_merged").catch(() => {})}
+              >
+                Clear all
+              </button>
+            )}
+          </SectionHeader>
+          {isExpanded("merged") && (
+            <ul>
+              {merged.map((pr) => (
+                <MergedRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </main>
