@@ -127,8 +127,8 @@ pub struct PullRequest {
     /// as `blocked_reasons`.
     pub awaiting_review: bool,
     /// Whether the review decision is an explicit APPROVED. Renders as the
-    /// green check in the row's marker cluster: the one positive mark, so a
-    /// green row means "reviews are done", not merely "nothing is stuck". A
+    /// green check in the row's marker cluster: the one positive mark, so
+    /// green means "reviews are done", not merely "nothing is stuck". A
     /// null reviewDecision stays false (repos without required reviews never
     /// show the check, matching the threads pill's reading of null). Suppressed
     /// on drafts like the other markers. Same property-not-event rule as

@@ -340,8 +340,7 @@ function Glasses() {
 }
 
 // The approved check, the marker cluster's one green mark. A hair heavier
-// stroke than the glasses so three thin strokes read as a check and not a
-// smudge at 13px.
+// stroke than the glasses so the short segments stay legible at 13px.
 function Check() {
   return (
     <svg
