@@ -1183,7 +1183,10 @@ mod tests {
         // A null reviewDecision is ambiguous: it means "no required reviews"
         // but also "comment-only review in progress", so it never opens the
         // gate.
-        assert_eq!(reasons(json!({ "reviewThreads": unresolved() })), Vec::new());
+        assert_eq!(
+            reasons(json!({ "reviewThreads": unresolved() })),
+            Vec::new()
+        );
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("PENDING"),
@@ -1256,10 +1259,7 @@ mod tests {
         // Every non-BEHIND merge state is either fine (CLEAN), covered by a
         // dedicated reason (DIRTY -> conflict), or a state we deliberately do
         // not flag (BLOCKED: branch protection, e.g. missing approvals).
-        assert_eq!(
-            reasons(json!({ "mergeStateStatus": "CLEAN" })),
-            Vec::new()
-        );
+        assert_eq!(reasons(json!({ "mergeStateStatus": "CLEAN" })), Vec::new());
         assert_eq!(
             reasons(json!({ "mergeStateStatus": "BLOCKED" })),
             Vec::new()
