@@ -126,6 +126,14 @@ pub struct PullRequest {
     /// existence check, with no `login` to match. Same property-not-event rule
     /// as `blocked_reasons`.
     pub awaiting_review: bool,
+    /// Whether the review decision is an explicit APPROVED. Renders as the
+    /// green check in the row's marker cluster: the one positive mark, so a
+    /// green row means "reviews are done", not merely "nothing is stuck". A
+    /// null reviewDecision stays false (repos without required reviews never
+    /// show the check, matching the threads pill's reading of null). Suppressed
+    /// on drafts like the other markers. Same property-not-event rule as
+    /// `blocked_reasons`.
+    pub approved: bool,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -675,6 +683,10 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             awaiting_review: section == Section::Mine
                 && !is_draft
                 && has_pending_review_request(node),
+            // Suppressed on drafts like the markers above; an early approval
+            // on a not-ready PR would misread as "ship it".
+            approved: !is_draft
+                && node.get("reviewDecision").and_then(Value::as_str) == Some("APPROVED"),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -1445,6 +1457,50 @@ mod tests {
         collect_repo_prs(&repo, "khiet", &mut out);
         assert!(out[0].is_draft);
         assert!(!out[0].awaiting_review);
+    }
+
+    #[test]
+    fn an_explicit_approval_is_read_onto_the_row() {
+        // Only APPROVED sets the flag: a null decision (repo without required
+        // reviews, or review still in progress) stays unmarked, matching how
+        // the threads pill reads null.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                    pr_node(json!({ "reviewDecision": "APPROVED" })),
+                    pr_node(json!({})),
+                    pr_node(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
+                ]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].approved);
+        assert!(!out[1].approved);
+        assert!(!out[2].approved);
+    }
+
+    #[test]
+    fn a_draft_never_shows_the_approved_check() {
+        // Matches the other markers: an approval left on a PR later flipped
+        // back to draft must not read as "ship it" while the author says
+        // not-ready.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [pr_node(json!({
+                    "isDraft": true,
+                    "reviewDecision": "APPROVED"
+                }))]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].is_draft);
+        assert!(!out[0].approved);
     }
 
     #[test]

@@ -540,6 +540,14 @@ body {
   gap: 1px;
 }
 
+/* The approved check, the marker cluster's one green glyph: the system green
+   (matching .settings-ok) rather than a new hue, and a colour override only,
+   so it stays a RowMark in every other respect. Green is reserved for this
+   positive signal, keeping it apart from the blocked orange and unread red. */
+.pr-glyph-ok {
+  color: #248a3d;
+}
+
 /* The draft pill: the shared pill shape in the metadata grey, never a signal
    colour, since a draft is the author's own choice, not something stuck. The
    backend suppresses the action markers on a draft, so this pill sits alone at
@@ -981,6 +989,11 @@ body {
      brightening into a signal colour. */
   .pr-glyph {
     color: #98989d;
+  }
+
+  /* The dark-mode system green, matching .settings-ok's dark value. */
+  .pr-glyph-ok {
+    color: #30d158;
   }
 
   /* The light-mode fill sinks into the dark card; a stronger fill keeps the

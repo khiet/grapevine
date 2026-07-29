@@ -70,6 +70,7 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   is_draft: false,
   review_requested: false,
   awaiting_review: false,
+  approved: false,
   unread_count,
 });
 
