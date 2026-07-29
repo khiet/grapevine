@@ -316,26 +316,52 @@ function RowMark({
   );
 }
 
-// The review glasses, shared by both review-request directions.
-function Glasses() {
+// The shared frame around every stroke glyph: shapes are drawn on a 24-unit
+// grid and scaled down to their rendered size. Square at `size` unless
+// `width` narrows it (the direction arrow). Hidden from assistive tech in
+// all uses: the enclosing element carries the label (RowMark's aria-label,
+// the section toggle's text).
+function GlyphSvg({
+  strokeWidth,
+  size = 13,
+  width = size,
+  className,
+  children,
+}: {
+  strokeWidth: number;
+  size?: number;
+  width?: number;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
     <svg
+      className={className}
       viewBox="0 0 24 24"
-      width="13"
-      height="13"
+      width={width}
+      height={size}
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
     >
+      {children}
+    </svg>
+  );
+}
+
+// The review glasses, shared by both review-request directions.
+function Glasses() {
+  return (
+    <GlyphSvg strokeWidth={2}>
       <circle cx="6" cy="15" r="4" />
       <circle cx="18" cy="15" r="4" />
       <path d="M14 15a2 2 0 0 0-4 0" />
       <path d="M2.5 13 5 7c.7-1.3 1.4-2 3-2" />
       <path d="M21.5 13 19 7c-.7-1.3-1.5-2-3-2" />
-    </svg>
+    </GlyphSvg>
   );
 }
 
@@ -343,19 +369,9 @@ function Glasses() {
 // stroke than the glasses so the short segments stay legible at 13px.
 function Check() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="13"
-      height="13"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <GlyphSvg strokeWidth={2.5}>
       <path d="M4 12.5l5 5L20 6.5" />
-    </svg>
+    </GlyphSvg>
   );
 }
 
@@ -365,17 +381,7 @@ function Check() {
 // at its narrow width.
 function DirectionArrow({ dir }: { dir: "in" | "out" }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="9"
-      height="13"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <GlyphSvg strokeWidth={2.4} width={9}>
       {dir === "in" ? (
         <>
           <path d="M20 12H6" />
@@ -387,7 +393,7 @@ function DirectionArrow({ dir }: { dir: "in" | "out" }) {
           <path d="M13 6l5 6-5 6" />
         </>
       )}
-    </svg>
+    </GlyphSvg>
   );
 }
 
@@ -584,20 +590,9 @@ function SectionHeader({
           aria-disabled={disabled}
           onClick={disabled ? undefined : onToggle}
         >
-          <svg
-            className="pr-section-chevron"
-            viewBox="0 0 24 24"
-            width="10"
-            height="10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
+          <GlyphSvg strokeWidth={2.5} size={10} className="pr-section-chevron">
             <path d="M9 5l7 7-7 7" />
-          </svg>
+          </GlyphSvg>
           <span className="pr-section-label">{label}</span>
           <span className="pr-section-count" aria-hidden="true">
             {count}
