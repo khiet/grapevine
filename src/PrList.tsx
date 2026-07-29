@@ -444,8 +444,9 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
               <span className="pr-marks">
                 {/* The green check: reviews are done. Leads the cluster as its
                     one positive mark, so approval reads before whatever still
-                    stands in the way: blocked pills can coexist, and the
-                    Threads pill always does (its gate requires APPROVED). */}
+                    stands in the way (blocked pills can coexist; the review
+                    glyphs cannot, since a pending request contradicts the
+                    check). */}
                 {pr.approved && (
                   <RowMark tip="Approved" ok>
                     <Check />

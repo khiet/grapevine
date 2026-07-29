@@ -131,8 +131,10 @@ pub struct PullRequest {
     /// green means "reviews are done", not merely "nothing is stuck". A
     /// null reviewDecision stays false (repos without required reviews never
     /// show the check, matching the threads pill's reading of null). Suppressed
-    /// on drafts like the other markers. Same property-not-event rule as
-    /// `blocked_reasons`.
+    /// on drafts like the other markers, and whenever `review_requested` or
+    /// `awaiting_review` is set: a pending request contradicts "reviews are
+    /// done", so the glyph outranks the check. Same property-not-event rule
+    /// as `blocked_reasons`.
     pub approved: bool,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
@@ -633,6 +635,17 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         // Computed once and reused: `awaiting_review` is gated to Mine, so the
         // outgoing marker never lights up on a PR the viewer merely reviews.
         let section = section_for(node, viewer);
+        // Both glyph flags are suppressed on drafts, matching the blocked
+        // pills: a draft is the author's not-ready choice, so the row never
+        // nags anyone to act on it. Only the marker is hidden; `section_for`
+        // still counts a request, so the PR keeps its Participated
+        // membership. Hoisted out of the literal because `approved` yields
+        // to them below.
+        let review_requested = !is_draft && review_requested_for(node, viewer);
+        // The outgoing mirror: your own PR waiting on a reviewer. Gated to
+        // Mine so it cannot fire on a PR you merely participate in.
+        let awaiting_review =
+            section == Section::Mine && !is_draft && has_pending_review_request(node);
         out.push(PullRequest {
             number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
             title: node
@@ -672,20 +685,13 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             section,
             blocked_reasons: blocked_reasons_for(node),
             is_draft,
-            // Suppressed on drafts, matching the blocked pills: a draft is the
-            // author's not-ready choice, so the row never nags you to act on
-            // it. Only the marker is hidden; `section_for` still counts the
-            // request, so the PR keeps its Participated membership.
-            review_requested: !is_draft && review_requested_for(node, viewer),
-            // The outgoing mirror: your own PR waiting on a reviewer. Gated to
-            // Mine so it cannot fire on a PR you merely participate in, and
-            // suppressed on drafts like `review_requested`.
-            awaiting_review: section == Section::Mine
-                && !is_draft
-                && has_pending_review_request(node),
-            // Suppressed on drafts like the markers above; an early approval
-            // on a not-ready PR would misread as "ship it".
-            approved: !is_draft && is_approved(node),
+            review_requested,
+            awaiting_review,
+            // Suppressed on drafts like the markers above (an early approval
+            // on a not-ready PR would misread as "ship it") and whenever a
+            // review glyph shows: the check claims reviews are done, which a
+            // still-pending request contradicts.
+            approved: !is_draft && !review_requested && !awaiting_review && is_approved(node),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -1487,6 +1493,41 @@ mod tests {
         assert!(out[0].approved);
         assert!(!out[1].approved);
         assert!(!out[2].approved);
+    }
+
+    #[test]
+    fn a_pending_review_request_suppresses_the_approved_check() {
+        // The check claims "reviews are done", which a still-pending request
+        // contradicts, so either review glyph outranks it. Both directions:
+        // the viewer's own APPROVED PR still waiting on another reviewer, and
+        // an APPROVED PR the viewer is still asked to review.
+        let repo = json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                    pr_node(json!({
+                        "viewerDidAuthor": true,
+                        "reviewDecision": "APPROVED",
+                        "reviewRequests": { "nodes": [
+                            { "requestedReviewer": { "login": "other" } }
+                        ] }
+                    })),
+                    pr_node(json!({
+                        "reviewDecision": "APPROVED",
+                        "reviewRequests": { "nodes": [
+                            { "requestedReviewer": { "login": "khiet" } }
+                        ] }
+                    })),
+                ]
+            }
+        });
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].awaiting_review);
+        assert!(!out[0].approved);
+        assert!(out[1].review_requested);
+        assert!(!out[1].approved);
     }
 
     #[test]
