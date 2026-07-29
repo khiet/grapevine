@@ -685,8 +685,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 && has_pending_review_request(node),
             // Suppressed on drafts like the markers above; an early approval
             // on a not-ready PR would misread as "ship it".
-            approved: !is_draft
-                && node.get("reviewDecision").and_then(Value::as_str) == Some("APPROVED"),
+            approved: !is_draft && is_approved(node),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -811,7 +810,7 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     // batched query's node budget); a PR whose unresolved threads all sit
     // deeper than that is beyond what one page can see.
     let otherwise_done = reasons.is_empty()
-        && field("reviewDecision") == Some("APPROVED")
+        && is_approved(node)
         && !matches!(ci, Some("PENDING") | Some("EXPECTED"));
     let unresolved = list(node, "/reviewThreads/nodes")
         .iter()
@@ -844,6 +843,14 @@ fn review_requested_for(node: &Value, viewer: &str) -> bool {
 /// means the reviews are in.
 fn has_pending_review_request(node: &Value) -> bool {
     !list(node, "/reviewRequests/nodes").is_empty()
+}
+
+/// Whether the review decision is an explicit APPROVED; null is not approved
+/// (see the gate rationale in [`blocked_reasons_for`]). The one definition
+/// behind both the green check and the threads pill's otherwise-done gate,
+/// so the two read reviewDecision identically and cannot drift apart.
+fn is_approved(node: &Value) -> bool {
+    node.get("reviewDecision").and_then(Value::as_str) == Some("APPROVED")
 }
 
 /// Whether GitHub considers the viewer involved enough to notify them about

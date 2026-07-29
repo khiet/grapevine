@@ -432,10 +432,11 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                 spare. */}
             {pr.is_draft && <span className="pr-draft">Draft</span>}
             {/* The action markers cluster at the row's right edge as one group
-                instead of scattering through the metadata: the review glyph
-                (incoming or outgoing, never both on one row), then the blocked
-                pills. Never shown on a draft (the backend suppresses all
-                three), so this and the draft pill are exclusive. */}
+                instead of scattering through the metadata: the approved check,
+                the review glyph (incoming or outgoing, never both on one row),
+                then the blocked pills. Never shown on a draft (the backend
+                suppresses all four), so this and the draft pill are
+                exclusive. */}
             {(pr.approved ||
               pr.review_requested ||
               pr.awaiting_review ||
@@ -443,7 +444,8 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
               <span className="pr-marks">
                 {/* The green check: reviews are done. Leads the cluster as its
                     one positive mark, so approval reads before whatever still
-                    stands in the way (a Behind base pill can coexist). */}
+                    stands in the way: blocked pills can coexist, and the
+                    Threads pill always does (its gate requires APPROVED). */}
                 {pr.approved && (
                   <RowMark tip="Approved" ok>
                     <Check />

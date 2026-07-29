@@ -407,11 +407,11 @@ body {
   white-space: nowrap;
 }
 
-/* The action-marker cluster (review glasses, blocked pills), pinned as one
-   group at the row's right edge, out of the metadata's way, so the marks sit
-   side by side rather than scattering across the row. The draft pill is not
-   here: the backend suppresses these markers on drafts, so it never coexists
-   with them. */
+/* The action-marker cluster (approved check, review glasses, blocked pills),
+   pinned as one group at the row's right edge, out of the metadata's way, so
+   the marks sit side by side rather than scattering across the row. The draft
+   pill is not here: the backend suppresses these markers on drafts, so it
+   never coexists with them. */
 .pr-marks {
   display: inline-flex;
   align-items: center;
