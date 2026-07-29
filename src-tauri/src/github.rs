@@ -1205,20 +1205,6 @@ mod tests {
         );
     }
 
-    /// Threads lead behind in the fixed order: a stale branch makes the open
-    /// thread no less the thing to act on.
-    #[test]
-    fn threads_and_behind_can_share_a_row_with_threads_leading() {
-        let node = pr_node(json!({
-            "mergeStateStatus": "BEHIND",
-            "reviewThreads": review_threads(&[false])
-        }));
-        assert_eq!(
-            blocked_reasons_for(&node),
-            vec![BlockedReason::Threads, BlockedReason::Behind]
-        );
-    }
-
     #[test]
     fn mergeable_in_flight_and_quiet_prs_stay_undecorated() {
         let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
@@ -1257,15 +1243,17 @@ mod tests {
     }
 
     /// Fixed severity order regardless of which fields say what: conflict,
-    /// then CI, then review, then behind. The conflict+behind combination is
-    /// synthetic (a conflicting head reports `DIRTY`, not `BEHIND`), but it
-    /// pins the ordering contract for every pair that can occur.
+    /// then CI, then review, then threads, then behind. The conflict+behind
+    /// combination is synthetic (a conflicting head reports `DIRTY`, not
+    /// `BEHIND`), but it pins the ordering contract for every pair that can
+    /// occur.
     #[test]
     fn concurrent_triggers_list_every_reason_in_fixed_order() {
         let node = pr_node(json!({
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
+            "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(
@@ -1274,6 +1262,7 @@ mod tests {
                 BlockedReason::Conflict,
                 BlockedReason::Ci,
                 BlockedReason::Review,
+                BlockedReason::Threads,
                 BlockedReason::Behind
             ]
         );
@@ -1288,6 +1277,7 @@ mod tests {
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
+            "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());
@@ -1301,6 +1291,7 @@ mod tests {
             "mergeable": "UNKNOWN",
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
+            "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());

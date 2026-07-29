@@ -185,8 +185,8 @@ test("extra reasons collapse into a +N pill after the primary one", () => {
   // Behind sorts last in the backend's severity order, so it only leads a
   // pill when it is the sole reason.
   expect(blockedPills(["ci", "behind"])).toEqual(["CI failing", "+1"]);
-  // The only pair the threads scoping allows through (it yields to harder
-  // reasons at the backend): threads lead over behind.
+  // Threads sit between review and behind in the backend's severity order,
+  // so they lead a pill pair only over behind.
   expect(blockedPills(["threads", "behind"])).toEqual([
     "Unresolved threads",
     "+1",
