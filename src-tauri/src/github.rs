@@ -796,29 +796,17 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
         reasons.push(BlockedReason::Review);
     }
-    // Unresolved threads only count as the blocker when everything else reads
-    // done: no harder reason above, review explicitly approved, and CI green
-    // or absent. Mid-review threads are normal conversation, and flagging
-    // them would decorate half the list; this scoping keeps the pill meaning
-    // "the only thing left is answering comments". A null reviewDecision is
-    // not "done": GitHub reports null both when the repo requires no reviews
-    // and while a comment-only review is in progress (exactly how unresolved
-    // threads arise), so only an explicit APPROVED opens the gate. Like the
-    // BEHIND match below, that degrades to no pill where the signal is
-    // ambiguous; the cost is that repos without required reviews never show
-    // this pill. Deliberately checked before behind, which does not gate it:
-    // a stale branch does not make the threads any less the thing to act on.
-    // Reads the newest 10 threads (the query pages from the end, where the
-    // still-open threads skew; a full-history page would also bloat the
-    // batched query's node budget); a PR whose unresolved threads all sit
-    // deeper than that is beyond what one page can see.
-    let otherwise_done = reasons.is_empty()
-        && is_approved(node)
-        && !matches!(ci, Some("PENDING") | Some("EXPECTED"));
+    // Unresolved threads flag unconditionally: an open thread needs an answer
+    // whether or not reviews or CI are done, so nothing gates it and the pill
+    // coexists with any other reason (and with the green check). Reads the
+    // newest 10 threads (the query pages from the end, where the still-open
+    // threads skew; a full-history page would also bloat the batched query's
+    // node budget); a PR whose unresolved threads all sit deeper than that is
+    // beyond what one page can see.
     let unresolved = list(node, "/reviewThreads/nodes")
         .iter()
         .any(|t| t.get("isResolved").and_then(Value::as_bool) == Some(false));
-    if otherwise_done && unresolved {
+    if unresolved {
         reasons.push(BlockedReason::Threads);
     }
     if field("mergeStateStatus") == Some("BEHIND") {
@@ -1150,23 +1138,17 @@ mod tests {
             reasons(json!({ "mergeStateStatus": "BEHIND" })),
             vec![BlockedReason::Behind]
         );
-        // Threads additionally need the review to read as done, so this
-        // trigger carries an explicit approval alongside it; absent CI still
-        // counts as done.
         assert_eq!(
-            reasons(json!({
-                "reviewDecision": "APPROVED",
-                "reviewThreads": review_threads(&[true, false])
-            })),
+            reasons(json!({ "reviewThreads": review_threads(&[true, false]) })),
             vec![BlockedReason::Threads]
         );
     }
 
-    /// Threads are only the blocker when nothing harder remains: a harder
-    /// reason, an unfinished review, or running CI keeps them a normal
-    /// conversation rather than a flag.
+    /// Threads are their own signal: an open thread needs an answer whether
+    /// or not reviews or CI are done, so no other state gates it; the fixed
+    /// severity order still lists harder reasons first.
     #[test]
-    fn unresolved_threads_yield_to_everything_short_of_done() {
+    fn unresolved_threads_flag_independently_of_other_signals() {
         let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
         let unresolved = || review_threads(&[false]);
         assert_eq!(
@@ -1174,35 +1156,34 @@ mod tests {
                 "reviewDecision": "CHANGES_REQUESTED",
                 "reviewThreads": unresolved()
             })),
-            vec![BlockedReason::Review]
+            vec![BlockedReason::Review, BlockedReason::Threads]
         );
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("FAILURE"),
                 "reviewThreads": unresolved()
             })),
-            vec![BlockedReason::Ci]
+            vec![BlockedReason::Ci, BlockedReason::Threads]
         );
+        // Mid-review, no-required-review (null decision), and CI-in-flight
+        // PRs all flag: the thread, not the surrounding state, is the signal.
         assert_eq!(
             reasons(json!({
                 "reviewDecision": "REVIEW_REQUIRED",
                 "reviewThreads": unresolved()
             })),
-            Vec::new()
+            vec![BlockedReason::Threads]
         );
-        // A null reviewDecision is ambiguous: it means "no required reviews"
-        // but also "comment-only review in progress", so it never opens the
-        // gate.
         assert_eq!(
             reasons(json!({ "reviewThreads": unresolved() })),
-            Vec::new()
+            vec![BlockedReason::Threads]
         );
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("PENDING"),
                 "reviewThreads": unresolved()
             })),
-            Vec::new()
+            vec![BlockedReason::Threads]
         );
         // Fully resolved threads never flag, however done the PR is.
         assert_eq!(
@@ -1224,12 +1205,11 @@ mod tests {
         );
     }
 
-    /// Behind does not gate threads (a stale branch makes the open thread no
-    /// less the thing to act on), and threads lead in the fixed order.
+    /// Threads lead behind in the fixed order: a stale branch makes the open
+    /// thread no less the thing to act on.
     #[test]
     fn threads_and_behind_can_share_a_row_with_threads_leading() {
         let node = pr_node(json!({
-            "reviewDecision": "APPROVED",
             "mergeStateStatus": "BEHIND",
             "reviewThreads": review_threads(&[false])
         }));
@@ -1472,8 +1452,7 @@ mod tests {
     #[test]
     fn an_explicit_approval_is_read_onto_the_row() {
         // Only APPROVED sets the flag: a null decision (repo without required
-        // reviews, or review still in progress) stays unmarked, matching how
-        // the threads pill reads null.
+        // reviews, or review still in progress) stays unmarked.
         let repo = json!({
             "nameWithOwner": "acme/widgets",
             "pullRequests": {
