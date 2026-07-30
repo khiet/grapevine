@@ -898,6 +898,18 @@ mod tests {
         node
     }
 
+    /// Wraps PR nodes in the single-page repo scaffold `collect_repo_prs`
+    /// expects, so a test states only the node fields it is about.
+    fn repo_with(nodes: Vec<Value>) -> Value {
+        json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": nodes
+            }
+        })
+    }
+
     #[test]
     fn authored_prs_are_mine_even_though_the_author_is_subscribed() {
         let node = pr_node(json!({
@@ -1447,17 +1459,11 @@ mod tests {
     fn an_explicit_approval_is_read_onto_the_row() {
         // Only APPROVED sets the flag: a null decision (repo without required
         // reviews, or review still in progress) stays unmarked.
-        let repo = json!({
-            "nameWithOwner": "acme/widgets",
-            "pullRequests": {
-                "pageInfo": { "hasNextPage": false, "endCursor": null },
-                "nodes": [
-                    pr_node(json!({ "reviewDecision": "APPROVED" })),
-                    pr_node(json!({})),
-                    pr_node(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
-                ]
-            }
-        });
+        let repo = repo_with(vec![
+            pr_node(json!({ "reviewDecision": "APPROVED" })),
+            pr_node(json!({})),
+            pr_node(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
+        ]);
         let mut out = Vec::new();
         collect_repo_prs(&repo, "khiet", &mut out);
         assert!(out[0].approved);
@@ -1473,27 +1479,21 @@ mod tests {
         // share a row. Both directions: the viewer's own APPROVED PR still
         // waiting on another reviewer, and an APPROVED PR the viewer is still
         // asked to review.
-        let repo = json!({
-            "nameWithOwner": "acme/widgets",
-            "pullRequests": {
-                "pageInfo": { "hasNextPage": false, "endCursor": null },
-                "nodes": [
-                    pr_node(json!({
-                        "viewerDidAuthor": true,
-                        "reviewDecision": "APPROVED",
-                        "reviewRequests": { "nodes": [
-                            { "requestedReviewer": { "login": "other" } }
-                        ] }
-                    })),
-                    pr_node(json!({
-                        "reviewDecision": "APPROVED",
-                        "reviewRequests": { "nodes": [
-                            { "requestedReviewer": { "login": "khiet" } }
-                        ] }
-                    })),
-                ]
-            }
-        });
+        let repo = repo_with(vec![
+            pr_node(json!({
+                "viewerDidAuthor": true,
+                "reviewDecision": "APPROVED",
+                "reviewRequests": { "nodes": [
+                    { "requestedReviewer": { "login": "other" } }
+                ] }
+            })),
+            pr_node(json!({
+                "reviewDecision": "APPROVED",
+                "reviewRequests": { "nodes": [
+                    { "requestedReviewer": { "login": "khiet" } }
+                ] }
+            })),
+        ]);
         let mut out = Vec::new();
         collect_repo_prs(&repo, "khiet", &mut out);
         assert!(out[0].awaiting_review);
@@ -1507,16 +1507,10 @@ mod tests {
         // Matches the other markers: an approval left on a PR later flipped
         // back to draft must not read as "ship it" while the author says
         // not-ready.
-        let repo = json!({
-            "nameWithOwner": "acme/widgets",
-            "pullRequests": {
-                "pageInfo": { "hasNextPage": false, "endCursor": null },
-                "nodes": [pr_node(json!({
-                    "isDraft": true,
-                    "reviewDecision": "APPROVED"
-                }))]
-            }
-        });
+        let repo = repo_with(vec![pr_node(json!({
+            "isDraft": true,
+            "reviewDecision": "APPROVED"
+        }))]);
         let mut out = Vec::new();
         collect_repo_prs(&repo, "khiet", &mut out);
         assert!(out[0].is_draft);
