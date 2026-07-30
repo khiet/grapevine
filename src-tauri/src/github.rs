@@ -796,9 +796,12 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
         reasons.push(BlockedReason::Review);
     }
-    // Unresolved threads flag unconditionally: an open thread needs an answer
-    // whether or not reviews or CI are done, so nothing gates it and the pill
-    // coexists with any other reason (and with the green check). Reads the
+    // Unresolved threads flag independently of the other signals: an open
+    // thread needs an answer whether or not reviews or CI are done, so the
+    // pill coexists with any other reason (and with the green check). Only
+    // the draft/UNKNOWN suppression above gates it, as it does every reason
+    // here, so the pill sits out the poll after a push while GitHub
+    // recomputes mergeability. Reads the
     // newest 10 threads (the query pages from the end, where the still-open
     // threads skew; a full-history page would also bloat the batched query's
     // node budget); a PR whose unresolved threads all sit deeper than that is
