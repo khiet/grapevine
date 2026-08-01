@@ -28,6 +28,10 @@ export interface PullRequest {
    * (the two never share a row), suppressed on drafts, and self-clearing as
    * reviewers submit. */
   awaiting_review: boolean;
+  /** The review decision is an explicit APPROVED; renders the green check in
+   * the marker cluster. Backend-computed and suppressed on drafts, like the
+   * review markers. */
+  approved: boolean;
   unread_count: number;
 }
 
@@ -285,49 +289,89 @@ function PrAvatar({
 
 // A grey glyph in the row's right-edge marker cluster: a 13px stroke icon
 // whose meaning lives in the hover tooltip and aria-label, both fed by `tip`.
-// `wide` lets it hold a direction arrow beside the glasses. The draft and
-// blocked pills are not these: they carry their own styling, not a glyph.
+// `wide` lets it hold a direction arrow beside the glasses; `ok` turns the
+// glyph green, the cluster's one positive colour. The draft and blocked pills
+// are not these: they carry their own styling, not a glyph.
 function RowMark({
   tip,
   wide,
+  ok,
   children,
 }: {
   tip: string;
   wide?: boolean;
+  ok?: boolean;
+  children: ReactNode;
+}) {
+  const className = [
+    "pr-glyph",
+    ...(wide ? ["pr-glyph-wide"] : []),
+    ...(ok ? ["pr-glyph-ok"] : []),
+    "pr-tip",
+  ].join(" ");
+  return (
+    <span className={className} role="img" data-tip={tip} aria-label={tip}>
+      {children}
+    </span>
+  );
+}
+
+// The shared frame around every stroke glyph: shapes are drawn on a 24-unit
+// grid and scaled down to their rendered size. Square at `size` unless
+// `width` narrows it (the direction arrow). Hidden from assistive tech in
+// all uses: the enclosing element carries the label (RowMark's aria-label,
+// the section toggle's text).
+function GlyphSvg({
+  strokeWidth,
+  size = 13,
+  width = size,
+  className,
+  children,
+}: {
+  strokeWidth: number;
+  size?: number;
+  width?: number;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <span
-      className={wide ? "pr-glyph pr-glyph-wide pr-tip" : "pr-glyph pr-tip"}
-      role="img"
-      data-tip={tip}
-      aria-label={tip}
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width={width}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
     >
       {children}
-    </span>
+    </svg>
   );
 }
 
 // The review glasses, shared by both review-request directions.
 function Glasses() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="13"
-      height="13"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <GlyphSvg strokeWidth={2}>
       <circle cx="6" cy="15" r="4" />
       <circle cx="18" cy="15" r="4" />
       <path d="M14 15a2 2 0 0 0-4 0" />
       <path d="M2.5 13 5 7c.7-1.3 1.4-2 3-2" />
       <path d="M21.5 13 19 7c-.7-1.3-1.5-2-3-2" />
-    </svg>
+    </GlyphSvg>
+  );
+}
+
+// The approved check, the marker cluster's one green mark. A hair heavier
+// stroke than the glasses so the short segments stay legible at 13px.
+function Check() {
+  return (
+    <GlyphSvg strokeWidth={2.5}>
+      <path d="M4 12.5l5 5L20 6.5" />
+    </GlyphSvg>
   );
 }
 
@@ -337,17 +381,7 @@ function Glasses() {
 // at its narrow width.
 function DirectionArrow({ dir }: { dir: "in" | "out" }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="9"
-      height="13"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <GlyphSvg strokeWidth={2.4} width={9}>
       {dir === "in" ? (
         <>
           <path d="M20 12H6" />
@@ -359,7 +393,7 @@ function DirectionArrow({ dir }: { dir: "in" | "out" }) {
           <path d="M13 6l5 6-5 6" />
         </>
       )}
-    </svg>
+    </GlyphSvg>
   );
 }
 
@@ -404,14 +438,25 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                 spare. */}
             {pr.is_draft && <span className="pr-draft">Draft</span>}
             {/* The action markers cluster at the row's right edge as one group
-                instead of scattering through the metadata: the review glyph
-                (incoming or outgoing, never both on one row), then the blocked
-                pills. Never shown on a draft (the backend suppresses all
-                three), so this and the draft pill are exclusive. */}
-            {(pr.review_requested ||
+                instead of scattering through the metadata: the approved check,
+                the review glyph (incoming or outgoing, never both on one row),
+                then the blocked pills. Never shown on a draft (the backend
+                suppresses all four), so this and the draft pill are
+                exclusive. */}
+            {(pr.approved ||
+              pr.review_requested ||
               pr.awaiting_review ||
               pr.blocked_reasons.length > 0) && (
               <span className="pr-marks">
+                {/* The green check: the required approvals are in. Leads the
+                    cluster as its one positive mark, so approval reads before
+                    whatever still stands in the way; every other marker can
+                    coexist with it. */}
+                {pr.approved && (
+                  <RowMark tip="Approved" ok>
+                    <Check />
+                  </RowMark>
+                )}
                 {/* Glasses with an incoming arrow: your review is requested. A
                     grey mark like the draft pill, not a blocked signal: an
                     invitation to act, outside the blocked pill's "something is
@@ -544,20 +589,9 @@ function SectionHeader({
           aria-disabled={disabled}
           onClick={disabled ? undefined : onToggle}
         >
-          <svg
-            className="pr-section-chevron"
-            viewBox="0 0 24 24"
-            width="10"
-            height="10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
+          <GlyphSvg strokeWidth={2.5} size={10} className="pr-section-chevron">
             <path d="M9 5l7 7-7 7" />
-          </svg>
+          </GlyphSvg>
           <span className="pr-section-label">{label}</span>
           <span className="pr-section-count" aria-hidden="true">
             {count}

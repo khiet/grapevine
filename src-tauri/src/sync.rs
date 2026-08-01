@@ -379,6 +379,7 @@ mod tests {
             is_draft: false,
             review_requested: false,
             awaiting_review: false,
+            approved: false,
             unread_count: 0,
             activity: vec![],
         }
@@ -463,6 +464,7 @@ mod tests {
                 is_draft: true,
                 review_requested: false,
                 awaiting_review: false,
+                approved: true,
                 unread_count: 3,
                 // Internal working data; must not leak into the payload.
                 activity: vec!["2026-07-10T12:00:00Z".into()],
@@ -499,6 +501,7 @@ mod tests {
                     "is_draft": true,
                     "review_requested": false,
                     "awaiting_review": false,
+                    "approved": true,
                     "unread_count": 3
                 }],
                 "merged": [{
@@ -629,6 +632,7 @@ mod tests {
             is_draft: false,
             review_requested: false,
             awaiting_review: false,
+            approved: false,
             unread_count,
             activity: vec![],
         };

@@ -27,10 +27,11 @@ a GitHub token and a list of repos; it polls them every few minutes and shows
 the open PRs, split into the ones you authored, the ones you are involved in,
 and everything else. The first two badge comments and reviews you have not seen
 yet; everything else is a browse list and stays silent. Each row badges the
-organization's avatar onto the author's, flags drafts with a pill, and shows a
-pill naming why a PR cannot merge (merge conflict, CI failing, changes
-requested, unresolved threads, or behind base), collapsing the rest into a count
-when more than one applies. The list is ordered by most recently updated.
+organization's avatar onto the author's, flags drafts with a pill, shows a
+green check once a PR's required approvals are in, and shows a pill naming
+what still needs attention (merge conflict, CI failing, changes requested,
+unresolved threads, or behind base), collapsing the rest into a count when
+more than one applies. The list is ordered by most recently updated.
 Merged PRs get their own section until you dismiss them.
 
 Grapevine is inspired by [Trailer](https://github.com/ptsochantaris/trailer),

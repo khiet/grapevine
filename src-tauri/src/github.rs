@@ -126,6 +126,14 @@ pub struct PullRequest {
     /// existence check, with no `login` to match. Same property-not-event rule
     /// as `blocked_reasons`.
     pub awaiting_review: bool,
+    /// Whether the review decision is an explicit APPROVED. Renders as the
+    /// green check in the row's marker cluster: the one positive mark, so
+    /// green means "the required approvals are in", not merely "nothing is
+    /// stuck". A null reviewDecision stays false (repos without required reviews never
+    /// show the check). Shown even beside a review glyph: a later re-request
+    /// does not unmeet the requirement. Suppressed on drafts like the other
+    /// markers. Same property-not-event rule as `blocked_reasons`.
+    pub approved: bool,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -675,6 +683,12 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             awaiting_review: section == Section::Mine
                 && !is_draft
                 && has_pending_review_request(node),
+            // Suppressed on drafts like the markers above; an early approval
+            // on a not-ready PR would misread as "ship it". Deliberately not
+            // suppressed beside the review glyphs: GitHub keeps APPROVED once
+            // the required approvals are in even while more reviewers are
+            // listed, and the met requirement is worth showing regardless.
+            approved: !is_draft && is_approved(node),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -782,29 +796,20 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
         reasons.push(BlockedReason::Review);
     }
-    // Unresolved threads only count as the blocker when everything else reads
-    // done: no harder reason above, review explicitly approved, and CI green
-    // or absent. Mid-review threads are normal conversation, and flagging
-    // them would decorate half the list; this scoping keeps the pill meaning
-    // "the only thing left is answering comments". A null reviewDecision is
-    // not "done": GitHub reports null both when the repo requires no reviews
-    // and while a comment-only review is in progress (exactly how unresolved
-    // threads arise), so only an explicit APPROVED opens the gate. Like the
-    // BEHIND match below, that degrades to no pill where the signal is
-    // ambiguous; the cost is that repos without required reviews never show
-    // this pill. Deliberately checked before behind, which does not gate it:
-    // a stale branch does not make the threads any less the thing to act on.
-    // Reads the newest 10 threads (the query pages from the end, where the
-    // still-open threads skew; a full-history page would also bloat the
-    // batched query's node budget); a PR whose unresolved threads all sit
-    // deeper than that is beyond what one page can see.
-    let otherwise_done = reasons.is_empty()
-        && field("reviewDecision") == Some("APPROVED")
-        && !matches!(ci, Some("PENDING") | Some("EXPECTED"));
+    // Unresolved threads flag independently of the other signals: an open
+    // thread needs an answer whether or not reviews or CI are done, so the
+    // pill coexists with any other reason (and with the green check). Only
+    // the draft/UNKNOWN suppression above gates it, as it does every reason
+    // here, so the pill sits out the poll after a push while GitHub
+    // recomputes mergeability. Reads the
+    // newest 10 threads (the query pages from the end, where the still-open
+    // threads skew; a full-history page would also bloat the batched query's
+    // node budget); a PR whose unresolved threads all sit deeper than that is
+    // beyond what one page can see.
     let unresolved = list(node, "/reviewThreads/nodes")
         .iter()
         .any(|t| t.get("isResolved").and_then(Value::as_bool) == Some(false));
-    if otherwise_done && unresolved {
+    if unresolved {
         reasons.push(BlockedReason::Threads);
     }
     if field("mergeStateStatus") == Some("BEHIND") {
@@ -832,6 +837,14 @@ fn review_requested_for(node: &Value, viewer: &str) -> bool {
 /// means the reviews are in.
 fn has_pending_review_request(node: &Value) -> bool {
     !list(node, "/reviewRequests/nodes").is_empty()
+}
+
+/// Whether the review decision is an explicit APPROVED, i.e. the repo's
+/// required approvals are all in. Null is not approved: GitHub reports a null
+/// reviewDecision both when the repo requires no reviews and while a
+/// comment-only review is in progress, so only the explicit verdict counts.
+fn is_approved(node: &Value) -> bool {
+    node.get("reviewDecision").and_then(Value::as_str) == Some("APPROVED")
 }
 
 /// Whether GitHub considers the viewer involved enough to notify them about
@@ -883,6 +896,18 @@ mod tests {
             .unwrap()
             .extend(overrides.as_object().unwrap().clone());
         node
+    }
+
+    /// Wraps PR nodes in the single-page repo scaffold `collect_repo_prs`
+    /// expects, so a test states only the node fields it is about.
+    fn repo_with(nodes: Vec<Value>) -> Value {
+        json!({
+            "nameWithOwner": "acme/widgets",
+            "pullRequests": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": nodes
+            }
+        })
     }
 
     #[test]
@@ -1128,23 +1153,17 @@ mod tests {
             reasons(json!({ "mergeStateStatus": "BEHIND" })),
             vec![BlockedReason::Behind]
         );
-        // Threads additionally need the review to read as done, so this
-        // trigger carries an explicit approval alongside it; absent CI still
-        // counts as done.
         assert_eq!(
-            reasons(json!({
-                "reviewDecision": "APPROVED",
-                "reviewThreads": review_threads(&[true, false])
-            })),
+            reasons(json!({ "reviewThreads": review_threads(&[true, false]) })),
             vec![BlockedReason::Threads]
         );
     }
 
-    /// Threads are only the blocker when nothing harder remains: a harder
-    /// reason, an unfinished review, or running CI keeps them a normal
-    /// conversation rather than a flag.
+    /// Threads are their own signal: an open thread needs an answer whether
+    /// or not reviews or CI are done, so no other state gates it; the fixed
+    /// severity order still lists harder reasons first.
     #[test]
-    fn unresolved_threads_yield_to_everything_short_of_done() {
+    fn unresolved_threads_flag_independently_of_other_signals() {
         let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
         let unresolved = || review_threads(&[false]);
         assert_eq!(
@@ -1152,32 +1171,34 @@ mod tests {
                 "reviewDecision": "CHANGES_REQUESTED",
                 "reviewThreads": unresolved()
             })),
-            vec![BlockedReason::Review]
+            vec![BlockedReason::Review, BlockedReason::Threads]
         );
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("FAILURE"),
                 "reviewThreads": unresolved()
             })),
-            vec![BlockedReason::Ci]
+            vec![BlockedReason::Ci, BlockedReason::Threads]
         );
+        // Mid-review, no-required-review (null decision), and CI-in-flight
+        // PRs all flag: the thread, not the surrounding state, is the signal.
         assert_eq!(
             reasons(json!({
                 "reviewDecision": "REVIEW_REQUIRED",
                 "reviewThreads": unresolved()
             })),
-            Vec::new()
+            vec![BlockedReason::Threads]
         );
-        // A null reviewDecision is ambiguous: it means "no required reviews"
-        // but also "comment-only review in progress", so it never opens the
-        // gate.
-        assert_eq!(reasons(json!({ "reviewThreads": unresolved() })), Vec::new());
+        assert_eq!(
+            reasons(json!({ "reviewThreads": unresolved() })),
+            vec![BlockedReason::Threads]
+        );
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("PENDING"),
                 "reviewThreads": unresolved()
             })),
-            Vec::new()
+            vec![BlockedReason::Threads]
         );
         // Fully resolved threads never flag, however done the PR is.
         assert_eq!(
@@ -1196,21 +1217,6 @@ mod tests {
                 "reviewThreads": unresolved()
             })),
             vec![BlockedReason::Threads]
-        );
-    }
-
-    /// Behind does not gate threads (a stale branch makes the open thread no
-    /// less the thing to act on), and threads lead in the fixed order.
-    #[test]
-    fn threads_and_behind_can_share_a_row_with_threads_leading() {
-        let node = pr_node(json!({
-            "reviewDecision": "APPROVED",
-            "mergeStateStatus": "BEHIND",
-            "reviewThreads": review_threads(&[false])
-        }));
-        assert_eq!(
-            blocked_reasons_for(&node),
-            vec![BlockedReason::Threads, BlockedReason::Behind]
         );
     }
 
@@ -1244,10 +1250,7 @@ mod tests {
         // Every non-BEHIND merge state is either fine (CLEAN), covered by a
         // dedicated reason (DIRTY -> conflict), or a state we deliberately do
         // not flag (BLOCKED: branch protection, e.g. missing approvals).
-        assert_eq!(
-            reasons(json!({ "mergeStateStatus": "CLEAN" })),
-            Vec::new()
-        );
+        assert_eq!(reasons(json!({ "mergeStateStatus": "CLEAN" })), Vec::new());
         assert_eq!(
             reasons(json!({ "mergeStateStatus": "BLOCKED" })),
             Vec::new()
@@ -1255,15 +1258,17 @@ mod tests {
     }
 
     /// Fixed severity order regardless of which fields say what: conflict,
-    /// then CI, then review, then behind. The conflict+behind combination is
-    /// synthetic (a conflicting head reports `DIRTY`, not `BEHIND`), but it
-    /// pins the ordering contract for every pair that can occur.
+    /// then CI, then review, then threads, then behind. The conflict+behind
+    /// combination is synthetic (a conflicting head reports `DIRTY`, not
+    /// `BEHIND`), but it pins the ordering contract for every pair that can
+    /// occur.
     #[test]
     fn concurrent_triggers_list_every_reason_in_fixed_order() {
         let node = pr_node(json!({
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
+            "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(
@@ -1272,6 +1277,7 @@ mod tests {
                 BlockedReason::Conflict,
                 BlockedReason::Ci,
                 BlockedReason::Review,
+                BlockedReason::Threads,
                 BlockedReason::Behind
             ]
         );
@@ -1286,6 +1292,7 @@ mod tests {
             "mergeable": "CONFLICTING",
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
+            "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());
@@ -1299,6 +1306,7 @@ mod tests {
             "mergeable": "UNKNOWN",
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
+            "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons_for(&node), Vec::new());
@@ -1445,6 +1453,68 @@ mod tests {
         collect_repo_prs(&repo, "khiet", &mut out);
         assert!(out[0].is_draft);
         assert!(!out[0].awaiting_review);
+    }
+
+    #[test]
+    fn an_explicit_approval_is_read_onto_the_row() {
+        // Only APPROVED sets the flag: a null decision (repo without required
+        // reviews, or review still in progress) stays unmarked.
+        let repo = repo_with(vec![
+            pr_node(json!({ "reviewDecision": "APPROVED" })),
+            pr_node(json!({})),
+            pr_node(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
+        ]);
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].approved);
+        assert!(!out[1].approved);
+        assert!(!out[2].approved);
+    }
+
+    #[test]
+    fn an_approval_shows_the_check_even_beside_a_pending_request() {
+        // GitHub keeps reviewDecision at APPROVED once the required approvals
+        // are in, even while more reviewers are still listed; the met
+        // requirement shows regardless, so the check and a glasses glyph can
+        // share a row. Both directions: the viewer's own APPROVED PR still
+        // waiting on another reviewer, and an APPROVED PR the viewer is still
+        // asked to review.
+        let repo = repo_with(vec![
+            pr_node(json!({
+                "viewerDidAuthor": true,
+                "reviewDecision": "APPROVED",
+                "reviewRequests": { "nodes": [
+                    { "requestedReviewer": { "login": "other" } }
+                ] }
+            })),
+            pr_node(json!({
+                "reviewDecision": "APPROVED",
+                "reviewRequests": { "nodes": [
+                    { "requestedReviewer": { "login": "khiet" } }
+                ] }
+            })),
+        ]);
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].awaiting_review);
+        assert!(out[0].approved);
+        assert!(out[1].review_requested);
+        assert!(out[1].approved);
+    }
+
+    #[test]
+    fn a_draft_never_shows_the_approved_check() {
+        // Matches the other markers: an approval left on a PR later flipped
+        // back to draft must not read as "ship it" while the author says
+        // not-ready.
+        let repo = repo_with(vec![pr_node(json!({
+            "isDraft": true,
+            "reviewDecision": "APPROVED"
+        }))]);
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert!(out[0].is_draft);
+        assert!(!out[0].approved);
     }
 
     #[test]

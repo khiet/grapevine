@@ -407,11 +407,11 @@ body {
   white-space: nowrap;
 }
 
-/* The action-marker cluster (review glasses, blocked pills), pinned as one
-   group at the row's right edge, out of the metadata's way, so the marks sit
-   side by side rather than scattering across the row. The draft pill is not
-   here: the backend suppresses these markers on drafts, so it never coexists
-   with them. */
+/* The action-marker cluster (approved check, review glasses, blocked pills),
+   pinned as one group at the row's right edge, out of the metadata's way, so
+   the marks sit side by side rather than scattering across the row. The draft
+   pill is not here: the backend suppresses these markers on drafts, so it
+   never coexists with them. */
 .pr-marks {
   display: inline-flex;
   align-items: center;
@@ -538,6 +538,14 @@ body {
    spacing. */
 .pr-glyph-wide {
   gap: 1px;
+}
+
+/* The approved check, the marker cluster's one green glyph: the system green
+   (matching .settings-ok) rather than a new hue, and a colour override only,
+   so it stays a RowMark in every other respect. Green is reserved for this
+   positive signal, keeping it apart from the blocked orange and unread red. */
+.pr-glyph-ok {
+  color: #248a3d;
 }
 
 /* The draft pill: the shared pill shape in the metadata grey, never a signal
@@ -981,6 +989,11 @@ body {
      brightening into a signal colour. */
   .pr-glyph {
     color: #98989d;
+  }
+
+  /* The dark-mode system green, matching .settings-ok's dark value. */
+  .pr-glyph-ok {
+    color: #30d158;
   }
 
   /* The light-mode fill sinks into the dark card; a stronger fill keeps the
