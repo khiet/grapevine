@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/khiet/grapevine/compare/grapevine-v0.8.0...grapevine-v0.9.0) (2026-08-01)
+
+
+### Features
+
+* green approved check in the row marker cluster ([#42](https://github.com/khiet/grapevine/issues/42)) ([dd2e289](https://github.com/khiet/grapevine/commit/dd2e28918e9e364f326c58730118a43874b6b2ef))
+
 ## [0.8.0](https://github.com/khiet/grapevine/compare/grapevine-v0.7.2...grapevine-v0.8.0) (2026-07-23)
 
 
