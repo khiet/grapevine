@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Agent (menubar-only) app: never launches as a Regular app, so no Dock
+	     icon can stick when the updater's relaunch bypasses LaunchServices.
+	     The runtime Accessory activation policy in lib.rs stays as backup. -->
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>
