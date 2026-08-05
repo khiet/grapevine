@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/khiet/grapevine/compare/grapevine-v0.9.0...grapevine-v0.9.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* declare LSUIElement so the app never launches as a Regular app ([#44](https://github.com/khiet/grapevine/issues/44)) ([aa2f8db](https://github.com/khiet/grapevine/commit/aa2f8dbd22f209420355670cc367864a2a2221f8))
+
 ## [0.9.0](https://github.com/khiet/grapevine/compare/grapevine-v0.8.0...grapevine-v0.9.0) (2026-08-01)
 
 
