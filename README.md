@@ -19,6 +19,8 @@
   </p>
 </p>
 
+![Grapevine demo: clicking the menubar icon opens fictional pull requests with unread badges and review markers, opening a PR clears its badge, expanding Mine shows blocked and approved PRs, and typing checkout filters the list.](docs/assets/grapevine.gif)
+
 ## About
 
 Grapevine lives in the menubar only, with no Dock icon. Clicking the tray icon
