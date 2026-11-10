@@ -380,6 +380,7 @@ mod tests {
             review_requested: false,
             awaiting_review: false,
             approved: false,
+            merge_queue_position: None,
             unread_count: 0,
             activity: vec![],
         }
@@ -465,6 +466,7 @@ mod tests {
                 review_requested: false,
                 awaiting_review: false,
                 approved: true,
+                merge_queue_position: Some(2),
                 unread_count: 3,
                 // Internal working data; must not leak into the payload.
                 activity: vec!["2026-07-10T12:00:00Z".into()],
@@ -502,6 +504,7 @@ mod tests {
                     "review_requested": false,
                     "awaiting_review": false,
                     "approved": true,
+                    "merge_queue_position": 2,
                     "unread_count": 3
                 }],
                 "merged": [{
@@ -633,6 +636,7 @@ mod tests {
             review_requested: false,
             awaiting_review: false,
             approved: false,
+            merge_queue_position: None,
             unread_count,
             activity: vec![],
         };

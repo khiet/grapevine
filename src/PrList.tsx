@@ -32,6 +32,9 @@ export interface PullRequest {
    * the marker cluster. Backend-computed and suppressed on drafts, like the
    * review markers. */
   approved: boolean;
+  /** 1-based position in the repo's merge queue as GitHub reports it; null
+   * when the PR is not queued. Renders the stack mark with the number. */
+  merge_queue_position: number | null;
   unread_count: number;
 }
 
@@ -63,6 +66,19 @@ export function blockedPills(reasons: BlockedReason[]): string[] {
   const pills = [BLOCKED_LABELS[reasons[0]]];
   if (reasons.length > 1) pills.push(`+${reasons.length - 1}`);
   return pills;
+}
+
+// English ordinal for a positive integer. The suffix follows the last digit,
+// except that 11, 12 and 13 (in every hundred) take "th".
+export function ordinal(n: number): string {
+  const teen = n % 100 >= 11 && n % 100 <= 13;
+  const suffix = teen ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th");
+  return `${n}${suffix}`;
+}
+
+// Tooltip and aria-label of the merge queue mark.
+export function mergeQueueTitle(position: number): string {
+  return `${ordinal(position)} in merge queue`;
 }
 
 export interface MergedPr {
@@ -290,23 +306,27 @@ function PrAvatar({
 // A grey glyph in the row's right-edge marker cluster: a 13px stroke icon
 // whose meaning lives in the hover tooltip and aria-label, both fed by `tip`.
 // `wide` lets it hold a direction arrow beside the glasses; `ok` turns the
-// glyph green, the cluster's one positive colour. The draft and blocked pills
+// glyph green, the cluster's one positive colour; `count` styles a number set
+// beside the glyph (the merge queue position). The draft and blocked pills
 // are not these: they carry their own styling, not a glyph.
 function RowMark({
   tip,
   wide,
   ok,
+  count,
   children,
 }: {
   tip: string;
   wide?: boolean;
   ok?: boolean;
+  count?: boolean;
   children: ReactNode;
 }) {
   const className = [
     "pr-glyph",
     ...(wide ? ["pr-glyph-wide"] : []),
     ...(ok ? ["pr-glyph-ok"] : []),
+    ...(count ? ["pr-glyph-count"] : []),
     "pr-tip",
   ].join(" ");
   return (
@@ -371,6 +391,17 @@ function Check() {
   return (
     <GlyphSvg strokeWidth={2.5}>
       <path d="M4 12.5l5 5L20 6.5" />
+    </GlyphSvg>
+  );
+}
+
+// The stack glyph of the merge queue mark.
+function Stack() {
+  return (
+    <GlyphSvg strokeWidth={2}>
+      <path d="M12 2 2 7l10 5 10-5-10-5z" />
+      <path d="M2 12l10 5 10-5" />
+      <path d="M2 17l10 5 10-5" />
     </GlyphSvg>
   );
 }
@@ -440,12 +471,15 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
             {/* The action markers cluster at the row's right edge as one group
                 instead of scattering through the metadata: the approved check,
                 the review glyph (incoming or outgoing, never both on one row),
-                then the blocked pills. Never shown on a draft (the backend
-                suppresses all four), so this and the draft pill are
-                exclusive. */}
+                the merge queue mark, then the blocked pills. Never shown on a
+                draft, so this and the draft pill are exclusive: the backend
+                suppresses the check, the review glyphs and the blocked pills,
+                and a draft cannot be merged, so GitHub should never report
+                one as queued. */}
             {(pr.approved ||
               pr.review_requested ||
               pr.awaiting_review ||
+              pr.merge_queue_position !== null ||
               pr.blocked_reasons.length > 0) && (
               <span className="pr-marks">
                 {/* The green check: the required approvals are in. Leads the
@@ -475,6 +509,16 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                   <RowMark tip="Awaiting review" wide>
                     <Glasses />
                     <DirectionArrow dir="out" />
+                  </RowMark>
+                )}
+                {/* The stack with the PR's place in the merge queue. Position
+                    only: the entry's state and the queue's size are
+                    deliberately not shown. A grey mark like the glasses,
+                    since being queued is neither stuck nor a call to act. */}
+                {pr.merge_queue_position !== null && (
+                  <RowMark tip={mergeQueueTitle(pr.merge_queue_position)} count>
+                    <Stack />
+                    {pr.merge_queue_position}
                   </RowMark>
                 )}
                 {/* The blocked reason, spelled out in a pill (the Draft

@@ -407,11 +407,12 @@ body {
   white-space: nowrap;
 }
 
-/* The action-marker cluster (approved check, review glasses, blocked pills),
-   pinned as one group at the row's right edge, out of the metadata's way, so
-   the marks sit side by side rather than scattering across the row. The draft
-   pill is not here: the backend suppresses these markers on drafts, so it
-   never coexists with them. */
+/* The action-marker cluster (approved check, review glasses, merge queue
+   mark, blocked pills), pinned as one group at the row's right edge, out of
+   the metadata's way, so the marks sit side by side rather than scattering
+   across the row. The draft pill is not here: the backend suppresses the
+   check, glasses and blocked pills on drafts, and a draft cannot be queued to
+   merge, so it never coexists with them. */
 .pr-marks {
   display: inline-flex;
   align-items: center;
@@ -538,6 +539,16 @@ body {
    spacing. */
 .pr-glyph-wide {
   gap: 1px;
+}
+
+/* The merge queue mark: the stack glyph with the position number beside it,
+   in the glyph's own grey because being queued is not a signal. */
+.pr-glyph-count {
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 /* The approved check, the marker cluster's one green glyph: the system green

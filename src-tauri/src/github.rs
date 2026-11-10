@@ -134,6 +134,13 @@ pub struct PullRequest {
     /// does not unmeet the requirement. Suppressed on drafts like the other
     /// markers. Same property-not-event rule as `blocked_reasons`.
     pub approved: bool,
+    /// The PR's 1-based position in its repo's merge queue, as GitHub reports
+    /// it; `None` when it is not queued. Renders as the stack mark with the
+    /// number beside it. Not gated on anything else on the row: blocked
+    /// reasons are computed as usual and may sit beside it. Same
+    /// property-not-event rule as `blocked_reasons`, so a position change
+    /// never counts as unread.
+    pub merge_queue_position: Option<u64>,
     /// Activity newer than the PR's last-read watermark; filled in by the
     /// unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -597,6 +604,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
                isDraft mergeable mergeStateStatus reviewDecision \
+               mergeQueueEntry {{ position }} \
                author {{ login avatarUrl }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
@@ -689,6 +697,9 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             // the required approvals are in even while more reviewers are
             // listed, and the met requirement is worth showing regardless.
             approved: !is_draft && is_approved(node),
+            merge_queue_position: node
+                .pointer("/mergeQueueEntry/position")
+                .and_then(Value::as_u64),
             unread_count: 0,
             activity: collect_activity(node, viewer),
         });
@@ -1500,6 +1511,30 @@ mod tests {
         assert!(out[0].approved);
         assert!(out[1].review_requested);
         assert!(out[1].approved);
+    }
+
+    #[test]
+    fn a_queued_pr_carries_its_merge_queue_position() {
+        // GitHub reports a 1-based position and a null entry for a PR that
+        // is not queued; an absent field reads the same as null.
+        let repo = repo_with(vec![
+            pr_node(json!({ "mergeQueueEntry": { "position": 3 } })),
+            pr_node(json!({ "mergeQueueEntry": null })),
+            pr_node(json!({})),
+        ]);
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", &mut out);
+        assert_eq!(out[0].merge_queue_position, Some(3));
+        assert_eq!(out[1].merge_queue_position, None);
+        assert_eq!(out[2].merge_queue_position, None);
+    }
+
+    /// The position rides the PR node the sync already fetches: a nested
+    /// object, not a connection, so it adds no request and no pagination.
+    #[test]
+    fn repo_field_asks_for_the_merge_queue_position() {
+        let field = repo_field("r0", "acme", "widgets", None);
+        assert!(field.contains("mergeQueueEntry { position }"));
     }
 
     #[test]
