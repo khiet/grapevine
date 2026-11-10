@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/khiet/grapevine/compare/grapevine-v0.9.2...grapevine-v0.10.0) (2026-11-10)
+
+
+### Features
+
+* show merge queue position on queued PR rows ([#50](https://github.com/khiet/grapevine/issues/50)) ([7b2a830](https://github.com/khiet/grapevine/commit/7b2a83025d8ef6b2cd7f9e1d645851144324db05)), closes [#49](https://github.com/khiet/grapevine/issues/49)
+
 ## [0.9.2](https://github.com/khiet/grapevine/compare/grapevine-v0.9.1...grapevine-v0.9.2) (2026-11-10)
 
 
