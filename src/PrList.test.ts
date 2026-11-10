@@ -8,6 +8,8 @@ import {
   groupByRepo,
   hasQuery,
   matchesFilter,
+  mergeQueueTitle,
+  ordinal,
   parseCollapsed,
   totalUnread,
   PullRequest,
@@ -71,6 +73,7 @@ const prWithUnread = (unread_count: number): PullRequest => ({
   review_requested: false,
   awaiting_review: false,
   approved: false,
+  merge_queue_position: null,
   unread_count,
 });
 
@@ -244,4 +247,29 @@ test("parseCollapsed never returns the shared defaults object", () => {
   const state = parseCollapsed(null);
   state.mine = false;
   expect(DEFAULT_COLLAPSED.mine).toBe(true);
+});
+
+// The teens are the trap: 11, 12 and 13 take "th" although they end in 1, 2
+// and 3, and the rule repeats every hundred (111th, not 111st).
+test("ordinals take the English suffix for their last two digits", () => {
+  expect(ordinal(1)).toBe("1st");
+  expect(ordinal(2)).toBe("2nd");
+  expect(ordinal(3)).toBe("3rd");
+  expect(ordinal(4)).toBe("4th");
+  expect(ordinal(10)).toBe("10th");
+  expect(ordinal(11)).toBe("11th");
+  expect(ordinal(12)).toBe("12th");
+  expect(ordinal(13)).toBe("13th");
+  expect(ordinal(21)).toBe("21st");
+  expect(ordinal(22)).toBe("22nd");
+  expect(ordinal(23)).toBe("23rd");
+  expect(ordinal(101)).toBe("101st");
+  expect(ordinal(111)).toBe("111th");
+  expect(ordinal(112)).toBe("112th");
+});
+
+test("the merge queue mark's tooltip states the position as an ordinal", () => {
+  expect(mergeQueueTitle(3)).toBe("3rd in merge queue");
+  expect(mergeQueueTitle(1)).toBe("1st in merge queue");
+  expect(mergeQueueTitle(12)).toBe("12th in merge queue");
 });
