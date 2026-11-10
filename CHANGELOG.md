@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/khiet/grapevine/compare/grapevine-v0.9.1...grapevine-v0.9.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* open the popover on tray left click on macOS 27 ([#47](https://github.com/khiet/grapevine/issues/47)) ([ef79a5f](https://github.com/khiet/grapevine/commit/ef79a5f9b9d50375fa993f5ee92676779cbc535a)), closes [#46](https://github.com/khiet/grapevine/issues/46)
+
 ## [0.9.1](https://github.com/khiet/grapevine/compare/grapevine-v0.9.0...grapevine-v0.9.1) (2026-08-05)
 
 
