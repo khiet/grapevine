@@ -395,7 +395,7 @@ function Check() {
   );
 }
 
-// The merge queue stack: three layers, read as "queued behind others".
+// The stack glyph of the merge queue mark.
 function Stack() {
   return (
     <GlyphSvg strokeWidth={2}>
@@ -472,9 +472,10 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                 instead of scattering through the metadata: the approved check,
                 the review glyph (incoming or outgoing, never both on one row),
                 the merge queue mark, then the blocked pills. Never shown on a
-                draft (the backend suppresses the check, the review glyphs and
-                the blocked pills, and GitHub does not queue drafts), so this
-                and the draft pill are exclusive. */}
+                draft, so this and the draft pill are exclusive: the backend
+                suppresses the check, the review glyphs and the blocked pills,
+                and a draft cannot be merged, so GitHub should never report
+                one as queued. */}
             {(pr.approved ||
               pr.review_requested ||
               pr.awaiting_review ||
