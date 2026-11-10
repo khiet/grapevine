@@ -472,9 +472,9 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                 instead of scattering through the metadata: the approved check,
                 the review glyph (incoming or outgoing, never both on one row),
                 the merge queue mark, then the blocked pills. Never shown on a
-                draft (the backend suppresses the review and blocked markers,
-                and GitHub does not queue drafts), so this and the draft pill
-                are exclusive. */}
+                draft (the backend suppresses the check, the review glyphs and
+                the blocked pills, and GitHub does not queue drafts), so this
+                and the draft pill are exclusive. */}
             {(pr.approved ||
               pr.review_requested ||
               pr.awaiting_review ||
