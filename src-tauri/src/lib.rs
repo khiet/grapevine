@@ -72,14 +72,15 @@ const POPOVER_GAP: f64 = 8.0;
 /// is, so there is nothing to anchor under.
 #[cfg(target_os = "linux")]
 fn place_popover(window: &tauri::WebviewWindow) {
-    let (Ok(Some(monitor)), Ok(size)) = (window.primary_monitor(), window.outer_size()) else {
+    // The inner size, which for this undecorated window is the whole window:
+    // the outer size is not known until the window has been shown once, and
+    // would put the first open in the wrong place.
+    let (Ok(Some(monitor)), Ok(size)) = (window.primary_monitor(), window.inner_size()) else {
         return;
     };
-    let work_area = monitor.work_area();
     let gap = (POPOVER_GAP * monitor.scale_factor()).round() as i32;
     let _ = window.set_position(linux_popover::top_right(
-        work_area.position,
-        work_area.size,
+        monitor.work_area(),
         size.width,
         gap,
     ));
@@ -166,7 +167,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let tray = tray.icon_as_template(true);
             tray.menu(&menu)
-                // Left click toggles the popover; the menu stays on right click.
+                // Left click toggles the popover; the menu stays on right
+                // click. Linux ignores this and opens the menu on every click.
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => toggle_popover(app),

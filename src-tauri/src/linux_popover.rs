@@ -4,7 +4,7 @@
 
 use std::ffi::OsStr;
 
-use tauri::{PhysicalPosition, PhysicalSize};
+use tauri::{PhysicalPosition, PhysicalRect};
 
 /// The environment variable GTK reads its display backend from.
 #[cfg(target_os = "linux")]
@@ -27,21 +27,28 @@ pub fn backend_to_force(chosen: Option<&OsStr>) -> Option<&'static str> {
 /// edges. The work area already excludes the panel, so "below the panel"
 /// falls out of using it. All values are physical pixels.
 pub fn top_right(
-    work_area_position: PhysicalPosition<i32>,
-    work_area_size: PhysicalSize<u32>,
+    work_area: &PhysicalRect<i32, u32>,
     popover_width: u32,
     gap: i32,
 ) -> PhysicalPosition<i32> {
-    let right_edge = work_area_position.x + work_area_size.width as i32;
+    let right_edge = work_area.position.x + work_area.size.width as i32;
     PhysicalPosition::new(
         right_edge - popover_width as i32 - gap,
-        work_area_position.y + gap,
+        work_area.position.y + gap,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::PhysicalSize;
+
+    fn work_area(x: i32, y: i32, width: u32, height: u32) -> PhysicalRect<i32, u32> {
+        PhysicalRect {
+            position: PhysicalPosition::new(x, y),
+            size: PhysicalSize::new(width, height),
+        }
+    }
 
     #[test]
     fn forces_x11_when_the_user_chose_no_backend() {
@@ -64,24 +71,14 @@ mod tests {
         // A 1920x1080 monitor with a 32px panel on top: the work area starts
         // at y=32. A 440px-wide popover with an 8px gap ends 8px short of the
         // right edge and starts 8px below the panel.
-        let position = top_right(
-            PhysicalPosition::new(0, 32),
-            PhysicalSize::new(1920, 1048),
-            440,
-            8,
-        );
+        let position = top_right(&work_area(0, 32, 1920, 1048), 440, 8);
         assert_eq!(position, PhysicalPosition::new(1472, 40));
     }
 
     #[test]
     fn places_the_popover_on_a_primary_monitor_that_is_not_at_the_origin() {
         // Primary monitor to the right of a 2560px-wide secondary one.
-        let position = top_right(
-            PhysicalPosition::new(2560, 32),
-            PhysicalSize::new(1920, 1048),
-            440,
-            8,
-        );
+        let position = top_right(&work_area(2560, 32, 1920, 1048), 440, 8);
         assert_eq!(position, PhysicalPosition::new(4032, 40));
     }
 }
