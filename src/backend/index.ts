@@ -15,6 +15,8 @@ export interface PullRequest {
   url: string;
   repo: string;
   author: string;
+  /** The author is a machine account; renders the "bot" tag on the avatar. */
+  author_is_bot: boolean;
   avatar_url: string;
   owner_avatar_url: string;
   created_at: string;
@@ -42,7 +44,13 @@ export interface PullRequest {
   /** 1-based position in the repo's merge queue as GitHub reports it; null
    * when the PR is not queued. Renders the stack mark with the number. */
   merge_queue_position: number | null;
+  /** New activity from people. The only count that badges a row, a collapsed
+   * section or the tray. */
   unread_count: number;
+  /** New activity from bots, past the same read point; renders the row's muted
+   * note and never a badge. Counts the recent activity the backend fetched,
+   * not a lifetime total. */
+  bot_unread_count: number;
 }
 
 /** Which popover section a PR belongs to, from the viewer's perspective. */

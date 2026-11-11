@@ -19,6 +19,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   url: "https://github.com/acme/widgets/pull/7",
   repo: "acme/widgets",
   author: "someone",
+  author_is_bot: false,
   avatar_url: "https://avatars.example/someone",
   owner_avatar_url: "https://avatars.example/acme",
   created_at: "2026-07-10T12:00:00Z",
@@ -31,6 +32,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   approved: false,
   merge_queue_position: null,
   unread_count: 0,
+  bot_unread_count: 0,
   ...overrides,
 });
 
@@ -430,4 +432,40 @@ test("rows in a repo group carry their marks like any other row", () => {
   expect(body.groups[0].rows[0].marks).toEqual([
     { kind: "approved", tip: "Approved" },
   ]);
+});
+
+test("a row with new bot activity carries a note counting it", () => {
+  expect(rowFor(pr({ bot_unread_count: 8 })).botNote).toBe("8 new from bots");
+  expect(rowFor(pr({ bot_unread_count: 1 })).botNote).toBe("1 new from bots");
+});
+
+test("a row with no new bot activity carries no note", () => {
+  expect(rowFor(pr({ unread_count: 3 })).botNote).toBeNull();
+});
+
+test("a bot-authored PR is tagged, whatever section it sits in", () => {
+  expect(rowFor(pr({ author_is_bot: true })).botAuthor).toBe(true);
+  expect(rowFor(pr()).botAuthor).toBe(false);
+  const { body } = section(
+    list(synced({ prs: [pr({ section: "all", author_is_bot: true })] })),
+    "all",
+  );
+  if (body.kind !== "groups") throw new Error(`All body is ${body.kind}`);
+  expect(body.groups[0].rows[0].botAuthor).toBe(true);
+});
+
+test("new bot activity never reaches a collapsed section's badge", () => {
+  const view = list(
+    synced({ prs: [pr({ unread_count: 3, bot_unread_count: 8 })] }),
+    "",
+    ALL_COLLAPSED,
+  );
+  expect(section(view, "mine").collapsedUnread).toBe(3);
+});
+
+// Mark all read is the one way to clear every note at once, so notes alone
+// are enough to offer it.
+test("Mark all read is offered when the only thing new is bot activity", () => {
+  const snapshot = synced({ prs: [pr({ bot_unread_count: 8 })] });
+  expect(derivePopover(snapshot, "", ALL_EXPANDED).offerMarkAllRead).toBe(true);
 });

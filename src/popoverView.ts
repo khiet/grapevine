@@ -37,6 +37,11 @@ export interface RowView {
   draft: boolean;
   /** In display order. Empty means the row has no marker cluster. */
   marks: Mark[];
+  /** The "bot" tag on the avatar: a machine account opened the PR. */
+  botAuthor: boolean;
+  /** The muted metadata note counting new bot activity; null when there is
+   * none. The quiet counterpart of the unread badge. */
+  botNote: string | null;
 }
 
 export interface RepoGroupView {
@@ -126,8 +131,9 @@ function ordinal(n: number): string {
 }
 
 // The marker cluster in display order: the approved check, the review glyph
-// (incoming or outgoing; the backend never sends both for one row), the merge
-// queue mark, then the blocked pills. Approval leads as the one positive
+// (incoming or outgoing; the backend never sends both for one row, and on an
+// agent's PR in Mine that asks for your review it sends the incoming one), the
+// merge queue mark, then the blocked pills. Approval leads as the one positive
 // mark, so it reads before whatever still stands in the way. A new signal
 // needs a Mark kind, a line here for when and where it shows, and its glyph
 // in MarkView; no condition elsewhere has to learn about it.
@@ -160,9 +166,13 @@ const rowView = (pr: PullRequest): RowView => ({
   pr,
   draft: pr.is_draft,
   marks: rowMarks(pr),
+  botAuthor: pr.author_is_bot,
+  botNote:
+    pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
 });
 
-/** The unread total across PRs; the tray badge shows the same number. */
+/** The unread total across PRs; the tray badge shows the same number. Bot
+ * activity is not in it. */
 export function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
 }
@@ -206,8 +216,12 @@ export function derivePopover(
   query: string,
   collapsed: Record<SectionKey, boolean>,
 ): PopoverView {
-  // Counts every PR, filtered out or not: the action clears them all.
-  const offerMarkAllRead = totalUnread(snapshot.prs) > 0;
+  // Counts every PR, filtered out or not: the action clears them all. A bot
+  // note counts too, since the action is the one way to clear every note at
+  // once.
+  const offerMarkAllRead = snapshot.prs.some(
+    (pr) => pr.unread_count > 0 || pr.bot_unread_count > 0,
+  );
 
   // Pre-setup only; once a sync has happened the section scaffold owns the
   // empty state.

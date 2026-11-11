@@ -21,6 +21,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     url: `https://github.com/${repo}/pull/${number}`,
     repo,
     author: "octocat",
+    author_is_bot: false,
     avatar_url: "",
     owner_avatar_url: "",
     created_at: "2026-09-20T09:00:00Z",
@@ -33,6 +34,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     approved: false,
     merge_queue_position: null,
     unread_count,
+    bot_unread_count: 4,
   };
 }
 
@@ -107,7 +109,7 @@ test("the PR key is owner/repo#number", () => {
   expect(prKey({ repo: "acme/api", number: 42 })).toBe("acme/api#42");
 });
 
-test("marking a PR read clears its badge and pushes a Snapshot", async () => {
+test("marking a PR read clears its badge and bot note and pushes a Snapshot", async () => {
   const fake = createFakeBackend(
     snapshot([pr("acme/api", 1, 2), pr("acme/web", 1, 3)]),
   );
@@ -118,7 +120,12 @@ test("marking a PR read clears its badge and pushes a Snapshot", async () => {
 
   await markRead("acme/web#1");
 
-  expect(seen[seen.length - 1].prs.map((p) => p.unread_count)).toEqual([2, 0]);
+  expect(
+    seen[seen.length - 1].prs.map((p) => [p.unread_count, p.bot_unread_count]),
+  ).toEqual([
+    [2, 4],
+    [0, 0],
+  ]);
 });
 
 test("dismissing a merged PR removes only the row with that key", async () => {

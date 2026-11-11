@@ -11,17 +11,21 @@ pub fn key(pr: &PullRequest) -> String {
     format!("{}#{}", pr.repo, pr.number)
 }
 
-/// The watermark that makes `pr` fully read: its newest known activity, or its
-/// creation time when there is no discussion yet. Anchoring to GitHub's own
-/// timestamps rather than the local clock keeps this immune to clock skew.
+/// The watermark that makes `pr` fully read: its newest known activity, human
+/// or bot, or its creation time when there is no discussion yet. Anchoring to
+/// GitHub's own timestamps rather than the local clock keeps this immune to
+/// clock skew.
 pub fn read_watermark(pr: &PullRequest) -> String {
     pr.activity
         .last()
+        .max(pr.bot_activity.last())
         .cloned()
         .unwrap_or_else(|| pr.created_at.clone())
 }
 
-/// Computes each PR's unread count from the watermarks, mutating both sides.
+/// Computes each PR's unread counts, human and bot, from the watermarks,
+/// mutating both sides. One watermark serves both counts, so reading a PR
+/// clears them together.
 /// PRs seen for the first time are baselined as read at their newest activity,
 /// so a fresh install (or a lost state file) never flags historical discussion;
 /// watermarks for PRs that left the list are dropped. Returns true when the
@@ -40,11 +44,14 @@ pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
         let key = key(pr);
         match state.get(&key) {
             Some(watermark) if pr.section != Section::All => {
-                pr.unread_count = pr
-                    .activity
-                    .iter()
-                    .filter(|t| t.as_str() > watermark.as_str())
-                    .count() as u64;
+                let newer = |times: &[String]| {
+                    times
+                        .iter()
+                        .filter(|t| t.as_str() > watermark.as_str())
+                        .count() as u64
+                };
+                pr.unread_count = newer(&pr.activity);
+                pr.bot_unread_count = newer(&pr.bot_activity);
             }
             // First sight of any PR, and every sync of a browse-only one.
             // Re-baselining browse-only PRs rather than freezing them means
@@ -55,6 +62,7 @@ pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
             current => {
                 let fresh = read_watermark(pr);
                 pr.unread_count = 0;
+                pr.bot_unread_count = 0;
                 if current.is_none_or(|w| w.as_str() < fresh.as_str()) {
                     state.insert(key, fresh);
                     changed = true;
@@ -78,6 +86,7 @@ mod tests {
             url: format!("https://github.com/{repo}/pull/{number}"),
             repo: repo.into(),
             author: "someone".into(),
+            author_is_bot: false,
             avatar_url: "https://avatars.example/someone".into(),
             owner_avatar_url: "https://avatars.example/acme".into(),
             created_at: "2026-07-01T00:00:00Z".into(),
@@ -90,7 +99,9 @@ mod tests {
             approved: false,
             merge_queue_position: None,
             unread_count: 0,
+            bot_unread_count: 0,
             activity: activity.iter().map(|s| s.to_string()).collect(),
+            bot_activity: vec![],
         }
     }
 

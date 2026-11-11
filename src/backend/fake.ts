@@ -29,13 +29,19 @@ export function createFakeBackend(
       publish({
         ...snapshot,
         prs: snapshot.prs.map((pr) =>
-          prKey(pr) === key ? { ...pr, unread_count: 0 } : pr,
+          prKey(pr) === key
+            ? { ...pr, unread_count: 0, bot_unread_count: 0 }
+            : pr,
         ),
       }),
     mark_all_read: () =>
       publish({
         ...snapshot,
-        prs: snapshot.prs.map((pr) => ({ ...pr, unread_count: 0 })),
+        prs: snapshot.prs.map((pr) => ({
+          ...pr,
+          unread_count: 0,
+          bot_unread_count: 0,
+        })),
       }),
     dismiss_merged: ({ key }) =>
       publish({

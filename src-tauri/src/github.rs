@@ -52,6 +52,8 @@ const PAGE_SIZE: usize = 50;
 const COMMENT_PAGE: usize = 20;
 const REVIEW_PAGE: usize = 20;
 const REVIEW_COMMENT_PAGE: usize = 10;
+/// GitHub caps a PR at ten assignees, so one page always holds them all.
+const ASSIGNEE_PAGE: usize = 10;
 
 /// Which popover section a PR belongs to, from the viewer's perspective.
 ///
@@ -94,6 +96,9 @@ pub struct PullRequest {
     pub url: String,
     pub repo: String,
     pub author: String,
+    /// Whether the author is a machine account (see [`is_bot`]). Renders as
+    /// the "bot" tag on the avatar.
+    pub author_is_bot: bool,
     /// Author's GitHub avatar URL; empty when the account was deleted.
     pub avatar_url: String,
     /// Repo owner's (organization or user) avatar URL, used as the org badge
@@ -125,7 +130,9 @@ pub struct PullRequest {
     /// Whether one of the viewer's own PRs is waiting on a reviewer: it has at
     /// least one outstanding requested reviewer. The outgoing mirror of
     /// `review_requested` (see [`has_pending_review_request`]), set only on
-    /// `Mine` PRs, so the two never coexist on a row. Renders as the glasses
+    /// `Mine` PRs and never beside `review_requested`: an agent's PR in Mine
+    /// can ask the viewer for review, and then the incoming mark wins, so the
+    /// two never coexist on a row. Renders as the glasses
     /// glyph with an outgoing arrow, a neutral property ("the ball is in a
     /// reviewer's court"), not a "stuck" state. GitHub drops a reviewer from
     /// `reviewRequests` once they submit, so this clears itself as reviews
@@ -149,13 +156,21 @@ pub struct PullRequest {
     /// property-not-event rule as `blocked_reasons`, so a position change
     /// never counts as unread.
     pub merge_queue_position: Option<u64>,
-    /// Activity newer than the PR's last-read watermark; filled in by the
-    /// unread engine after fetch, always 0 out of this module.
+    /// Human activity newer than the PR's last-read watermark; filled in by
+    /// the unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
+    /// Bot activity newer than the same watermark, filled in the same way.
+    /// Renders as the row's muted note and never reaches a badge or the tray
+    /// count. It covers the fetched window only, so it is not a lifetime
+    /// total.
+    pub bot_unread_count: u64,
     /// Recent comment/review timestamps (ISO-8601 UTC, ascending) by people
     /// other than the viewer. Input to the unread computation.
     #[serde(skip)]
     pub activity: Vec<String>,
+    /// The same, by bots. Kept apart so it can be counted without badging.
+    #[serde(skip)]
+    pub bot_activity: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -698,13 +713,14 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
                number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
                isDraft mergeable mergeStateStatus reviewDecision \
                mergeQueueEntry {{ position }} \
-               author {{ login avatarUrl }} \
+               author {{ __typename login avatarUrl }} \
+               assignees(first: {ASSIGNEE_PAGE}) {{ nodes {{ login }} }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
                reviewThreads(last: 10) {{ nodes {{ isResolved }} }} \
-               comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} \
-               reviews(last: {REVIEW_PAGE}) {{ nodes {{ state submittedAt author {{ login }} \
-                 comments(last: {REVIEW_COMMENT_PAGE}) {{ nodes {{ createdAt author {{ login }} }} }} }} }} \
+               comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ __typename login }} }} }} \
+               reviews(last: {REVIEW_PAGE}) {{ nodes {{ state submittedAt author {{ __typename login }} \
+                 comments(last: {REVIEW_COMMENT_PAGE}) {{ nodes {{ createdAt author {{ __typename login }} }} }} }} }} \
              }} \
            }} \
          }} ",
@@ -734,6 +750,8 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         // Computed once and reused: `awaiting_review` is gated to Mine, so the
         // outgoing marker never lights up on a PR the viewer merely reviews.
         let section = section_for(node, viewer);
+        let review_requested = !is_draft && review_requested_for(node, viewer);
+        let activity = collect_activity(node, viewer);
         out.push(PullRequest {
             number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
             title: node
@@ -754,6 +772,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .and_then(Value::as_str)
                 .unwrap_or("ghost")
                 .to_string(),
+            author_is_bot: is_bot(node),
             avatar_url: node
                 .pointer("/author/avatarUrl")
                 .and_then(Value::as_str)
@@ -777,12 +796,15 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             // author's not-ready choice, so the row never nags you to act on
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
-            review_requested: !is_draft && review_requested_for(node, viewer),
+            review_requested,
             // The outgoing mirror: your own PR waiting on a reviewer. Gated to
             // Mine so it cannot fire on a PR you merely participate in, and
-            // suppressed on drafts like `review_requested`.
+            // suppressed on drafts like `review_requested`. It also yields to
+            // `review_requested`: only an agent's PR can be in Mine and ask
+            // for your review, and there the ball is in your court.
             awaiting_review: section == Section::Mine
                 && !is_draft
+                && !review_requested
                 && has_pending_review_request(node),
             // Suppressed on drafts like the markers above; an early approval
             // on a not-ready PR would misread as "ship it". Deliberately not
@@ -794,7 +816,9 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .pointer("/mergeQueueEntry/position")
                 .and_then(Value::as_u64),
             unread_count: 0,
-            activity: collect_activity(node, viewer),
+            bot_unread_count: 0,
+            activity: activity.human,
+            bot_activity: activity.bot,
         });
     }
     let page = repo.pointer("/pullRequests/pageInfo")?;
@@ -806,20 +830,41 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         .map(String::from)
 }
 
+/// A PR's unread-eligible activity as ascending timestamps, split by who
+/// wrote it: only the human list may badge.
+#[derive(Debug, Default, PartialEq)]
+struct Activity {
+    human: Vec<String>,
+    bot: Vec<String>,
+}
+
+/// Whether `item`'s author is a machine account: a GitHub App acting as
+/// itself, which GraphQL types as `Bot`. A person's account driven by
+/// automation is a `User` and is not caught. `item` is anything carrying an
+/// `author`: a PR, a comment or a review.
+fn is_bot(item: &Value) -> bool {
+    item.pointer("/author/__typename").and_then(Value::as_str) == Some("Bot")
+}
+
 /// Gathers the timestamps of what counts as an "update" for unread purposes:
 /// issue comments, submitted reviews, and review comments — never commits or
 /// CI. The query does fetch the head commit's CI rollup for the row indicator,
 /// but that is a property of the PR, not an unread event, so it is read
-/// elsewhere and never enters this list. The viewer's own activity is excluded
-/// (you have read what you wrote), as are PENDING reviews (invisible to
-/// everyone but their author until submitted).
-fn collect_activity(node: &Value, viewer: &str) -> Vec<String> {
-    let mut times = Vec::new();
+/// elsewhere and never enters these lists. The viewer's own activity is
+/// excluded from both (you have read what you wrote), as are PENDING reviews
+/// (invisible to everyone but their author until submitted).
+fn collect_activity(node: &Value, viewer: &str) -> Activity {
+    let mut activity = Activity::default();
     let by_other =
         |item: &Value| item.pointer("/author/login").and_then(Value::as_str) != Some(viewer);
     let mut push = |item: &Value, time_field: &str| {
         if by_other(item) {
             if let Some(t) = item.get(time_field).and_then(Value::as_str) {
+                let times = if is_bot(item) {
+                    &mut activity.bot
+                } else {
+                    &mut activity.human
+                };
                 times.push(t.to_string());
             }
         }
@@ -845,8 +890,9 @@ fn collect_activity(node: &Value, viewer: &str) -> Vec<String> {
             push(comment, "createdAt");
         }
     }
-    times.sort();
-    times
+    activity.human.sort();
+    activity.bot.sort();
+    activity
 }
 
 fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
@@ -964,14 +1010,28 @@ fn viewer_subscribed(node: &Value) -> bool {
     node.get("viewerSubscription").and_then(Value::as_str) == Some("SUBSCRIBED")
 }
 
+/// Whether the viewer is among the PR's assignees.
+fn assigned_to(node: &Value, viewer: &str) -> bool {
+    list(node, "/assignees/nodes")
+        .iter()
+        .any(|n| n.get("login").and_then(Value::as_str) == Some(viewer))
+}
+
 /// Mine beats Participated: authors are subscribed to their own PRs, so order
-/// matters. A pending review request is checked alongside the subscription
+/// matters. A bot-authored PR assigned to the viewer is Mine too: a coding
+/// agent opens the PR under its own account and assigns whoever directed it,
+/// so the assignment is what marks the work as theirs. Assignment to a
+/// person's PR stays ordinary involvement.
+///
+/// A pending review request is checked alongside the subscription
 /// rather than trusted to it, so muting a thread cannot hide a review the
 /// viewer was named for. That cover stops at named requests: a team request
 /// carries no `login` for [`review_requested_for`] to match, so a muted
 /// CODEOWNERS thread falls to All until the viewer re-subscribes.
 fn section_for(node: &Value, viewer: &str) -> Section {
-    if node.get("viewerDidAuthor").and_then(Value::as_bool) == Some(true) {
+    if node.get("viewerDidAuthor").and_then(Value::as_bool) == Some(true)
+        || (is_bot(node) && assigned_to(node, viewer))
+    {
         return Section::Mine;
     }
     if viewer_subscribed(node) || review_requested_for(node, viewer) {
@@ -983,6 +1043,7 @@ fn section_for(node: &Value, viewer: &str) -> Section {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pr_state::{Effects, PrState};
 
     fn pr_node(overrides: Value) -> Value {
         let mut node = json!({
@@ -1646,7 +1707,7 @@ mod tests {
             ] }
         }));
         assert_eq!(
-            collect_activity(&node, "khiet"),
+            collect_activity(&node, "khiet").human,
             vec!["2026-07-11T08:00:00Z"]
         );
     }
@@ -1662,7 +1723,7 @@ mod tests {
             ] }
         }));
         assert_eq!(
-            collect_activity(&node, "khiet"),
+            collect_activity(&node, "khiet").human,
             vec!["2026-07-11T08:00:00Z"]
         );
     }
@@ -1680,7 +1741,7 @@ mod tests {
             }] }
         }));
         assert_eq!(
-            collect_activity(&node, "khiet"),
+            collect_activity(&node, "khiet").human,
             vec!["2026-07-11T08:00:00Z", "2026-07-11T08:00:05Z"]
         );
     }
@@ -1697,7 +1758,7 @@ mod tests {
             }] }
         }));
         assert_eq!(
-            collect_activity(&node, "khiet"),
+            collect_activity(&node, "khiet").human,
             vec!["2026-07-11T07:59:00Z", "2026-07-11T08:00:00Z"]
         );
     }
@@ -1714,7 +1775,7 @@ mod tests {
             }] }
         }));
         assert_eq!(
-            collect_activity(&node, "khiet"),
+            collect_activity(&node, "khiet").human,
             vec!["2026-07-11T08:00:00Z", "2026-07-12T09:00:00Z"]
         );
     }
@@ -1732,7 +1793,7 @@ mod tests {
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED"
         }));
-        assert!(collect_activity(&node, "khiet").is_empty());
+        assert_eq!(collect_activity(&node, "khiet"), Activity::default());
     }
 
     #[test]
@@ -2651,6 +2712,248 @@ mod tests {
             ]
         );
         assert!(prs[2].review_requested);
+    }
+
+    // Sync-level tests: a fetch over canned responses feeds the transition
+    // that counts unread, so the query, the human/bot split and the
+    // watermarks are under test together.
+
+    /// A comment node as the PR query returns it. `kind` is the author's
+    /// `__typename`: "User" for a person, "Bot" for a machine.
+    fn comment(at: &str, login: &str, kind: &str) -> Value {
+        json!({ "createdAt": at, "author": { "__typename": kind, "login": login } })
+    }
+
+    /// One sync of a single watched repo whose open PRs are `nodes`.
+    fn sync(state: &PrState, nodes: Vec<Value>) -> Effects {
+        let github = Canned::new(vec![ok(prs_round(
+            5000,
+            vec![repo_named("acme/widgets", nodes, None)],
+        ))]);
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+        state.sync_succeeded(prs, vec![], 0)
+    }
+
+    /// A PR the viewer takes part in, so one that can carry unread activity.
+    fn joined(overrides: Value) -> Value {
+        let mut node = pr_node(json!({ "viewerSubscription": "SUBSCRIBED" }));
+        node.as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        node
+    }
+
+    /// Eight inline comments from a review bot, wrapped in the one COMMENTED
+    /// review GitHub files them under.
+    fn bot_review() -> Value {
+        let inline: Vec<Value> = (0..8)
+            .map(|i| comment(&format!("2026-07-12T10:00:0{i}Z"), "review-bot", "Bot"))
+            .collect();
+        json!({
+            "state": "COMMENTED",
+            "submittedAt": "2026-07-12T10:00:00Z",
+            "author": { "__typename": "Bot", "login": "review-bot" },
+            "comments": { "nodes": inline }
+        })
+    }
+
+    #[test]
+    fn bot_activity_is_counted_apart_from_unread_and_the_viewers_own_in_neither() {
+        let state = PrState::default();
+        sync(&state, vec![joined(json!({}))]);
+
+        let effects = sync(
+            &state,
+            vec![joined(json!({
+                "comments": { "nodes": [
+                    comment("2026-07-12T09:00:00Z", "alice", "User"),
+                    comment("2026-07-12T09:01:00Z", "bob", "User"),
+                    comment("2026-07-12T09:02:00Z", "khiet", "User"),
+                ] },
+                "reviews": { "nodes": [
+                    bot_review(),
+                    {
+                        "state": "APPROVED",
+                        "submittedAt": "2026-07-12T11:00:00Z",
+                        "author": { "__typename": "User", "login": "carol" },
+                        "comments": { "nodes": [] }
+                    },
+                ] },
+            }))],
+        );
+
+        let pr = &effects.snapshot.prs[0];
+        assert_eq!(pr.unread_count, 3);
+        assert_eq!(pr.bot_unread_count, 8);
+        assert_eq!(effects.tray_count, Some(3));
+    }
+
+    #[test]
+    fn a_pr_with_only_new_bot_activity_adds_nothing_to_the_tray() {
+        let state = PrState::default();
+        sync(&state, vec![joined(json!({}))]);
+
+        let effects = sync(
+            &state,
+            vec![joined(json!({ "reviews": { "nodes": [bot_review()] } }))],
+        );
+
+        let pr = &effects.snapshot.prs[0];
+        assert_eq!(pr.unread_count, 0);
+        assert_eq!(pr.bot_unread_count, 8);
+        assert_eq!(effects.tray_count, Some(0));
+    }
+
+    #[test]
+    fn a_pr_first_seen_with_only_bot_activity_is_baselined_as_read() {
+        let state = PrState::default();
+        let with_bots = || vec![joined(json!({ "reviews": { "nodes": [bot_review()] } }))];
+
+        let first = sync(&state, with_bots());
+        assert_eq!(first.snapshot.prs[0].bot_unread_count, 0);
+
+        // The baseline sits at the newest bot comment, so the same activity
+        // stays read on the next sync.
+        let second = sync(&state, with_bots());
+        assert_eq!(second.snapshot.prs[0].bot_unread_count, 0);
+    }
+
+    #[test]
+    fn marking_a_pr_read_clears_both_counts() {
+        let state = PrState::default();
+        sync(&state, vec![joined(json!({}))]);
+        let busy = || {
+            vec![joined(json!({
+                "comments": { "nodes": [comment("2026-07-12T09:00:00Z", "alice", "User")] },
+                "reviews": { "nodes": [bot_review()] },
+            }))]
+        };
+        sync(&state, busy());
+
+        let marked = state.mark_read("acme/widgets#7");
+
+        let pr = &marked.snapshot.prs[0];
+        assert_eq!((pr.unread_count, pr.bot_unread_count), (0, 0));
+        // The watermark moved past the bot comments too, so they stay read.
+        let next = sync(&state, busy());
+        let pr = &next.snapshot.prs[0];
+        assert_eq!((pr.unread_count, pr.bot_unread_count), (0, 0));
+    }
+
+    /// A PR opened by a coding agent: the author is a `Bot` account.
+    fn agent_pr(overrides: Value) -> Value {
+        let mut node = pr_node(json!({
+            "author": {
+                "__typename": "Bot",
+                "login": "copilot",
+                "avatarUrl": "https://avatars.example/copilot"
+            },
+        }));
+        node.as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        node
+    }
+
+    fn assignees(login: &str) -> Value {
+        json!({ "nodes": [{ "login": login }] })
+    }
+
+    fn review_requests(logins: &[&str]) -> Value {
+        let nodes: Vec<Value> = logins
+            .iter()
+            .map(|login| json!({ "requestedReviewer": { "login": login } }))
+            .collect();
+        json!({ "nodes": nodes })
+    }
+
+    fn fetch_nodes(nodes: Vec<Value>) -> Vec<PullRequest> {
+        let github = Canned::new(vec![ok(prs_round(
+            5000,
+            vec![repo_named("acme/widgets", nodes, None)],
+        ))]);
+        fetch_open(&github, &["acme/widgets"]).unwrap().prs
+    }
+
+    #[test]
+    fn a_bot_authored_pr_assigned_to_the_viewer_is_mine() {
+        let prs = fetch_nodes(vec![
+            agent_pr(json!({
+                "number": 1,
+                "updatedAt": "2026-07-11T05:00:00Z",
+                "viewerSubscription": "SUBSCRIBED",
+                "assignees": assignees("khiet"),
+            })),
+            // Unassigned, or assigned to someone else: sectioned as before.
+            agent_pr(json!({
+                "number": 2,
+                "updatedAt": "2026-07-11T04:00:00Z",
+                "viewerSubscription": "SUBSCRIBED",
+            })),
+            agent_pr(json!({
+                "number": 3,
+                "updatedAt": "2026-07-11T03:00:00Z",
+                "assignees": assignees("someone"),
+            })),
+            // Being assigned a person's PR does not make it yours.
+            pr_node(json!({
+                "number": 4,
+                "updatedAt": "2026-07-11T02:00:00Z",
+                "viewerSubscription": "SUBSCRIBED",
+                "assignees": assignees("khiet"),
+            })),
+        ]);
+
+        assert_eq!(
+            prs.iter().map(|pr| pr.section).collect::<Vec<_>>(),
+            vec![
+                Section::Mine,
+                Section::Participated,
+                Section::All,
+                Section::Participated,
+            ]
+        );
+        assert_eq!(
+            prs.iter().map(|pr| pr.author_is_bot).collect::<Vec<_>>(),
+            vec![true, true, true, false]
+        );
+    }
+
+    /// An agent's PR is the one kind in Mine that can ask the viewer for a
+    /// review; the row shows the incoming mark alone.
+    #[test]
+    fn an_agent_pr_in_mine_that_requests_the_viewers_review_shows_only_the_incoming_mark() {
+        let prs = fetch_nodes(vec![
+            agent_pr(json!({
+                "number": 1,
+                "updatedAt": "2026-07-11T03:00:00Z",
+                "assignees": assignees("khiet"),
+                "reviewRequests": review_requests(&["khiet"]),
+            })),
+            agent_pr(json!({
+                "number": 2,
+                "updatedAt": "2026-07-11T02:00:00Z",
+                "assignees": assignees("khiet"),
+                "reviewRequests": review_requests(&["khiet", "someone"]),
+            })),
+        ]);
+
+        for pr in &prs {
+            assert_eq!(pr.section, Section::Mine, "#{}", pr.number);
+            assert!(pr.review_requested, "#{}", pr.number);
+            assert!(!pr.awaiting_review, "#{}", pr.number);
+        }
+    }
+
+    #[test]
+    fn a_human_authored_pr_in_mine_with_another_reviewer_pending_is_awaiting_review() {
+        let prs = fetch_nodes(vec![pr_node(json!({
+            "viewerDidAuthor": true,
+            "reviewRequests": review_requests(&["someone"]),
+        }))]);
+
+        assert!(prs[0].awaiting_review);
+        assert!(!prs[0].review_requested);
     }
 
     #[test]

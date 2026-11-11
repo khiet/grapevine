@@ -5,7 +5,8 @@
 //! - `snapshot.merged` mirrors the merged list. The one exception is the
 //!   unconfigured Snapshot, which is empty so the popover shows setup rather
 //!   than a Merged section, while the list itself is kept.
-//! - Each `unread_count` agrees with the read watermarks.
+//! - Each `unread_count` and `bot_unread_count` agrees with the read
+//!   watermarks.
 //! - The tray count is the Snapshot's total unread.
 //! - Merge detection compares a fetch against the previous Snapshot's open
 //!   PRs.
@@ -170,6 +171,7 @@ impl PrState {
             let key = unread::key(pr);
             if only.is_none_or(|k| k == key) {
                 pr.unread_count = 0;
+                pr.bot_unread_count = 0;
                 inner.read_state.insert(key, unread::read_watermark(pr));
             }
         }
@@ -287,6 +289,7 @@ mod tests {
             url: format!("https://github.com/{repo}/pull/{number}"),
             repo: repo.into(),
             author: "someone".into(),
+            author_is_bot: false,
             avatar_url: "https://avatars.example/someone".into(),
             owner_avatar_url: "https://avatars.example/acme".into(),
             created_at: "2026-07-01T00:00:00Z".into(),
@@ -299,7 +302,9 @@ mod tests {
             approved: false,
             merge_queue_position: None,
             unread_count: 0,
+            bot_unread_count: 0,
             activity: activity.iter().map(|t| t.to_string()).collect(),
+            bot_activity: vec![],
         }
     }
 
@@ -654,7 +659,8 @@ mod tests {
                 title: "Fix the thing".into(),
                 url: "https://github.com/acme/widgets/pull/7".into(),
                 repo: "acme/widgets".into(),
-                author: "someone".into(),
+                author: "copilot".into(),
+                author_is_bot: true,
                 avatar_url: "https://avatars.example/someone".into(),
                 owner_avatar_url: "https://avatars.example/acme".into(),
                 created_at: "2026-07-10T12:00:00Z".into(),
@@ -667,8 +673,10 @@ mod tests {
                 approved: true,
                 merge_queue_position: Some(2),
                 unread_count: 3,
+                bot_unread_count: 8,
                 // Internal working data; must not leak into the payload.
                 activity: vec!["2026-07-10T12:00:00Z".into()],
+                bot_activity: vec!["2026-07-10T12:00:00Z".into()],
             }],
             merged: vec![merged::MergedPr {
                 number: 3,
@@ -692,7 +700,8 @@ mod tests {
                     "title": "Fix the thing",
                     "url": "https://github.com/acme/widgets/pull/7",
                     "repo": "acme/widgets",
-                    "author": "someone",
+                    "author": "copilot",
+                    "author_is_bot": true,
                     "avatar_url": "https://avatars.example/someone",
                     "owner_avatar_url": "https://avatars.example/acme",
                     "created_at": "2026-07-10T12:00:00Z",
@@ -704,7 +713,8 @@ mod tests {
                     "awaiting_review": false,
                     "approved": true,
                     "merge_queue_position": 2,
-                    "unread_count": 3
+                    "unread_count": 3,
+                    "bot_unread_count": 8
                 }],
                 "merged": [{
                     "number": 3,

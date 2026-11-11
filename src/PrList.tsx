@@ -123,7 +123,8 @@ export function formatLastSync(
 // The round author avatar with badged corners, app-icon style: the face says
 // who, the bottom-right square (the repo owner's avatar) says which org, and
 // the top-right red counter says how much is new. Opposite corners keep the
-// two badges from ever colliding. The org badge has no placeholder by design —
+// two badges from ever colliding. The bottom-left "bot" tag marks a machine
+// author. The org badge has no placeholder by design —
 // a missing or broken owner avatar simply shows no badge, keeping the corner
 // clean rather than grey.
 function PrAvatar({
@@ -131,11 +132,13 @@ function PrAvatar({
   ownerAvatarUrl,
   author,
   unreadCount = 0,
+  bot = false,
 }: {
   avatarUrl: string;
   ownerAvatarUrl: string;
   author: string;
   unreadCount?: number;
+  bot?: boolean;
 }) {
   return (
     <span
@@ -146,7 +149,7 @@ function PrAvatar({
       className="pr-avatar-wrap pr-tip pr-tip-right"
       role="img"
       data-tip={`@${author}`}
-      aria-label={`@${author}`}
+      aria-label={bot ? `@${author}, bot` : `@${author}`}
     >
       <img
         className="pr-avatar"
@@ -166,6 +169,7 @@ function PrAvatar({
           }}
         />
       )}
+      {bot && <span className="pr-bot-tag">bot</span>}
       {unreadCount > 0 && <span className="pr-unread">{unreadCount}</span>}
     </span>
   );
@@ -358,7 +362,7 @@ function MarkView({ mark }: { mark: Mark }) {
 
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
-  const { pr, draft, marks } = row;
+  const { pr, draft, marks, botAuthor, botNote } = row;
   const unread = pr.unread_count > 0;
   const open = () => {
     openUrl(pr.url).catch(() => {});
@@ -377,6 +381,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           ownerAvatarUrl={pr.owner_avatar_url}
           author={pr.author}
           unreadCount={pr.unread_count}
+          bot={botAuthor}
         />
         <span className="pr-text">
           <span className="pr-title-row">
@@ -390,6 +395,8 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
             <span className="pr-number">#{pr.number}</span>
             {showRepo && <span className="pr-repo">{pr.repo}</span>}
             {/* A neutral state pill, never a signal. */}
+            {/* Plain metadata, not a badge: bots spoke, nobody is waiting. */}
+            {botNote && <span className="pr-bot-note">{botNote}</span>}
             {draft && <span className="pr-draft">Draft</span>}
             {/* The action markers cluster at the row's right edge as one group
                 instead of scattering through the metadata. A quiet row has no

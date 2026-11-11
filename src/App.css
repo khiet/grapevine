@@ -345,6 +345,24 @@ body {
   box-shadow: 0 0 0 2px #ffffff;
 }
 
+/* Marks a machine author, on the one avatar corner the two badges leave free
+   at the bottom. Grey like the Draft pill: a property of the PR, not a
+   signal. The card-colour ring is the org badge's notch trick. */
+.pr-bot-tag {
+  position: absolute;
+  left: -5px;
+  bottom: -3px;
+  padding: 0 3px;
+  border-radius: 4px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 11px;
+  text-transform: uppercase;
+  background-color: #e5e5ea;
+  color: #636366;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
 .pr-text {
   min-width: 0;
   display: flex;
@@ -402,6 +420,15 @@ body {
 }
 
 .pr-repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* New bot activity, in the metadata line's own grey: worth knowing, never a
+   call to act. Truncates alongside the repo, so a row crowded with pills
+   keeps some of each rather than losing the repo outright. */
+.pr-bot-note {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -940,6 +967,12 @@ body {
   /* Ring matches the dark card so the badge notch reads correctly. */
   .pr-org-badge {
     background-color: #2c2c2e;
+    box-shadow: 0 0 0 2px #2c2c2e;
+  }
+
+  .pr-bot-tag {
+    background-color: #48484a;
+    color: #c7c7cc;
     box-shadow: 0 0 0 2px #2c2c2e;
   }
 
