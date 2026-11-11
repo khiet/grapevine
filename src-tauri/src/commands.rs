@@ -34,6 +34,8 @@ pub fn clear_merged(app: AppHandle) -> Result<(), String> {
     sync::transition(&app, |prs| prs.clear_merged())
 }
 
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Serialize)]
 pub struct TokenStatus {
     pub has_token: bool,
@@ -51,6 +53,8 @@ pub async fn token_status(app: AppHandle) -> Result<TokenStatus, String> {
     Ok(TokenStatus { has_token, login })
 }
 
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Serialize)]
 pub struct SavedToken {
     pub login: String,

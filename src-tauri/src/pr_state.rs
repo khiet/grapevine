@@ -34,6 +34,9 @@ use crate::{
 /// Latest sync result. A failed sync leaves the previous snapshot's list in
 /// place so the popover keeps showing the last known PRs instead of
 /// blanking; only the error field changes.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct Snapshot {
     pub prs: Vec<PullRequest>,

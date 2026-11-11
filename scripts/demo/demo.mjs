@@ -1,15 +1,16 @@
-// Capture the real popover against a mocked backend and render the README GIF.
+// Capture the real popover on the fake backend and render the README GIF.
 //
 // Setup (Playwright is deliberately not a project dependency):
 //     npm ci && npm i --no-save playwright && npx playwright install chromium
 // Run from the repo (needs ffmpeg on PATH):
 //     node scripts/demo/demo.mjs [--output docs/assets/grapevine.gif]
 //
-// Every PR below is fictional; the people and repo owners are real GitHub
+// Every PR in fixture.ts is fictional; the people and repo owners are real GitHub
 // accounts whose avatars are fetched at capture time, so capturing needs
 // network. Nothing else touches GitHub, and nothing touches the Keychain or
-// the Rust backend: the Tauri IPC is replaced in the page, so the demo shows
-// exactly what the frontend renders for a given snapshot.
+// the Rust backend: popover.tsx runs the real App on the fake backend from
+// src/backend, so the demo shows exactly what the frontend renders for the
+// Snapshot in fixture.ts.
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -27,37 +28,12 @@ const OUTPUT = resolve(
 );
 const TZ = "Europe/London";
 const NOW = "2026-09-30T15:42:00+01:00";
-const at = (time) => `2026-09-${time}+01:00`;
 
-function pr(repo, number, title, author, updated, extra = {}) {
-  const org = repo.split("/")[0];
-  return {
-    number,
-    title,
-    url: `https://github.com/${repo}/pull/${number}`,
-    repo,
-    author,
-    avatar_url: AVATARS[author],
-    owner_avatar_url: AVATARS[org],
-    created_at: at("20T09:00:00"),
-    updated_at: at(updated),
-    section: "participated",
-    blocked_reasons: [],
-    is_draft: false,
-    review_requested: false,
-    awaiting_review: false,
-    approved: false,
-    unread_count: 0,
-    ...extra,
-  };
-}
-
-const ME = "khiet";
-// Avatars for every author and repo owner, keyed by login and inlined as data
-// URIs so every frame renders them without waiting on a load.
+// Avatars for every author and repo owner in fixture.ts, keyed by login and
+// inlined as data URIs so every frame renders them without waiting on a load.
 const AVATARS = {};
 const ACCOUNT_IDS = {
-  [ME]: 310614,
+  khiet: 310614,
   doutatsu: 4270980,
   MarcusAl: 71977744,
   teampave: 40337291,
@@ -68,95 +44,6 @@ for (const [login, id] of Object.entries(ACCOUNT_IDS)) {
   const avatar = await fetch(url);
   if (!avatar.ok) throw new Error(`fetching ${url}: ${avatar.status}`);
   AVATARS[login] = `data:${avatar.headers.get("content-type")};base64,${Buffer.from(await avatar.arrayBuffer()).toString("base64")}`;
-}
-const mine = { section: "mine" };
-const all = { section: "all" };
-const SNAPSHOT = {
-  has_synced: true,
-  last_sync_at: Date.parse(at("30T15:41:00")),
-  sync_error: null,
-  prs: [
-    pr("teampave/checkout-api", 1284, "Retry failed webhook deliveries with exponential backoff", "doutatsu", "30T15:31:00", { unread_count: 3, review_requested: true }),
-    pr("teampave/checkout-api", 1291, "Add idempotency keys to POST /payments", ME, "30T15:12:00", { ...mine, unread_count: 1, awaiting_review: true }),
-    pr("teampave/web-app", 2317, "Add saved payment methods to the checkout form", "MarcusAl", "30T14:58:00", { unread_count: 1, blocked_reasons: ["threads"] }),
-    pr("fuseinsight/ingest", 412, "Stream podcast RSS imports instead of buffering them", "doutatsu", "30T12:10:00", { approved: true }),
-    pr("teampave/web-app", 2320, "Upgrade to React 19 and drop legacy context", ME, "30T11:40:00", { ...mine, approved: true }),
-    pr("khiet/design-tokens", 88, "Rename the spacing scale to t-shirt sizes", "MarcusAl", "29T17:20:00", { review_requested: true }),
-    pr("fuseinsight/ingest", 415, "Parse chapter markers from ID3 tags", ME, "29T16:05:00", { ...mine, blocked_reasons: ["ci"] }),
-    pr("teampave/checkout-api", 1279, "Fix rounding in multi-currency refunds", "doutatsu", "28T10:45:00", { unread_count: 2, blocked_reasons: ["conflict", "behind"] }),
-    pr("teampave/web-app", 2322, "Spike: dark mode for the receipt page", ME, "26T14:30:00", { ...mine, is_draft: true }),
-    pr("teampave/web-app", 2315, "Lazy-load the order history table", "MarcusAl", "30T10:20:00", all),
-    pr("teampave/checkout-api", 1270, "Bump stripe-node to 17.4", "doutatsu", "29T08:00:00", all),
-    pr("fuseinsight/ingest", 409, "Move transcoding jobs to the shared queue", "MarcusAl", "27T13:15:00", all),
-  ],
-  merged: [
-    { number: 2309, title: "Show delivery ETA on the order confirmation", repo: "teampave/web-app", author: ME },
-    { number: 85, title: "Add focus ring tokens", repo: "khiet/design-tokens", author: "MarcusAl" },
-  ].map((m, i) => ({
-    ...m,
-    url: `https://github.com/${m.repo}/pull/${m.number}`,
-    avatar_url: AVATARS[m.author],
-    owner_avatar_url: AVATARS[m.repo.split("/")[0]],
-    merged_at: at(i === 0 ? "30T13:05:00" : "29T15:50:00"),
-  })),
-};
-
-// Runs in every frame before the app loads; only the popover iframe (the real
-// index.html) gets a backend. The stage's tray count mirrors the unread total
-// the way the Rust side sets the tray title.
-function installBackend(initial) {
-  if (location.pathname !== "/index.html") return;
-  let snapshot = initial;
-  const callbacks = new Map();
-  const listeners = new Map();
-  let nextId = 1;
-  const unread = () => snapshot.prs.reduce((sum, p) => sum + p.unread_count, 0);
-  const publish = () => {
-    parent.document.getElementById("tray-count").textContent = unread() || "";
-    for (const id of listeners.get("prs-updated") ?? []) {
-      callbacks.get(id)?.({ event: "prs-updated", id, payload: snapshot });
-    }
-  };
-  const commands = {
-    get_prs: () => snapshot,
-    "plugin:event|listen": ({ event, handler }) => {
-      listeners.set(event, [...(listeners.get(event) ?? []), handler]);
-      return handler;
-    },
-    "plugin:event|unlisten": () => null,
-    "plugin:opener|open_url": () => null,
-    mark_read: ({ key }) => {
-      snapshot = {
-        ...snapshot,
-        prs: snapshot.prs.map((p) =>
-          `${p.repo}#${p.number}` === key ? { ...p, unread_count: 0 } : p,
-        ),
-      };
-      publish();
-      return null;
-    },
-  };
-  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
-  window.__TAURI_INTERNALS__ = {
-    metadata: {
-      currentWindow: { label: "main" },
-      currentWebview: { windowLabel: "main", label: "main" },
-    },
-    transformCallback(callback) {
-      const id = nextId++;
-      callbacks.set(id, callback);
-      return id;
-    },
-    unregisterCallback(id) {
-      callbacks.delete(id);
-    },
-    async invoke(cmd, args) {
-      const handler = commands[cmd];
-      if (!handler) throw new Error(`demo backend: unmocked command ${cmd}`);
-      return handler(args ?? {});
-    },
-  };
-  addEventListener("DOMContentLoaded", publish);
 }
 
 async function capture(baseUrl, dir) {
@@ -174,7 +61,10 @@ async function capture(baseUrl, dir) {
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (msg) => msg.type() === "error" && errors.push(msg.text()));
   await page.clock.setFixedTime(new Date(NOW));
-  await page.addInitScript(installBackend, SNAPSHOT);
+  // Read by popover.tsx, which builds the fixture Snapshot around them.
+  await page.addInitScript((avatars) => {
+    window.DEMO_AVATARS = avatars;
+  }, AVATARS);
   await page.goto(`${baseUrl}/scripts/demo/demo.html`);
   const app = page.frameLocator("#popover");
   await app.locator(".pr-row").first().waitFor({ state: "attached" });
@@ -243,6 +133,13 @@ async function capture(baseUrl, dir) {
   await snap(1400);
   await mineToggle.click();
   await app.locator(".pr-row", { hasText: "#415" }).waitFor();
+  // #2320 is the only queued PR in the fixture, so it alone carries the mark.
+  const queued = app.locator(".pr-row", {
+    has: app.locator('[aria-label$="in merge queue"]'),
+  });
+  if ((await queued.allTextContents()).join().match(/#\d+/g)?.join() !== "#2320") {
+    throw new Error("only #2320 should show the merge queue mark");
+  }
   // Let the chevron finish its rotation before the frame is taken.
   await page.waitForTimeout(400);
   await hideCursor();

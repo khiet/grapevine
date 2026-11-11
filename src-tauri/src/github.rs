@@ -54,6 +54,9 @@ const REVIEW_PAGE: usize = 20;
 const REVIEW_COMMENT_PAGE: usize = 10;
 
 /// Which popover section a PR belongs to, from the viewer's perspective.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Section {
@@ -69,6 +72,9 @@ pub enum Section {
 /// work clearing each takes: a conflict needs a manual rebase, CI an
 /// investigation, review new code, threads an answer, and behind often just
 /// one update-branch click.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BlockedReason {
@@ -79,6 +85,8 @@ pub enum BlockedReason {
     Behind,
 }
 
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Debug, Clone, Serialize)]
 pub struct PullRequest {
     pub number: u64,

@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+import {
+  EMPTY_SNAPSHOT,
+  markAllRead,
+  subscribeSnapshot,
+  type Snapshot,
+} from "./backend";
 import PrList, {
   formatLastSync,
   hasQuery,
   matchesFilter,
-  Snapshot,
   totalUnread,
 } from "./PrList";
 import SettingsView from "./SettingsView";
@@ -15,13 +18,7 @@ import { restartToUpdate, startUpdateChecks, useUpdateState } from "./updater";
 function App() {
   const [view, setView] = useState<"list" | "settings">("list");
   const [filter, setFilter] = useState("");
-  const [snapshot, setSnapshot] = useState<Snapshot>({
-    prs: [],
-    merged: [],
-    has_synced: false,
-    last_sync_at: null,
-    sync_error: null,
-  });
+  const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const inSettings = view === "settings";
   const updateState = useUpdateState();
 
@@ -34,13 +31,7 @@ function App() {
 
   useEffect(() => {
     startUpdateChecks();
-    invoke<Snapshot>("get_prs").then(setSnapshot).catch(() => {});
-    const unlisten = listen<Snapshot>("prs-updated", (event) =>
-      setSnapshot(event.payload),
-    );
-    return () => {
-      unlisten.then((stop) => stop());
-    };
+    return subscribeSnapshot(setSnapshot);
   }, []);
 
   return (
@@ -78,7 +69,7 @@ function App() {
             <button
               type="button"
               className="settings-link"
-              onClick={() => invoke("mark_all_read").catch(() => {})}
+              onClick={() => markAllRead().catch(() => {})}
             >
               Mark all read
             </button>
