@@ -41,7 +41,8 @@ pub fn clamp_poll_secs(secs: u64) -> u64 {
     secs.clamp(MIN_POLL_SECS, MAX_POLL_SECS)
 }
 
-/// Loads the stored settings, clamping the poll interval into its bounds.
+/// Loads the stored settings. The poll interval is clamped here so that a
+/// hand-edited file cannot hand the sync loop an out-of-bounds value.
 pub fn load(store: &Store) -> Result<Settings, String> {
     let mut settings = store.load(&store::SETTINGS)?;
     settings.poll_interval_secs = clamp_poll_secs(settings.poll_interval_secs);

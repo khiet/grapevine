@@ -171,12 +171,13 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
     let state = app.state::<SyncState>();
     let _delivering = state.delivery.lock().unwrap();
     let effects = apply(&state.pr_state);
+    let store = app.state::<Store>();
     let saved_read = effects.save_read.map_or(Ok(()), |read_state| {
-        app.state::<Store>().save(&store::READ_STATE, &read_state)
+        store.save(&store::READ_STATE, &read_state)
     });
-    let saved_merged = effects.save_merged.map_or(Ok(()), |merged| {
-        app.state::<Store>().save(&store::MERGED, &merged)
-    });
+    let saved_merged = effects
+        .save_merged
+        .map_or(Ok(()), |merged| store.save(&store::MERGED, &merged));
     if let Some(total) = effects.tray_count {
         if let Some(tray) = app.tray_by_id("main") {
             let _ = tray.set_title(Some(tray_title(total)));

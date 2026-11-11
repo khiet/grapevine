@@ -1,4 +1,4 @@
-use std::{fs, io, marker::PhantomData, path::PathBuf};
+use std::{fs, marker::PhantomData, path::PathBuf};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -55,11 +55,14 @@ pub const MERGED: Document<MergedState> = Document {
 /// The app data directory, and the one place that reads and writes the JSON
 /// documents in it.
 pub struct Store {
-    dir: PathBuf,
+    /// Resolved once at startup. A failure is kept instead of aborting the
+    /// launch, and surfaces from each load or save as that document's policy
+    /// dictates.
+    dir: Result<PathBuf, String>,
 }
 
 impl Store {
-    pub fn new(dir: PathBuf) -> Self {
+    pub fn new(dir: Result<PathBuf, String>) -> Self {
         Store { dir }
     }
 
@@ -68,29 +71,44 @@ impl Store {
     /// load as their default instead.
     pub fn load<T: DeserializeOwned + Default>(&self, doc: &Document<T>) -> Result<T, String> {
         let label = doc.label;
-        let parsed = match fs::read_to_string(self.dir.join(doc.file)) {
-            Ok(raw) => {
+        match doc.on_corrupt {
+            OnCorrupt::Fail => {
+                let path = self.path(doc)?;
+                if !path.exists() {
+                    return Ok(T::default());
+                }
+                let raw =
+                    fs::read_to_string(&path).map_err(|e| format!("cannot read {label}: {e}"))?;
                 serde_json::from_str(&raw).map_err(|e| format!("{label} file is corrupt: {e}"))
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(T::default()),
-            Err(e) => Err(format!("cannot read {label}: {e}")),
-        };
-        match doc.on_corrupt {
-            OnCorrupt::Fail => parsed,
-            OnCorrupt::StartEmpty => Ok(parsed.unwrap_or_else(|e| {
-                eprintln!("{e}; starting over");
-                T::default()
-            })),
+            OnCorrupt::StartEmpty => {
+                let Ok(raw) = self.path(doc).and_then(|path| {
+                    fs::read_to_string(path).map_err(|e| format!("cannot read {label}: {e}"))
+                }) else {
+                    return Ok(T::default());
+                };
+                Ok(serde_json::from_str(&raw).unwrap_or_else(|e| {
+                    eprintln!("{label} file is corrupt, starting over: {e}");
+                    T::default()
+                }))
+            }
         }
     }
 
     /// Writes `value` as `doc`, creating the data directory if needed. The
     /// write is not atomic: a crash mid-write can leave a truncated file.
     pub fn save<T: Serialize>(&self, doc: &Document<T>, value: &T) -> Result<(), String> {
-        fs::create_dir_all(&self.dir).map_err(|e| format!("cannot create app data dir: {e}"))?;
+        let path = self.path(doc)?;
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("cannot create app data dir: {e}"))?;
+        }
         let raw = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-        fs::write(self.dir.join(doc.file), raw)
-            .map_err(|e| format!("cannot write {}: {e}", doc.label))
+        fs::write(&path, raw).map_err(|e| format!("cannot write {}: {e}", doc.label))
+    }
+
+    fn path<T>(&self, doc: &Document<T>) -> Result<PathBuf, String> {
+        let dir = self.dir.as_ref().map_err(Clone::clone)?;
+        Ok(dir.join(doc.file))
     }
 }
 
@@ -102,7 +120,7 @@ pub mod testing {
     /// test's duration; dropping it deletes the directory.
     pub fn temp_store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::new(dir.path().to_path_buf());
+        let store = Store::new(Ok(dir.path().to_path_buf()));
         (dir, store)
     }
 }
@@ -126,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_round_trip() {
+    fn settings_round_trips() {
         let (_dir, store) = temp_store();
         let settings = Settings {
             repos: vec!["acme/widgets".into()],
@@ -159,7 +177,7 @@ mod tests {
     #[test]
     fn saving_creates_a_data_directory_that_does_not_exist_yet() {
         let (dir, _) = temp_store();
-        let store = Store::new(dir.path().join("not/yet/created"));
+        let store = Store::new(Ok(dir.path().join("not/yet/created")));
         store.save(&MERGED, &vec![merged_entry()]).unwrap();
         assert_eq!(store.load(&MERGED).unwrap(), [merged_entry()]);
     }
@@ -195,6 +213,21 @@ mod tests {
         fs::write(dir.path().join("settings.json"), "{not json").unwrap();
         let err = store.load(&SETTINGS).unwrap_err();
         assert!(err.starts_with("settings file is corrupt"), "{err}");
+    }
+
+    #[test]
+    fn an_unresolved_data_directory_fails_settings_and_empties_the_rest() {
+        let store = Store::new(Err("cannot resolve app data dir: nope".into()));
+        assert_eq!(
+            store.load(&SETTINGS).unwrap_err(),
+            "cannot resolve app data dir: nope"
+        );
+        assert!(store.load(&READ_STATE).unwrap().is_empty());
+        assert!(store.load(&MERGED).unwrap().is_empty());
+        assert_eq!(
+            store.save(&MERGED, &vec![merged_entry()]).unwrap_err(),
+            "cannot resolve app data dir: nope"
+        );
     }
 
     /// Without `#[serde(default)]` on the field the parse fails and the load

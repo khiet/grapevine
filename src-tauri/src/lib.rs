@@ -83,6 +83,14 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Managed before anything below can run a command or a sync, both
+            // of which fetch it from app state.
+            app.manage(store::Store::new(
+                app.path()
+                    .app_data_dir()
+                    .map_err(|e| format!("cannot resolve app data dir: {e}")),
+            ));
+
             // Menubar-only app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -117,7 +125,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            app.manage(store::Store::new(app.path().app_data_dir()?));
             sync::start(app.handle());
             Ok(())
         })

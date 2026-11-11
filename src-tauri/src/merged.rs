@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
-use crate::{github::PullRequest, unread};
 use serde::{Deserialize, Serialize};
+
+use crate::{github::PullRequest, unread};
 
 /// A PR that merged while tracked. Shown in the popover's Merged section
 /// until the user dismisses it; persisted so the section survives restarts.
