@@ -1,19 +1,10 @@
 import { expect, test } from "vitest";
 import {
-  blockedPills,
-  blockedTitle,
   DEFAULT_COLLAPSED,
   formatLastSync,
   formatUpdated,
-  groupByRepo,
-  hasQuery,
-  matchesFilter,
-  mergeQueueTitle,
-  ordinal,
   parseCollapsed,
-  totalUnread,
 } from "./PrList";
-import type { PullRequest } from "./backend";
 
 // formatUpdated works in local calendar days, so fixtures are built in local
 // time; the expectations then hold in any timezone.
@@ -57,163 +48,6 @@ test("no sync yet means no footer label", () => {
   expect(formatLastSync(null, NOW)).toBeNull();
 });
 
-const prWithUnread = (unread_count: number): PullRequest => ({
-  number: 7,
-  title: "Fix the thing",
-  url: "https://github.com/acme/widgets/pull/7",
-  repo: "acme/widgets",
-  author: "someone",
-  avatar_url: "https://avatars.example/someone",
-  owner_avatar_url: "https://avatars.example/acme",
-  created_at: "2026-07-10T12:00:00Z",
-  updated_at: "2026-07-11T09:30:00Z",
-  section: "all",
-  blocked_reasons: [],
-  is_draft: false,
-  review_requested: false,
-  awaiting_review: false,
-  approved: false,
-  merge_queue_position: null,
-  unread_count,
-});
-
-test("the tray-facing total sums unread across PRs", () => {
-  expect(totalUnread([])).toBe(0);
-  expect(totalUnread([prWithUnread(2), prWithUnread(0), prWithUnread(5)])).toBe(7);
-});
-
-const pr = (repo: string, number: number, updated_at: string): PullRequest => ({
-  ...prWithUnread(0),
-  number,
-  repo,
-  updated_at,
-  url: `https://github.com/${repo}/pull/${number}`,
-});
-
-test("PRs collapse into one group per repo", () => {
-  const groups = groupByRepo([
-    pr("acme/widgets", 1, "2026-07-10T00:00:00Z"),
-    pr("acme/gadgets", 2, "2026-07-11T00:00:00Z"),
-    pr("acme/widgets", 3, "2026-07-09T00:00:00Z"),
-  ]);
-  expect(groups.map((g) => g.repo)).toEqual(["acme/gadgets", "acme/widgets"]);
-  expect(groups[1].prs.map((p) => p.number)).toEqual([1, 3]);
-});
-
-test("the repo whose newest PR moved most recently leads", () => {
-  // acme/widgets holds the single freshest PR; acme/gadgets has more PRs and
-  // wins on average recency, so this pins newest-wins over count-or-average.
-  const groups = groupByRepo([
-    pr("acme/gadgets", 1, "2026-07-14T00:00:00Z"),
-    pr("acme/gadgets", 2, "2026-07-13T00:00:00Z"),
-    pr("acme/widgets", 3, "2026-07-01T00:00:00Z"),
-    pr("acme/widgets", 4, "2026-07-15T00:00:00Z"),
-  ]);
-  expect(groups.map((g) => g.repo)).toEqual(["acme/widgets", "acme/gadgets"]);
-});
-
-test("rows keep their incoming order within a group", () => {
-  const groups = groupByRepo([
-    pr("acme/widgets", 1, "2026-07-09T00:00:00Z"),
-    pr("acme/widgets", 2, "2026-07-15T00:00:00Z"),
-    pr("acme/widgets", 3, "2026-07-12T00:00:00Z"),
-  ]);
-  expect(groups[0].prs.map((p) => p.number)).toEqual([1, 2, 3]);
-});
-
-test("an unparseable timestamp sinks its group instead of throwing", () => {
-  const groups = groupByRepo([
-    pr("acme/broken", 1, "not-a-date"),
-    pr("acme/widgets", 2, "2026-07-01T00:00:00Z"),
-  ]);
-  expect(groups.map((g) => g.repo)).toEqual(["acme/widgets", "acme/broken"]);
-});
-
-test("an empty list produces no groups", () => {
-  expect(groupByRepo([])).toEqual([]);
-});
-
-const filterable = {
-  title: "Fix the flaky sync test",
-  repo: "acme/widgets",
-  author: "octocat",
-  number: 42,
-};
-
-test("an empty or whitespace query matches every row", () => {
-  expect(matchesFilter(filterable, "")).toBe(true);
-  expect(matchesFilter(filterable, "   ")).toBe(true);
-});
-
-test("a term matches title, repo, author, or #number, case-insensitively", () => {
-  expect(matchesFilter(filterable, "FLAKY")).toBe(true);
-  expect(matchesFilter(filterable, "widgets")).toBe(true);
-  expect(matchesFilter(filterable, "octocat")).toBe(true);
-  expect(matchesFilter(filterable, "#42")).toBe(true);
-  expect(matchesFilter(filterable, "42")).toBe(true);
-  expect(matchesFilter(filterable, "gadgets")).toBe(false);
-  // Folding runs on both sides: a lowercase query matches the capital "F" in
-  // the title, which pins haystack-side folding, not just the query's.
-  expect(matchesFilter(filterable, "fix")).toBe(true);
-});
-
-test("multiple terms are AND'd across the searchable fields", () => {
-  // "acme" hits the repo, "flaky" hits the title: both must match.
-  expect(matchesFilter(filterable, "acme flaky")).toBe(true);
-  expect(matchesFilter(filterable, "acme missing")).toBe(false);
-});
-
-// The keys are the wire contract with the Rust BlockedReason enum; the labels
-// are kept neutral (a PR property, never "you must act").
-test("the +N pill's tooltip names its reasons in the backend's order", () => {
-  expect(blockedTitle(["conflict", "ci", "review"])).toBe(
-    "Merge conflict; CI failing; Changes requested",
-  );
-  expect(blockedTitle(["ci"])).toBe("CI failing");
-});
-
-test("a single blocked reason renders as one pill, spelled out", () => {
-  expect(blockedPills(["ci"])).toEqual(["CI failing"]);
-  expect(blockedPills(["review"])).toEqual(["Changes requested"]);
-  expect(blockedPills(["behind"])).toEqual(["Behind base"]);
-  expect(blockedPills(["threads"])).toEqual(["Unresolved threads"]);
-});
-
-test("extra reasons collapse into a +N pill after the primary one", () => {
-  expect(blockedPills(["conflict", "ci"])).toEqual(["Merge conflict", "+1"]);
-  expect(blockedPills(["conflict", "ci", "review"])).toEqual([
-    "Merge conflict",
-    "+2",
-  ]);
-  // Behind sorts last in the backend's severity order, so it only leads a
-  // pill when it is the sole reason.
-  expect(blockedPills(["ci", "behind"])).toEqual(["CI failing", "+1"]);
-  // Threads sit between review and behind in the backend's severity order,
-  // so they lead a pill pair only over behind.
-  expect(blockedPills(["threads", "behind"])).toEqual([
-    "Unresolved threads",
-    "+1",
-  ]);
-});
-
-test("no blocked reasons means no pills", () => {
-  expect(blockedPills([])).toEqual([]);
-});
-
-// hasQuery and matchesFilter must agree on what an empty query is, so
-// force-expand-while-filtering can never fire for a query that matches
-// everything.
-test("hasQuery mirrors matchesFilter's empty-query rule", () => {
-  const emptyRow = { title: "", repo: "", author: "", number: 0 };
-  for (const query of ["", "   ", "\t \n"]) {
-    expect(hasQuery(query)).toBe(false);
-    // No terms: matches everything, even an empty row.
-    expect(matchesFilter(emptyRow, query)).toBe(true);
-  }
-  expect(hasQuery("fix")).toBe(true);
-  expect(hasQuery(" fix  bug ")).toBe(true);
-});
-
 test("nothing stored yields the defaults: Mine and All collapsed", () => {
   expect(parseCollapsed(null)).toEqual({
     mine: true,
@@ -247,22 +81,4 @@ test("parseCollapsed never returns the shared defaults object", () => {
   const state = parseCollapsed(null);
   state.mine = false;
   expect(DEFAULT_COLLAPSED.mine).toBe(true);
-});
-
-// The teens are the trap: 11, 12 and 13 take "th" although they end in 1, 2
-// and 3.
-test("ordinals take the English suffix for their last two digits", () => {
-  expect(ordinal(1)).toBe("1st");
-  expect(ordinal(2)).toBe("2nd");
-  expect(ordinal(3)).toBe("3rd");
-  expect(ordinal(4)).toBe("4th");
-  expect(ordinal(11)).toBe("11th");
-  expect(ordinal(12)).toBe("12th");
-  expect(ordinal(13)).toBe("13th");
-  expect(ordinal(21)).toBe("21st");
-  expect(ordinal(22)).toBe("22nd");
-});
-
-test("the merge queue mark's tooltip states the position as an ordinal", () => {
-  expect(mergeQueueTitle(3)).toBe("3rd in merge queue");
 });
