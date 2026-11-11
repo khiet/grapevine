@@ -223,10 +223,10 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
 // Whole hours under a day, whole days from one day up, both rounded down: a
-// wait is never overstated. Under an hour reads "<1h" rather than "0h", which
-// also covers a start a moment ahead of the popover's clock.
+// wait is never overstated. Under an hour reads "<1h" rather than "0h". The
+// backend sends a start only on a your-turn row, so the start alone decides.
 function waitingLabel(pr: PullRequest, now: number): string | null {
-  if (pr.turn !== "yours" || pr.turn_since === null) return null;
+  if (pr.turn_since === null) return null;
   const elapsed = now - pr.turn_since;
   if (elapsed < HOUR_MS) return "waiting <1h";
   if (elapsed < DAY_MS) return `waiting ${Math.floor(elapsed / HOUR_MS)}h`;

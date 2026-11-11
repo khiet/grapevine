@@ -420,22 +420,26 @@ mod tests {
     #[test]
     fn the_tray_counts_the_prs_waiting_on_you_not_the_unread() {
         let state = PrState::default();
-        let prs = |activity: &[&str]| {
+        let prs = |quiet: &[&str], busy: &[&str]| {
             vec![
                 yours(pr("acme/widgets", 1, &[])),
                 yours(pr("acme/widgets", 2, &[])),
-                pr("acme/widgets", 3, activity),
+                pr("acme/widgets", 3, quiet),
                 PullRequest {
                     turn: Some(Turn::Theirs),
-                    ..pr("acme/widgets", 4, activity)
+                    ..pr("acme/widgets", 4, busy)
                 },
             ]
         };
-        state.sync_succeeded(prs(&[]), vec![], NOW_MS);
+        state.sync_succeeded(prs(&[], &[]), vec![], NOW_MS);
 
-        let effects = state.sync_succeeded(prs(&[T1, T2]), vec![], NOW_MS);
+        let effects = state.sync_succeeded(
+            prs(&[T1, T2], &[T1, T2, "2026-07-04T00:00:00Z"]),
+            vec![],
+            NOW_MS,
+        );
 
-        assert_eq!(unread_counts(&effects.snapshot), [0, 0, 2, 2]);
+        assert_eq!(unread_counts(&effects.snapshot), [0, 0, 2, 3]);
         assert_eq!(effects.tray_count, Some(2));
     }
 

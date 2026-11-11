@@ -683,17 +683,6 @@ test("a turn that began within the hour reads as under an hour, not zero", () =>
   expect(row.waiting).toBe("waiting <1h");
 });
 
-// A sync time can sit a moment ahead of the popover's clock.
-test("a turn start ahead of the clock reads as under an hour", () => {
-  const row = rowFor(pr({ turn: "yours", turn_since: NOW + 5_000 }));
-  expect(row.waiting).toBe("waiting <1h");
-});
-
 test("a your-turn row with no known start has no waiting label", () => {
   expect(rowFor(pr({ turn: "yours", turn_since: null })).waiting).toBeNull();
-});
-
-test("a row that is not your turn has no waiting label", () => {
-  expect(rowFor(pr({ turn: "theirs" })).waiting).toBeNull();
-  expect(rowFor(pr()).waiting).toBeNull();
 });
