@@ -166,7 +166,7 @@ struct GraphQlResponse {
 
 /// What GitHub answered, before any interpretation.
 struct HttpResponse {
-    status: u16,
+    status: reqwest::StatusCode,
     headers: reqwest::header::HeaderMap,
     body: String,
 }
@@ -184,8 +184,6 @@ struct ReqwestTransport;
 
 impl Transport for ReqwestTransport {
     async fn post(&self, token: &str, payload: &Value) -> Result<HttpResponse, GithubError> {
-        let unreachable =
-            |_| GithubError::Other("Could not reach GitHub. Check your network connection.".into());
         let client = reqwest::Client::builder()
             .user_agent("grapevine")
             .build()
@@ -196,11 +194,16 @@ impl Transport for ReqwestTransport {
             .json(payload)
             .send()
             .await
-            .map_err(unreachable)?;
+            .map_err(|_| {
+                GithubError::Other("Could not reach GitHub. Check your network connection.".into())
+            })?;
         Ok(HttpResponse {
-            status: response.status().as_u16(),
+            status: response.status(),
             headers: response.headers().clone(),
-            body: response.text().await.map_err(unreachable)?,
+            // A body that fails mid-read must not hide the status and headers
+            // already received: a refusal is classified from those alone, and
+            // an empty body on a success reads as an unexpected response.
+            body: response.text().await.unwrap_or_default(),
         })
     }
 }
@@ -211,8 +214,8 @@ impl Transport for ReqwestTransport {
 struct Client<'a, T> {
     transport: &'a T,
     token: &'a str,
-    /// Read when a response needs "now", never ahead of the request, so a
-    /// relative `retry-after` is anchored to when GitHub said it.
+    /// Called once a response is in hand, never ahead of the request, so a
+    /// relative `retry-after` is not counted from before GitHub sent it.
     now_epoch_secs: fn() -> u64,
 }
 
@@ -248,22 +251,24 @@ impl<T: Transport> Client<'_, T> {
             )
             .await?;
 
-        if response.status == 401 {
+        if response.status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(GithubError::Other(
                 "GitHub rejected the token. Check that it is valid and not expired.".into(),
             ));
         }
         // Both are read as quota refusals: the primary limit answers 403, the
         // secondary limit 429.
-        if response.status == 403 || response.status == 429 {
+        if response.status == reqwest::StatusCode::FORBIDDEN
+            || response.status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        {
             return Err(GithubError::RateLimited {
                 reset_epoch_secs: rate_limit_reset(&response.headers, (self.now_epoch_secs)()),
             });
         }
-        if !(200..300).contains(&response.status) {
+        if !response.status.is_success() {
             return Err(GithubError::Other(format!(
                 "GitHub returned an error (HTTP {}).",
-                response.status
+                response.status.as_u16()
             )));
         }
         let scopes = response
@@ -295,11 +300,15 @@ impl<T: Transport> Client<'_, T> {
     }
 
     async fn validate_repo(&self, owner: &str, name: &str) -> Result<String, String> {
-        let response = self.graphql("query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { nameWithOwner } }",
-            json!({ "owner": owner, "name": name }),
-        )
-        .await
-        .map_err(String::from)?;
+        let response = self
+            .graphql(
+                "query($owner: String!, $name: String!) { \
+                   repository(owner: $owner, name: $name) { nameWithOwner } \
+                 }",
+                json!({ "owner": owner, "name": name }),
+            )
+            .await
+            .map_err(String::from)?;
         if let Some(full_name) = response
             .data
             .as_ref()
@@ -2012,14 +2021,14 @@ mod tests {
         assert!(collect_merged(&data, &targets).is_empty());
     }
 
-    // Fetch-level tests: the public operations run against canned responses,
-    // so pagination, status mapping and the query itself are under test
-    // together.
+    // Fetch-level tests: each operation runs on a `Client` over canned
+    // responses, so pagination, status mapping and the query itself are
+    // under test together. Only `ReqwestTransport` stays outside them.
 
     /// Stands in for GitHub: answers each request with the next canned
-    /// response and records the payload it was sent. Like GitHub, it returns
-    /// only the fields the query names, so a field dropped from a query goes
-    /// missing from the answer and the test reading it fails.
+    /// response and records the payload it was sent. Like GitHub, it answers
+    /// the query it was asked (see [`keep_asked`]), so a field or window
+    /// dropped from a query changes the answer and fails the test reading it.
     struct Canned {
         responses: std::sync::Mutex<std::collections::VecDeque<HttpResponse>>,
         payloads: std::sync::Mutex<Vec<Value>>,
@@ -2068,7 +2077,7 @@ mod tests {
                 .expect("a request beyond the canned responses");
             if let Ok(mut body) = serde_json::from_str::<Value>(&response.body) {
                 if let Some(data) = body.get_mut("data") {
-                    keep_requested_fields(data, payload["query"].as_str().unwrap());
+                    keep_asked(data, &parse_query(payload["query"].as_str().unwrap()));
                 }
                 response.body = body.to_string();
             }
@@ -2077,31 +2086,166 @@ mod tests {
         }
     }
 
-    /// Drops every object key the query never names, at any depth. Matching
-    /// is by name alone, not position, so it cannot tell a field asked for on
-    /// the wrong type; it catches a field missing from the query outright.
-    fn keep_requested_fields(value: &mut Value, query: &str) {
+    /// What a query asks of one field: the window its arguments put on a
+    /// connection, and its sub-selection keyed by response name (the alias
+    /// when the field has one).
+    #[derive(Default)]
+    struct Asked {
+        window: Option<Window>,
+        fields: HashMap<String, Asked>,
+    }
+
+    enum Window {
+        First(usize),
+        Last(usize),
+    }
+
+    /// Cuts canned `data` down to what the query selects: a key survives only
+    /// where the query asks for it, and a connection's `nodes` are windowed
+    /// by its `first:` or `last:` argument. Other arguments are ignored;
+    /// canned data is already the right repository and page.
+    fn keep_asked(value: &mut Value, asked: &Asked) {
         match value {
             Value::Object(map) => {
-                map.retain(|key, _| names(query, key));
-                map.values_mut()
-                    .for_each(|v| keep_requested_fields(v, query));
+                map.retain(|key, _| asked.fields.contains_key(key));
+                for (key, child) in map.iter_mut() {
+                    keep_asked(child, &asked.fields[key]);
+                }
+                if let Some(Value::Array(nodes)) = map.get_mut("nodes") {
+                    match asked.window {
+                        Some(Window::First(n)) => nodes.truncate(n),
+                        Some(Window::Last(n)) => {
+                            nodes.drain(..nodes.len().saturating_sub(n));
+                        }
+                        None => {}
+                    }
+                }
             }
-            Value::Array(items) => items
-                .iter_mut()
-                .for_each(|v| keep_requested_fields(v, query)),
+            Value::Array(items) => items.iter_mut().for_each(|item| keep_asked(item, asked)),
             _ => {}
         }
     }
 
-    /// Whether `field` appears in `query` as a whole word, so `state` is not
-    /// found inside `states`.
-    fn names(query: &str, field: &str) -> bool {
-        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
-        query.match_indices(field).any(|(i, _)| {
-            !query[..i].chars().next_back().is_some_and(is_word)
-                && !query[i + field.len()..].chars().next().is_some_and(is_word)
-        })
+    type QueryChars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+    /// Reads the selection out of the GraphQL subset this module writes:
+    /// one anonymous `query`, aliases, arguments, and inline fragments, whose
+    /// fields count as the enclosing field's own.
+    fn parse_query(query: &str) -> Asked {
+        let mut chars = query.chars().peekable();
+        skip_space(&mut chars);
+        assert_eq!(word(&mut chars), "query", "not a query: {query}");
+        skip_space(&mut chars);
+        if chars.peek() == Some(&'(') {
+            arguments(&mut chars);
+            skip_space(&mut chars);
+        }
+        assert_eq!(chars.next(), Some('{'), "query has no selection: {query}");
+        Asked {
+            window: None,
+            fields: selection(&mut chars),
+        }
+    }
+
+    /// Parses up to the `}` closing a selection whose `{` is already read.
+    fn selection(chars: &mut QueryChars) -> HashMap<String, Asked> {
+        let mut fields = HashMap::new();
+        loop {
+            skip_space(chars);
+            match chars.peek() {
+                None => panic!("query ended inside a selection"),
+                Some('}') => {
+                    chars.next();
+                    return fields;
+                }
+                Some('.') => {
+                    while chars.next_if_eq(&'.').is_some() {}
+                    skip_space(chars);
+                    assert_eq!(word(chars), "on");
+                    skip_space(chars);
+                    word(chars);
+                    skip_space(chars);
+                    assert_eq!(chars.next(), Some('{'));
+                    fields.extend(selection(chars));
+                }
+                Some(_) => {
+                    let response_name = word(chars);
+                    assert!(!response_name.is_empty(), "unexpected {:?}", chars.peek());
+                    skip_space(chars);
+                    if chars.next_if_eq(&':').is_some() {
+                        skip_space(chars);
+                        word(chars);
+                        skip_space(chars);
+                    }
+                    let window = if chars.peek() == Some(&'(') {
+                        window(&arguments(chars))
+                    } else {
+                        None
+                    };
+                    skip_space(chars);
+                    let fields_below = if chars.next_if_eq(&'{').is_some() {
+                        selection(chars)
+                    } else {
+                        HashMap::new()
+                    };
+                    fields.insert(
+                        response_name,
+                        Asked {
+                            window,
+                            fields: fields_below,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    fn skip_space(chars: &mut QueryChars) {
+        while chars.next_if(|c| c.is_whitespace() || *c == ',').is_some() {}
+    }
+
+    fn word(chars: &mut QueryChars) -> String {
+        let mut word = String::new();
+        while let Some(c) = chars.next_if(|c| c.is_ascii_alphanumeric() || *c == '_') {
+            word.push(c);
+        }
+        word
+    }
+
+    /// Consumes a parenthesised argument list and returns its text.
+    fn arguments(chars: &mut QueryChars) -> String {
+        let mut text = String::new();
+        let (mut depth, mut quoted) = (0, false);
+        for c in chars.by_ref() {
+            match c {
+                '"' => quoted = !quoted,
+                '(' if !quoted => depth += 1,
+                ')' if !quoted => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            text.push(c);
+        }
+        text
+    }
+
+    fn window(arguments: &str) -> Option<Window> {
+        let count = |name: &str| {
+            let after = &arguments[arguments.find(name)? + name.len()..];
+            let digits: String = after
+                .trim_start()
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            digits.parse::<usize>().ok()
+        };
+        count("first:")
+            .map(Window::First)
+            .or_else(|| count("last:").map(Window::Last))
     }
 
     fn run<F: std::future::Future>(future: F) -> F::Output {
@@ -2110,7 +2254,7 @@ mod tests {
 
     fn answer(status: u16, header_pairs: &[(&str, &str)], body: Value) -> HttpResponse {
         HttpResponse {
-            status,
+            status: reqwest::StatusCode::from_u16(status).unwrap(),
             headers: headers(header_pairs),
             body: body.to_string(),
         }
@@ -2143,8 +2287,10 @@ mod tests {
         data
     }
 
-    fn watched(repos: &[&str]) -> Vec<String> {
-        repos.iter().map(|r| r.to_string()).collect()
+    /// Fetches the open PRs of the watched `repos` from the canned GitHub.
+    fn fetch_open(github: &Canned, repos: &[&str]) -> Result<FetchedPrs, GithubError> {
+        let repos: Vec<String> = repos.iter().map(|r| r.to_string()).collect();
+        run(github.client().fetch_open_prs(&repos))
     }
 
     /// (repo, number) of each fetched PR, in the order returned.
@@ -2193,10 +2339,7 @@ mod tests {
             )),
         ]);
 
-        let fetched = run(github
-            .client()
-            .fetch_open_prs(&watched(&["acme/widgets", "acme/gadgets"])))
-        .unwrap();
+        let fetched = fetch_open(&github, &["acme/widgets", "acme/gadgets"]).unwrap();
 
         assert_eq!(
             rows(&fetched),
@@ -2233,7 +2376,7 @@ mod tests {
         };
         let github = Canned::new((0..20).map(|_| endless()).collect());
 
-        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+        let result = fetch_open(&github, &["acme/widgets"]);
 
         assert_eq!(
             result.err(),
@@ -2263,10 +2406,7 @@ mod tests {
             }),
         )]);
 
-        let fetched = run(github
-            .client()
-            .fetch_open_prs(&watched(&["acme/gone", "acme/gadgets"])))
-        .unwrap();
+        let fetched = fetch_open(&github, &["acme/gone", "acme/gadgets"]).unwrap();
 
         assert_eq!(rows(&fetched), vec![("acme/gadgets", 2)]);
         assert_eq!(github.request_count(), 1);
@@ -2291,7 +2431,7 @@ mod tests {
             )),
         ]);
 
-        let fetched = run(github.client().fetch_open_prs(&watched(&["acme/widgets"]))).unwrap();
+        let fetched = fetch_open(&github, &["acme/widgets"]).unwrap();
 
         assert_eq!(
             fetched.rate_limit,
@@ -2327,10 +2467,7 @@ mod tests {
             ],
         ))]);
 
-        let fetched = run(github
-            .client()
-            .fetch_open_prs(&watched(&["acme/widgets", "acme/gadgets"])))
-        .unwrap();
+        let fetched = fetch_open(&github, &["acme/widgets", "acme/gadgets"]).unwrap();
 
         assert_eq!(
             rows(&fetched),
@@ -2376,9 +2513,7 @@ mod tests {
             )],
         ))]);
 
-        let prs = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])))
-            .unwrap()
-            .prs;
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
 
         assert_eq!(prs[0].merge_queue_position, Some(3));
         assert_eq!(
@@ -2392,6 +2527,77 @@ mod tests {
         );
         assert_eq!(prs[1].blocked_reasons, vec![BlockedReason::Behind]);
         assert!(prs[2].is_draft);
+    }
+
+    /// The CI rollup is per commit, so the query must window `commits` to the
+    /// head: an older commit's failure says nothing about the PR now.
+    #[test]
+    fn ci_is_read_off_the_head_commit() {
+        let history = |states: &[&str]| {
+            let nodes: Vec<Value> = states
+                .iter()
+                .map(|state| json!({ "commit": { "statusCheckRollup": { "state": state } } }))
+                .collect();
+            json!({ "nodes": nodes })
+        };
+        let github = Canned::new(vec![ok(prs_round(
+            5000,
+            vec![repo_named(
+                "acme/widgets",
+                vec![
+                    pr_node(json!({
+                        "number": 1,
+                        "updatedAt": "2026-07-11T02:00:00Z",
+                        "commits": history(&["SUCCESS", "FAILURE"]),
+                    })),
+                    pr_node(json!({
+                        "number": 2,
+                        "updatedAt": "2026-07-11T01:00:00Z",
+                        "commits": history(&["FAILURE", "SUCCESS"]),
+                    })),
+                ],
+                None,
+            )],
+        ))]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(prs[1].blocked_reasons, vec![]);
+    }
+
+    /// The query asks for the newest ten threads, where the open ones skew;
+    /// an unresolved thread older than that is out of sight.
+    #[test]
+    fn only_the_newest_ten_review_threads_can_flag_a_row() {
+        let mut out_of_window = vec![false];
+        out_of_window.extend([true; 10]);
+        let mut in_window = vec![true, false];
+        in_window.extend([true; 9]);
+        let github = Canned::new(vec![ok(prs_round(
+            5000,
+            vec![repo_named(
+                "acme/widgets",
+                vec![
+                    pr_node(json!({
+                        "number": 1,
+                        "updatedAt": "2026-07-11T02:00:00Z",
+                        "reviewThreads": review_threads(&out_of_window),
+                    })),
+                    pr_node(json!({
+                        "number": 2,
+                        "updatedAt": "2026-07-11T01:00:00Z",
+                        "reviewThreads": review_threads(&in_window),
+                    })),
+                ],
+                None,
+            )],
+        ))]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].blocked_reasons, vec![]);
+        assert_eq!(prs[1].blocked_reasons, vec![BlockedReason::Threads]);
     }
 
     /// Sectioning reads involvement off the node, so a query that stopped
@@ -2426,9 +2632,7 @@ mod tests {
             )],
         ))]);
 
-        let prs = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])))
-            .unwrap()
-            .prs;
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
 
         assert_eq!(
             prs.iter().map(|pr| pr.section).collect::<Vec<_>>(),
@@ -2450,7 +2654,7 @@ mod tests {
             json!({ "message": "Bad credentials" }),
         )]);
 
-        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+        let result = fetch_open(&github, &["acme/widgets"]);
 
         assert_eq!(
             result.err(),
@@ -2469,7 +2673,7 @@ mod tests {
             json!({ "message": "API rate limit exceeded" }),
         )]);
 
-        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+        let result = fetch_open(&github, &["acme/widgets"]);
 
         assert_eq!(
             result.err(),
@@ -2489,7 +2693,7 @@ mod tests {
             json!({ "message": "You have exceeded a secondary rate limit" }),
         )]);
 
-        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+        let result = fetch_open(&github, &["acme/widgets"]);
 
         assert_eq!(
             result.err(),
@@ -2503,7 +2707,7 @@ mod tests {
     fn other_http_failures_report_the_status() {
         let github = Canned::new(vec![answer(502, &[], json!({}))]);
 
-        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+        let result = fetch_open(&github, &["acme/widgets"]);
 
         assert_eq!(
             result.err(),
@@ -2518,12 +2722,12 @@ mod tests {
     #[test]
     fn a_successful_status_with_an_unreadable_body_is_an_unexpected_response() {
         let github = Canned::new(vec![HttpResponse {
-            status: 200,
+            status: reqwest::StatusCode::OK,
             headers: headers(&[]),
             body: "<html>Sign in to the network</html>".into(),
         }]);
 
-        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+        let result = fetch_open(&github, &["acme/widgets"]);
 
         assert_eq!(
             result.err(),
@@ -2547,7 +2751,7 @@ mod tests {
             }),
         )]);
 
-        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+        let result = fetch_open(&github, &["acme/widgets"]);
 
         assert_eq!(
             result.err(),
@@ -2670,7 +2874,7 @@ mod tests {
             "p0": { "pullRequest": { "merged": false, "mergedAt": null } },
             "p1": { "pullRequest": { "merged": true, "mergedAt": "2026-07-12T08:00:00Z" } }
         }))]);
-        let keys = watched(&["acme/widgets#1", "not a key", "acme/gadgets#2"]);
+        let keys = ["acme/widgets#1", "not a key", "acme/gadgets#2"].map(String::from);
 
         let merged = run(github.client().fetch_merged_status(&keys)).unwrap();
 
