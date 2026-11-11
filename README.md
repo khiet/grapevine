@@ -110,6 +110,9 @@ npm test           # frontend
 npm run test:rust  # Rust
 ```
 
+The tray, popover and login behavior on Ubuntu has no automated seam; verify a
+build by hand with the [Ubuntu manual checklist](docs/ubuntu-checklist.md).
+
 ### Production build
 
 ```sh
