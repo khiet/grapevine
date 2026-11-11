@@ -33,6 +33,11 @@ mod unread;
 /// turning "click to dismiss" into a no-op.
 struct LastAutoHide(Mutex<Option<Instant>>);
 
+/// Set when a second launch arrived before `setup` could show the popover
+/// for it; `setup` shows it on the way out.
+#[cfg(target_os = "linux")]
+struct EarlySecondLaunch(std::sync::atomic::AtomicBool);
+
 fn request_popover(app: &tauri::AppHandle, request: popover::Request) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -108,13 +113,19 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         // The plugin starts answering second launches before `setup` below
-        // has run. One landing in that gap finds no Store, which showing the
-        // popover needs, so it is dropped: the copy still starting up is
-        // about to put its tray icon in the panel anyway.
+        // has run, and showing the popover needs the Store that `setup`
+        // manages. A launch landing in that gap is left for `setup` to honor
+        // once everything it needs exists.
         if app.try_state::<store::Store>().is_some() {
             request_popover(app, popover::Request::SecondLaunch);
+        } else {
+            app.state::<EarlySecondLaunch>()
+                .0
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }));
+    #[cfg(target_os = "linux")]
+    let builder = builder.manage(EarlySecondLaunch(false.into()));
     builder
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
@@ -207,6 +218,15 @@ pub fn run() {
                 .build(app)?;
 
             sync::start(app.handle());
+
+            #[cfg(target_os = "linux")]
+            if app
+                .state::<EarlySecondLaunch>()
+                .0
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                request_popover(app.handle(), popover::Request::SecondLaunch);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
