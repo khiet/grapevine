@@ -91,11 +91,19 @@ jobs:
 
       - run: npm ci
 
+      # The release scripts come from the commit the workflow runs at, not
+      # from the tag being rebuilt: a manual rebuild may name a tag cut before
+      # they existed.
+      - uses: actions/checkout@v5
+        with:
+          path: .release-tools
+          sparse-checkout: .github/scripts
+
       - name: Resolve the release tag
         env:
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
-        run: .github/scripts/resolve-release-tag.sh
+        run: .release-tools/.github/scripts/resolve-release-tag.sh
 
       # When the Apple secrets are absent (e.g. a fork), signing is skipped
       # rather than failing the release: the signing and verification steps
@@ -330,11 +338,19 @@ jobs:
 
       - run: npm ci
 
+      # The release scripts come from the commit the workflow runs at, not
+      # from the tag being rebuilt: a manual rebuild may name a tag cut before
+      # they existed.
+      - uses: actions/checkout@v5
+        with:
+          path: .release-tools
+          sparse-checkout: .github/scripts
+
       - name: Resolve the release tag
         env:
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
-        run: .github/scripts/resolve-release-tag.sh
+        run: .release-tools/.github/scripts/resolve-release-tag.sh
 
       # As in build-macos: without the updater key the .deb is still built and
       # attached, but carries no signature and joins no manifest.
@@ -434,9 +450,9 @@ jobs:
       && needs.build-linux.outputs.updater == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      # Not the tag, even on a manual rebuild: this job only runs the release
+      # scripts, and a rebuilt tag may have been cut before they existed.
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
 
       - uses: actions/setup-node@v5
         with:
