@@ -2,8 +2,8 @@
 # Exports TAG and VERSION to later steps of the calling release job.
 #
 # Reads EVENT (the triggering event name) and, on a manual rebuild, INPUT_TAG.
-# Must run from a checkout of the release commit: on a push the tag comes from
-# the release-please files in the working tree.
+# The working directory must be a checkout of the release commit: on a push
+# the tag comes from the release-please files found there.
 #
 # A manual rebuild names the tag directly; a push derives it from the manifest
 # and config rather than a release-please action output, whose per-package
