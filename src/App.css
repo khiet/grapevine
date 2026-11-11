@@ -381,9 +381,10 @@ body {
 }
 
 /* "waiting 23h" is wider than any timestamp, so a your-turn row gives its
-   label a wider column. Both stay right-aligned to the same edge. */
+   label a wider column, one that still grows for a three-digit day count.
+   Both stay right-aligned to the same edge. */
 .pr-title-row.is-waiting {
-  grid-template-columns: 1fr 66px;
+  grid-template-columns: 1fr minmax(66px, max-content);
 }
 
 /* Three lines, not two: the timestamp column leaves the title ~290px, and a

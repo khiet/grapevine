@@ -71,8 +71,9 @@ export interface PullRequest {
    * nothing of its own. Never part of the unread count. */
   turn: Turn | null;
   /** Epoch ms of the sync that first saw the turn become yours; the row shows
-   * it as "waiting 2d". Null when the turn is not yours, and when it was
-   * already yours the first time the PR was seen, so the start is unknown. */
+   * it as "waiting 2d". Null when the turn is not yours, and when nobody
+   * watched the turn begin (it was already yours the first time the PR was
+   * seen, for one), so the start is unknown. */
   turn_since: number | null;
   /** New activity from people. The only count that badges a row or a
    * collapsed section. It does not feed the tray. */

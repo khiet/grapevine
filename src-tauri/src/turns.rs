@@ -8,9 +8,23 @@ use crate::{
 /// When each turn that is the viewer's began, keyed by `owner/repo#number`
 /// like the read watermarks. A PR has an entry exactly while its turn is
 /// yours. The value is the epoch ms of the sync that first observed the turn,
-/// or `None` when the turn was already under way the first time the PR was
-/// seen, so its real start is unknowable.
+/// or `None` when nobody watched it begin, so its real start is unknowable:
+/// it was already under way the first time the PR was seen, or when turn
+/// tracking started, or it ran through a spell without a token or repos.
 pub type TurnStarts = HashMap<String, Option<u64>>;
+
+/// Forgets every start while keeping which turns were yours. For a spell
+/// with no syncs of unknown length: a turn found still yours afterwards may
+/// have ended and begun again unseen, so its old start can no longer be
+/// vouched for. Returns true when the state changed and needs persisting.
+pub fn forget_starts(starts: &mut Option<TurnStarts>) -> bool {
+    let Some(known) = starts else { return false };
+    let mut changed = false;
+    for since in known.values_mut() {
+        changed |= since.take().is_some();
+    }
+    changed
+}
 
 /// How many PRs wait on the viewer: the tray count.
 pub fn yours_count(prs: &[PullRequest]) -> u64 {

@@ -1,6 +1,7 @@
 //! The one owner of what the popover shows: the Snapshot, the read
-//! watermarks, the turn starts and the merged list. Everything outside this module changes them only
-//! through the transitions on [`PrState`], which hold these invariants:
+//! watermarks, the turn starts and the merged list. Everything outside this
+//! module changes them only through the transitions on [`PrState`], which
+//! hold these invariants:
 //!
 //! - `snapshot.merged` mirrors the merged list. The one exception is the
 //!   unconfigured Snapshot, which is empty so the popover shows setup rather
@@ -73,8 +74,9 @@ pub struct Effects {
 #[derive(Default)]
 struct Inner {
     snapshot: Snapshot,
-    /// All three are authoritative in memory. The copies on disk exist so
-    /// unread badges, waiting times and the Merged section survive restarts.
+    /// This and the two fields below are authoritative in memory. The copies
+    /// on disk exist so unread badges, waiting times and the Merged section
+    /// survive restarts.
     read_state: unread::ReadState,
     /// `None` until turns have been tracked at all; see [`turns::apply`].
     turn_starts: Option<turns::TurnStarts>,
@@ -162,15 +164,18 @@ impl PrState {
     }
 
     /// No token or no repos: clear any list left over from previous settings,
-    /// but keep the read watermarks, turn starts and merged list for when a
-    /// token comes back.
+    /// but keep the read watermarks and merged list for when a token comes
+    /// back. The turn starts are forgotten: every PR has left the Snapshot,
+    /// and nothing watches the turns until syncing resumes.
     pub fn unconfigured(&self) -> Effects {
         let mut inner = self.inner.lock().unwrap();
+        let inner = &mut *inner;
         inner.snapshot = Snapshot::default();
+        let turns_changed = turns::forget_starts(&mut inner.turn_starts);
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: None,
-            save_turns: None,
+            save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
             tray_count: Some(turns::yours_count(&inner.snapshot.prs)),
         }
@@ -722,19 +727,25 @@ mod tests {
         assert_eq!(quiet.save_turns, None);
     }
 
-    /// Like the read watermarks, the starts wait out a spell without a token.
+    /// Nothing watches the turns during a spell without a token or repos, so
+    /// a turn found still yours afterwards may not be the one that was
+    /// timed. It claims neither its old start nor the sync that came back.
     #[test]
-    fn an_unconfigured_sync_keeps_the_turn_starts() {
+    fn an_unconfigured_spell_forgets_when_the_turns_started() {
         let state = PrState::default();
         sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
         sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
 
         let cleared = state.unconfigured();
-        assert_eq!(cleared.save_turns, None);
+        assert_eq!(
+            cleared.save_turns,
+            Some(HashMap::from([("acme/widgets#7".to_string(), None)]))
+        );
         assert_eq!(cleared.tray_count, Some(0));
 
         let back = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_3);
-        assert_eq!(turn_since(&back), Some(SYNC_2));
+        assert_eq!(turn_since(&back), None);
+        assert_eq!(back.tray_count, Some(1));
     }
 
     #[test]

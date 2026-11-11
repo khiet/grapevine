@@ -447,7 +447,7 @@ test("a collapsed section reports its unread total", () => {
 });
 
 test("an expanded section reports no unread: its rows carry the badges", () => {
-  const view = list(UNREAD_FIXTURE, "", ALL_EXPANDED, NOW);
+  const view = list(UNREAD_FIXTURE, "", ALL_EXPANDED);
   expect(section(view, "mine").collapsedUnread).toBe(0);
 });
 
@@ -462,7 +462,7 @@ test("Mark all read is offered while any PR is unread, filtered out or not", () 
 
 test("Clear all is offered for Merged only while it is expanded", () => {
   const snapshot = synced({ prs: [pr()], merged: [mergedPr()] });
-  const expanded = list(snapshot, "", ALL_EXPANDED, NOW);
+  const expanded = list(snapshot, "", ALL_EXPANDED);
   expect(section(expanded, "merged").offerClearAll).toBe(true);
   expect(section(expanded, "mine").offerClearAll).toBe(false);
 
