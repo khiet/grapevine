@@ -197,7 +197,8 @@ fn delay_after_failure(
 /// The tray title for `total`, the number of PRs waiting on the viewer. Zero
 /// yields an empty string rather than `None`:
 /// tray-icon's macOS `set_title` skips the button entirely on `None`, stranding
-/// the last count on the icon so a cleared badge never disappears.
+/// the last count on the icon so a cleared badge never disappears. On Linux
+/// the title is the label next to the icon, and an empty one removes it.
 fn tray_title(total: u64) -> String {
     if total > 0 {
         total.to_string()

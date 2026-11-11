@@ -29,3 +29,43 @@ The switch is under Settings, "Launch at login". The entry it manages is
    directory".
 9. Log out and log back in. **Expect:** no Grapevine tray icon.
 10. Start Grapevine by hand and open Settings. **Expect:** the switch is off.
+
+## Tray and popover
+
+Run on the default Wayland session (the login screen's gear menu shows
+"Ubuntu", not "Ubuntu on Xorg") with at least one PR waiting on you, so the
+tray has a count to show. Steps 13 and 14 need `xlsclients`, from the
+`x11-utils` package.
+
+1. Start Grapevine from the app grid. **Expect:** a white grape glyph appears
+   in the top panel and is easy to read against it.
+2. Wait for the first sync. **Expect:** the count of PRs waiting on you shows
+   as a label next to the glyph.
+3. Click the glyph. **Expect:** a menu opens with "Open Grapevine" above "Quit
+   Grapevine" and nothing else.
+4. Choose "Open Grapevine". **Expect:** the popover appears in the top-right
+   corner of the primary monitor, just below the panel, with a small gap to
+   the panel and to the right edge. It does not overlap the panel.
+5. Hide the popover (step 7), move another app's window so it covers the
+   top-right corner, and choose "Open Grapevine" again. **Expect:** the
+   popover draws above that window.
+6. With the popover open, look at the dock and press Super+Tab, then Alt+Tab.
+   **Expect:** Grapevine is in none of them.
+7. Click on the desktop or in another window. **Expect:** the popover hides.
+8. Open the popover again, then click the glyph and choose "Open Grapevine".
+   **Expect:** the popover ends up hidden, not hidden and shown again.
+9. Choose "Open Grapevine" once more. **Expect:** the popover shows in the
+   same corner as in step 4.
+10. With a second monitor attached, open the popover while the pointer is on
+    the non-primary monitor. **Expect:** it still appears on the primary one.
+11. Snooze or deal with every PR waiting on you, then wait for the next sync.
+    **Expect:** the label next to the glyph disappears, leaving no gap or
+    stray "0".
+12. Choose "Quit Grapevine" from the tray menu. **Expect:** the glyph leaves
+    the panel and `pgrep grapevine` prints nothing.
+13. Run `GDK_BACKEND=wayland grapevine` from a terminal and run
+    `xlsclients | grep -i grapevine` in another. **Expect:** no output; the
+    backend you chose was kept. The popover may open in the wrong place in
+    this mode, which is accepted. Quit it.
+14. Run `grapevine` with no variable set and repeat the `xlsclients` command.
+    **Expect:** a `grapevine` line; the app is running through XWayland.

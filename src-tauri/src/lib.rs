@@ -8,12 +8,15 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::{Position, WindowExt};
 
 mod commands;
 mod github;
 mod keychain;
 mod launch_at_login;
+#[cfg(any(target_os = "linux", test))]
+mod linux_popover;
 mod merged;
 mod pr_state;
 mod settings;
@@ -49,13 +52,50 @@ fn toggle_popover(app: &tauri::AppHandle) {
     // Before the window shows, so a row whose snooze ran out overnight is
     // awake the moment the popover opens, whatever the sync loop is waiting on.
     sync::wake_expired_snoozes(app);
-    let _ = window.move_window(Position::TrayBottomCenter);
+    place_popover(&window);
     let _ = window.show();
     let _ = window.set_focus();
 }
 
+/// Under the tray icon, where the last tray event said it is.
+#[cfg(not(target_os = "linux"))]
+fn place_popover(window: &tauri::WebviewWindow) {
+    let _ = window.move_window(Position::TrayBottomCenter);
+}
+
+/// Logical pixels between the popover and the top and right edges of the
+/// work area.
+#[cfg(target_os = "linux")]
+const POPOVER_GAP: f64 = 8.0;
+
+/// Top-right of the primary monitor: the Linux tray never says where its icon
+/// is, so there is nothing to anchor under.
+#[cfg(target_os = "linux")]
+fn place_popover(window: &tauri::WebviewWindow) {
+    let (Ok(Some(monitor)), Ok(size)) = (window.primary_monitor(), window.outer_size()) else {
+        return;
+    };
+    let work_area = monitor.work_area();
+    let gap = (POPOVER_GAP * monitor.scale_factor()).round() as i32;
+    let _ = window.set_position(linux_popover::top_right(
+        work_area.position,
+        work_area.size,
+        size.width,
+        gap,
+    ));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before the builder below initialises GTK, which reads the backend once.
+    // Nothing else is running yet, so changing the environment is safe.
+    #[cfg(target_os = "linux")]
+    if let Some(backend) =
+        linux_popover::backend_to_force(std::env::var_os(linux_popover::BACKEND_VAR).as_deref())
+    {
+        std::env::set_var(linux_popover::BACKEND_VAR, backend);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
@@ -104,22 +144,34 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let quit = MenuItemBuilder::with_id("quit", "Quit Grapevine").build(app)?;
-            let menu = MenuBuilder::new(app).item(&quit).build()?;
+            let menu = MenuBuilder::new(app);
+            // The Linux tray reports no clicks and opens its menu on every
+            // click, so the menu is the only way to reach the popover.
+            #[cfg(target_os = "linux")]
+            let open = MenuItemBuilder::with_id("open", "Open Grapevine").build(app)?;
+            #[cfg(target_os = "linux")]
+            let menu = menu.item(&open);
+            let menu = menu.item(&quit).build()?;
 
             // A dedicated glyph, not the app icon: template icons are
             // alpha-only, so the colored app icon would flatten into an
             // illegible block.
-            let tray =
-                TrayIconBuilder::with_id("main").icon(tauri::include_image!("icons/tray.png"));
+            #[cfg(not(target_os = "linux"))]
+            let glyph = tauri::include_image!("icons/tray.png");
+            // The same glyph in white: Linux has no template icons to recolor
+            // it, and Ubuntu's panel is dark in both light and dark styles.
+            #[cfg(target_os = "linux")]
+            let glyph = tauri::include_image!("icons/tray-white.png");
+            let tray = TrayIconBuilder::with_id("main").icon(glyph);
             #[cfg(target_os = "macos")]
             let tray = tray.icon_as_template(true);
             tray.menu(&menu)
                 // Left click toggles the popover; the menu stays on right click.
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    if event.id() == "quit" {
-                        app.exit(0);
-                    }
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => toggle_popover(app),
+                    "quit" => app.exit(0),
+                    _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
                     tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
