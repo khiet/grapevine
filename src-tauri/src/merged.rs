@@ -1,7 +1,6 @@
-use std::{collections::HashSet, fs, path::PathBuf};
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 
 use crate::{github::PullRequest, unread};
 
@@ -67,39 +66,6 @@ pub fn apply(live: &[PullRequest], newly_merged: Vec<MergedPr>, state: &mut Merg
     // ISO-8601 UTC timestamps sort lexically; newest merge first.
     state.sort_by(|a, b| b.merged_at.cmp(&a.merged_at));
     changed
-}
-
-fn path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("cannot resolve app data dir: {e}"))?;
-    Ok(dir.join("merged.json"))
-}
-
-/// A missing or unreadable file degrades to an empty section instead of
-/// failing startup: undismissed merges are lost, which is annoying but never
-/// wrong.
-pub fn load(app: &tauri::AppHandle) -> MergedState {
-    let Ok(path) = path(app) else {
-        return MergedState::default();
-    };
-    let Ok(raw) = fs::read_to_string(&path) else {
-        return MergedState::default();
-    };
-    serde_json::from_str(&raw).unwrap_or_else(|e| {
-        eprintln!("merged state file is corrupt, starting over: {e}");
-        MergedState::default()
-    })
-}
-
-pub fn save(app: &tauri::AppHandle, state: &MergedState) -> Result<(), String> {
-    let path = path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("cannot create app data dir: {e}"))?;
-    }
-    let raw = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| format!("cannot write merged state: {e}"))
 }
 
 #[cfg(test)]
@@ -173,26 +139,6 @@ mod tests {
         );
         assert_eq!(state.len(), 1);
         assert_eq!(state[0].merged_at, "2026-07-14T09:00:00Z");
-    }
-
-    /// A merged.json written before owner_avatar_url existed must still load.
-    /// Without #[serde(default)] the parse fails and load() silently discards
-    /// the entire Merged section, losing every undismissed merge.
-    #[test]
-    fn snapshots_saved_before_the_owner_avatar_field_still_load() {
-        let legacy = r#"[{
-            "number": 3,
-            "title": "Ship the other thing",
-            "url": "https://github.com/acme/widgets/pull/3",
-            "repo": "acme/widgets",
-            "author": "someone",
-            "avatar_url": "https://avatars.example/someone",
-            "merged_at": "2026-07-11T10:00:00Z"
-        }]"#;
-        let state: MergedState =
-            serde_json::from_str(legacy).expect("legacy snapshot must still deserialize");
-        assert_eq!(state.len(), 1);
-        assert_eq!(state[0].owner_avatar_url, "");
     }
 
     #[test]
