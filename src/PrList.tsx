@@ -523,8 +523,8 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
 }
 
 /* The snoozed rows of a section behind one folded line at its foot. Whether
-   the line is open is not persisted: snoozed rows are out of the way by
-   default every time the popover is built. */
+   the line is open is not persisted: it starts folded whenever the section
+   is rendered afresh, since snoozed rows were put out of the way on purpose. */
 function SnoozedGroup({ group }: { group: SnoozedGroupView }) {
   const [opened, setOpened] = useState(false);
   const open = opened || group.forcedOpen;

@@ -87,8 +87,8 @@ pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> b
     changed
 }
 
-/// A timestamp GitHub sent in a form this cannot read counts as old: waking
-/// on it would wake the row at every sync.
+/// An activity time this cannot parse counts as old: a row wakes on news, not
+/// on a date nobody could read.
 fn has_activity_after(pr: &PullRequest, baseline_epoch_ms: u64) -> bool {
     pr.activity.iter().any(|at| {
         github::rfc3339_utc_to_epoch_secs(at).is_some_and(|secs| secs * 1000 > baseline_epoch_ms)
