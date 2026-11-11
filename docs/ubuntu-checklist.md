@@ -69,3 +69,24 @@ tray has a count to show. Steps 13 and 14 need `xlsclients`, from the
     this mode, which is accepted. Quit it.
 14. Run `grapevine` with no variable set and repeat the `xlsclients` command.
     **Expect:** a `grapevine` line; the app is running through XWayland.
+
+## Second launch
+
+Run on the default Wayland session, starting with Grapevine not running
+(`pgrep -x grapevine` prints nothing).
+
+1. Start Grapevine from the app grid and wait for the glyph. **Expect:** one
+   glyph in the top panel and no popover.
+2. Start Grapevine from the app grid again. **Expect:** still exactly one
+   glyph, and the popover appears in the top-right corner of the primary
+   monitor, where "Open Grapevine" puts it.
+3. Run `pgrep -xc grapevine`. **Expect:** `1`.
+4. Click on the desktop or in another window. **Expect:** the popover hides.
+5. Run `grapevine; echo "exit $?"` in a terminal. **Expect:** the command
+   returns by itself within a second or two and prints `exit 0`, the popover
+   appears in the same corner, and there is still one glyph.
+6. Hide the popover, click the glyph and choose "Open Grapevine". **Expect:**
+   the popover shows; the tray menu still works after a second launch.
+7. Choose "Quit Grapevine", then start Grapevine from the app grid.
+   **Expect:** it starts normally with one glyph and no popover; the earlier
+   copy left nothing behind that blocks a fresh start.
