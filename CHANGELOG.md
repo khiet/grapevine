@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.0](https://github.com/khiet/grapevine/compare/grapevine-v0.10.0...grapevine-v0.11.0) (2026-11-11)
+
+
+### Features
+
+* count only required checks as failing and show when a PR is ready to merge ([#73](https://github.com/khiet/grapevine/issues/73)) ([c250a1f](https://github.com/khiet/grapevine/commit/c250a1ff756d7af8c078ed1919e8feb51fc11ee3)), closes [#66](https://github.com/khiet/grapevine/issues/66)
+* keep bot activity off the unread badge and file agent PRs under Mine ([#70](https://github.com/khiet/grapevine/issues/70)) ([3e0c879](https://github.com/khiet/grapevine/commit/3e0c87925f8d4cfeb1d0b3afc725e3b4937c178c)), closes [#64](https://github.com/khiet/grapevine/issues/64)
+* make the tray number the count of PRs waiting on you ([#75](https://github.com/khiet/grapevine/issues/75)) ([ed80b00](https://github.com/khiet/grapevine/commit/ed80b00df000abe76636677678fa16d1a1681631)), closes [#68](https://github.com/khiet/grapevine/issues/68)
+* mark and order rows by whose turn it is ([#74](https://github.com/khiet/grapevine/issues/74)) ([f021d58](https://github.com/khiet/grapevine/commit/f021d58f3523c1829b731165cbc9d87e20708c01)), closes [#67](https://github.com/khiet/grapevine/issues/67)
+* mark PRs where your team was asked to review ([#72](https://github.com/khiet/grapevine/issues/72)) ([a30ab68](https://github.com/khiet/grapevine/commit/a30ab6816cbe56576403ffa1157ecdbafbd38b69)), closes [#65](https://github.com/khiet/grapevine/issues/65)
+* snooze a row until it changes ([#76](https://github.com/khiet/grapevine/issues/76)) ([5e17f56](https://github.com/khiet/grapevine/commit/5e17f56b73e7d178d99cc4f494aab07e91badf03)), closes [#69](https://github.com/khiet/grapevine/issues/69)
+
 ## [0.10.0](https://github.com/khiet/grapevine/compare/grapevine-v0.9.2...grapevine-v0.10.0) (2026-11-10)
 
 
