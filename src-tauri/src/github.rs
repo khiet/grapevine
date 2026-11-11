@@ -2513,6 +2513,50 @@ mod tests {
         );
     }
 
+    /// A proxy or captive portal can answer 200 with a page that is not
+    /// GitHub's JSON at all.
+    #[test]
+    fn a_successful_status_with_an_unreadable_body_is_an_unexpected_response() {
+        let github = Canned::new(vec![HttpResponse {
+            status: 200,
+            headers: headers(&[]),
+            body: "<html>Sign in to the network</html>".into(),
+        }]);
+
+        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::Other(
+                "GitHub returned an unexpected response.".into()
+            ))
+        );
+    }
+
+    /// GraphQL quota refusals arrive as HTTP 200 with no data, so the sync
+    /// loop must still see them as rate limiting rather than a retryable
+    /// failure.
+    #[test]
+    fn a_graphql_rate_limit_refusal_fails_the_fetch_as_rate_limited() {
+        let github = Canned::new(vec![answer(
+            200,
+            &[],
+            json!({
+                "data": null,
+                "errors": [{ "type": "RATE_LIMITED", "message": "API rate limit exceeded" }]
+            }),
+        )]);
+
+        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::RateLimited {
+                reset_epoch_secs: None
+            })
+        );
+    }
+
     #[test]
     fn a_valid_token_reports_its_login() {
         let github = Canned::new(vec![answer(
