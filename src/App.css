@@ -1121,10 +1121,6 @@ body {
     color: #7c7c80;
   }
 
-  .pr-snooze:hover {
-    color: #0a84ff;
-  }
-
   .pr-section li + li.pr-snoozed-line {
     border-top-color: rgba(255, 255, 255, 0.12);
   }

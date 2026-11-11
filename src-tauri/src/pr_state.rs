@@ -1,7 +1,7 @@
 //! The one owner of what the popover shows: the Snapshot, the read
-//! watermarks, the turn starts, the snoozes and the merged list. Everything outside this
-//! module changes them only through the transitions on [`PrState`], which
-//! hold these invariants:
+//! watermarks, the turn starts, the snoozes and the merged list. Everything
+//! outside this module changes them only through the transitions on
+//! [`PrState`], which hold these invariants:
 //!
 //! - `snapshot.merged` mirrors the merged list. The one exception is the
 //!   unconfigured Snapshot, which is empty so the popover shows setup rather

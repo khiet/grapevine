@@ -372,7 +372,8 @@ export function derivePopover(
     // but still counts towards the header: it has not left the section.
     const snoozed =
       key === "all" ? [] : rows.filter((pr) => snoozedKeys.has(prKey(pr)));
-    const awake = rows.filter((pr) => !snoozed.includes(pr));
+    const awake =
+      key === "all" ? rows : rows.filter((pr) => !snoozedKeys.has(prKey(pr)));
     let body: SectionBody;
     if (rows.length === 0) body = { kind: "empty" };
     else if (key === "all") {
