@@ -362,6 +362,24 @@ function MarkView({ mark }: { mark: Mark }) {
           {mark.position}
         </RowMark>
       );
+    // The one positive pill: nothing is left but pressing merge.
+    case "ready":
+      return <span className="pr-ready-pill">{mark.label}</span>;
+    // Neutral pills for a merge that is under way without the viewer: grey
+    // like the Draft pill, since neither is stuck nor a call to act. The
+    // label is terse, so the tooltip carries the full phrase.
+    case "auto-merge":
+    case "checks-running":
+      return (
+        <span
+          className="pr-neutral-pill pr-tip"
+          role="img"
+          data-tip={mark.tip}
+          aria-label={mark.tip}
+        >
+          {mark.label}
+        </span>
+      );
     /* A blocked reason, spelled out in a pill (the Draft pill's shape in the
        blocked orange) so "why is this stuck" reads without hovering. Only the
        +N pill has a tooltip; the primary pill IS its own label. Distinct from

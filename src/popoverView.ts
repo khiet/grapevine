@@ -23,13 +23,16 @@ export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
 
 /** One item of a row's right-edge marker cluster. `tip` is the hover tooltip
  * and the accessible name; null on the primary blocked pill, which is its own
- * label. */
+ * label, and absent on the ready pill for the same reason. */
 export type Mark =
   | { kind: "approved"; tip: string }
   | { kind: "review-requested"; tip: string }
   | { kind: "team-review-requested"; tip: string }
   | { kind: "awaiting-review"; tip: string }
   | { kind: "merge-queue"; position: number; tip: string }
+  | { kind: "ready"; label: string }
+  | { kind: "auto-merge"; label: string; tip: string }
+  | { kind: "checks-running"; label: string; tip: string }
   | { kind: "blocked"; label: string; tip: string | null };
 
 export interface RowView {
@@ -102,22 +105,33 @@ const BLOCKED_LABELS: Record<BlockedReason, string> = {
   behind: "Behind base",
 };
 
+// The CI reason names the check when the backend could: the first failing
+// one, then "+ more" for any others. Never a count: on a truncated list the
+// number seen is not the number failing, and "+ more" is true either way.
+function blockedLabel(reason: BlockedReason, pr: PullRequest): string {
+  if (reason !== "ci" || pr.failing_checks.length === 0) {
+    return BLOCKED_LABELS[reason];
+  }
+  const more = pr.failing_checks.length > 1 || pr.failing_checks_truncated;
+  return `CI: ${pr.failing_checks[0]}${more ? " + more" : ""}`;
+}
+
 // The blocked pills: the first reason spelled out, then "+N" for the rest, so
 // a doubly-blocked row stays width-bounded ("Merge conflict" "+1") instead of
 // listing everything inline. The first reason wins because the backend orders
 // by severity (conflict, ci, review, threads, behind). The +N pill's tooltip
 // names the reasons its count stands for.
-function blockedMarks(reasons: BlockedReason[]): Mark[] {
-  if (reasons.length === 0) return [];
-  const [first, ...rest] = reasons;
+function blockedMarks(pr: PullRequest): Mark[] {
+  if (pr.blocked_reasons.length === 0) return [];
+  const [first, ...rest] = pr.blocked_reasons;
   const marks: Mark[] = [
-    { kind: "blocked", label: BLOCKED_LABELS[first], tip: null },
+    { kind: "blocked", label: blockedLabel(first, pr), tip: null },
   ];
   if (rest.length > 0) {
     marks.push({
       kind: "blocked",
       label: `+${rest.length}`,
-      tip: rest.map((reason) => BLOCKED_LABELS[reason]).join("; "),
+      tip: rest.map((reason) => blockedLabel(reason, pr)).join("; "),
     });
   }
   return marks;
@@ -131,20 +145,25 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-// The marker cluster in display order: the approved check, the review glyph
-// (incoming, incoming through a team, or outgoing; the backend sends at most
-// one for a row, and the chain below holds the slot to one mark regardless,
-// a request naming you first), the merge queue mark, then the blocked pills.
-// Approval leads as the one positive mark, so it reads before whatever still
-// stands in the way. A new signal needs a Mark kind, a line here for when and
-// where it shows, and its glyph in MarkView; no condition elsewhere has to
-// learn about it.
+// The marker cluster in display order: the approved check, the ready pill,
+// the review glyph (incoming, incoming through a team, or outgoing; the
+// backend sends at most one for a row, and the chain below holds the slot to
+// one mark regardless, a request naming you first), the merge marks (queue
+// position, auto-merge, checks running), then the blocked pills. The positive
+// marks lead, so they read before whatever still stands in the way, and the
+// order runs from done, through under way, to stuck. A new signal needs a
+// Mark kind, a line here for when and where it shows, and its glyph in
+// MarkView; no condition elsewhere has to learn about it.
 //
 // Drafts need no special case: the backend suppresses the check, the review
-// glyphs and the blocked reasons on a draft, so whatever it does send shows.
+// glyphs, the merge marks other than the queue position and the blocked
+// reasons on a draft, so whatever it does send shows. Ready is the backend's
+// call as well: the pill does not imply the check, since a repo with no
+// required reviews is ready without an approval.
 function rowMarks(pr: PullRequest): Mark[] {
   const marks: Mark[] = [];
   if (pr.approved) marks.push({ kind: "approved", tip: "Approved" });
+  if (pr.ready_to_merge) marks.push({ kind: "ready", label: "Ready to merge" });
   if (pr.review_requested) {
     marks.push({ kind: "review-requested", tip: "Review requested" });
   } else if (pr.team_review_requested) {
@@ -164,7 +183,17 @@ function rowMarks(pr: PullRequest): Mark[] {
       tip: `${ordinal(pr.merge_queue_position)} in merge queue`,
     });
   }
-  marks.push(...blockedMarks(pr.blocked_reasons));
+  if (pr.auto_merge) {
+    marks.push({ kind: "auto-merge", label: "Auto", tip: "Auto-merge armed" });
+  }
+  if (pr.checks_running) {
+    marks.push({
+      kind: "checks-running",
+      label: "Running",
+      tip: "Checks running",
+    });
+  }
+  marks.push(...blockedMarks(pr));
   return marks;
 }
 

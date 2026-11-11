@@ -32,6 +32,11 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   awaiting_review: false,
   approved: false,
   merge_queue_position: null,
+  failing_checks: [],
+  failing_checks_truncated: false,
+  checks_running: false,
+  auto_merge: false,
+  ready_to_merge: false,
   unread_count: 0,
   bot_unread_count: 0,
   ...overrides,
@@ -202,11 +207,108 @@ test("extra reasons collapse into a +N pill whose tooltip names them", () => {
   ]);
 });
 
+test("the CI pill names the failing check", () => {
+  const row = rowFor(
+    pr({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari"] }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "blocked", label: "CI: e2e-safari", tip: null },
+  ]);
+});
+
+test("with several checks failing the CI pill names the first and adds + more", () => {
+  const row = rowFor(
+    pr({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari", "lint"] }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "blocked", label: "CI: e2e-safari + more", tip: null },
+  ]);
+});
+
+// A truncated page cannot say how many failed, or that the one it saw is the
+// only one.
+test("a truncated list of failing checks reads + more even with one name", () => {
+  const row = rowFor(
+    pr({
+      blocked_reasons: ["ci"],
+      failing_checks: ["e2e-safari"],
+      failing_checks_truncated: true,
+    }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "blocked", label: "CI: e2e-safari + more", tip: null },
+  ]);
+});
+
+test("the +N tooltip names the failing check too", () => {
+  const row = rowFor(
+    pr({
+      blocked_reasons: ["conflict", "ci"],
+      failing_checks: ["e2e-safari"],
+    }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "blocked", label: "Merge conflict", tip: null },
+    { kind: "blocked", label: "+1", tip: "CI: e2e-safari" },
+  ]);
+});
+
+test("a ready PR shows the Ready to merge pill after the approved check", () => {
+  const row = rowFor(pr({ approved: true, ready_to_merge: true }));
+  expect(row.marks).toEqual([
+    { kind: "approved", tip: "Approved" },
+    { kind: "ready", label: "Ready to merge" },
+  ]);
+});
+
+// The check keeps meaning an explicit approval, which such a repo never
+// gives.
+test("a ready PR on a repo with no required reviews shows the pill alone", () => {
+  expect(rowFor(pr({ ready_to_merge: true })).marks).toEqual([
+    { kind: "ready", label: "Ready to merge" },
+  ]);
+});
+
+test("checks still running show the neutral Running mark", () => {
+  expect(rowFor(pr({ checks_running: true })).marks).toEqual([
+    { kind: "checks-running", label: "Running", tip: "Checks running" },
+  ]);
+});
+
+test("armed auto-merge shows the Auto mark", () => {
+  expect(rowFor(pr({ auto_merge: true })).marks).toEqual([
+    { kind: "auto-merge", label: "Auto", tip: "Auto-merge armed" },
+  ]);
+});
+
+test("the merge marks sit between the review glyph and the blocked pills", () => {
+  const row = rowFor(
+    pr({
+      approved: true,
+      awaiting_review: true,
+      merge_queue_position: 2,
+      auto_merge: true,
+      checks_running: true,
+      blocked_reasons: ["threads"],
+    }),
+  );
+  expect(row.marks.map((mark) => mark.kind)).toEqual([
+    "approved",
+    "awaiting-review",
+    "merge-queue",
+    "auto-merge",
+    "checks-running",
+    "blocked",
+  ]);
+});
+
 // The teens are the trap: 11, 12 and 13 take "th" although they end in 1, 2
 // and 3.
 test("the merge queue tooltip states the position as an English ordinal", () => {
-  const tip = (position: number) =>
-    rowFor(pr({ merge_queue_position: position })).marks[0].tip;
+  const tip = (position: number) => {
+    const [mark] = rowFor(pr({ merge_queue_position: position })).marks;
+    return mark.kind === "merge-queue" ? mark.tip : null;
+  };
   expect(tip(1)).toBe("1st in merge queue");
   expect(tip(2)).toBe("2nd in merge queue");
   expect(tip(3)).toBe("3rd in merge queue");

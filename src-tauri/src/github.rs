@@ -176,6 +176,28 @@ pub struct PullRequest {
     /// property-not-event rule as `blocked_reasons`, so a position change
     /// never counts as unread.
     pub merge_queue_position: Option<u64>,
+    /// Names of the failed checks behind the `Ci` reason, in GitHub's order;
+    /// the CI pill names the first. Only the checks that gate the merge are
+    /// listed (see [`checks_for`]). Empty whenever `Ci` is not raised, and
+    /// also when it is raised from the rollup alone, with no check to name.
+    pub failing_checks: Vec<String>,
+    /// Whether the PR has more checks than the one page read, so
+    /// `failing_checks` may be short of the full list. The pill then says
+    /// "+ more" and never a count.
+    pub failing_checks_truncated: bool,
+    /// Whether a check that gates the merge is still running and none has
+    /// failed. Renders as the neutral Running mark. Suppressed on drafts.
+    /// Same property-not-event rule as `blocked_reasons`.
+    pub checks_running: bool,
+    /// Whether auto-merge is armed: GitHub merges the PR itself once its
+    /// requirements are met. Renders as the Auto mark. Suppressed on drafts.
+    /// Same property-not-event rule as `blocked_reasons`.
+    pub auto_merge: bool,
+    /// Whether nothing stands between the PR and its merge but the viewer
+    /// pressing the button (see [`ready_to_merge`]). Only ever set in Mine.
+    /// Renders as the Ready to merge pill. Same property-not-event rule as
+    /// `blocked_reasons`.
+    pub ready_to_merge: bool,
     /// Human activity newer than the PR's last-read watermark; filled in by
     /// the unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -434,7 +456,7 @@ impl<T: Transport> Client<'_, T> {
             query.push('}');
 
             let response = self.graphql(&query, json!({})).await?;
-            let Some(data) = response.data else {
+            let Some(mut data) = response.data else {
                 let error = error_from_graphql(response.errors);
                 // GitHub refuses a whole query over one field it will not
                 // serve. If the search was that field, the round is asked
@@ -470,9 +492,11 @@ impl<T: Transport> Client<'_, T> {
             let mut still_pending = Vec::new();
             for (i, (owner, name, _)) in pending.iter().enumerate() {
                 let alias = format!("r{i}");
-                let Some(repo) = data.get(alias.as_str()).filter(|v| !v.is_null()) else {
+                let Some(repo) = data.get_mut(alias.as_str()).filter(|v| !v.is_null()) else {
                     continue;
                 };
+                self.add_check_detail(repo, owner, name, &mut rate_limit)
+                    .await?;
                 if let Some(cursor) = collect_repo_prs(repo, &viewer, &mut prs) {
                     still_pending.push((owner.clone(), name.clone(), Some(cursor)));
                 }
@@ -495,6 +519,63 @@ impl<T: Transport> Client<'_, T> {
         // sort lexically.
         prs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(FetchedPrs { prs, rate_limit })
+    }
+
+    /// Completes one repo's page of PR nodes in place: each PR whose rollup
+    /// leaves a question (see [`needs_check_detail`]) gets its head commit
+    /// replaced by one that also lists the individual checks, so everything
+    /// reading the node afterwards sees them as if the page had carried them.
+    /// One query per such PR; this is the sync's only cost that grows with
+    /// how many PRs are red or running.
+    ///
+    /// The whole `commits` field is replaced, rollup state included, so the
+    /// state and the checks always describe the same commit even when a push
+    /// landed between the two queries.
+    ///
+    /// A query GitHub declines leaves the node as the page gave it, and the
+    /// rollup state answers alone (see [`checks_for`]). Running out of quota
+    /// is the exception and fails the fetch like any other request would.
+    async fn add_check_detail(
+        &self,
+        repo: &mut Value,
+        owner: &str,
+        name: &str,
+        rate_limit: &mut Option<RateLimit>,
+    ) -> Result<(), GithubError> {
+        let nodes = repo
+            .pointer_mut("/pullRequests/nodes")
+            .and_then(Value::as_array_mut);
+        for node in nodes.into_iter().flatten() {
+            if !needs_check_detail(node) {
+                continue;
+            }
+            let Some(number) = node.get("number").and_then(Value::as_u64) else {
+                continue;
+            };
+            let response = self
+                .graphql(
+                    CHECK_DETAIL_QUERY,
+                    json!({ "owner": owner, "name": name, "number": number }),
+                )
+                .await?;
+            let Some(mut detail) = response.data else {
+                let error = error_from_graphql(response.errors);
+                if matches!(error, GithubError::RateLimited { .. }) {
+                    return Err(error);
+                }
+                continue;
+            };
+            if let Some(limit) = collect_rate_limit(&detail) {
+                *rate_limit = Some(limit);
+            }
+            if let Some(commits) = detail
+                .pointer_mut("/repository/pullRequest/commits")
+                .filter(|c| !c.is_null())
+            {
+                node["commits"] = commits.take();
+            }
+        }
+        Ok(())
     }
 
     async fn fetch_merged_status(
@@ -811,6 +892,36 @@ fn collect_team_requested(data: &Value, out: &mut HashSet<String>) -> Option<Str
         .map(String::from)
 }
 
+/// One PR's head commit with its individual checks, in the shape the paged
+/// query gives `commits` plus `contexts`. It is a query of its own because
+/// `isRequired` must be told which PR it is asked about (required checks
+/// follow the base branch), and the paged query cannot bind a number per row.
+///
+/// One page of 100 is all that is read: past that the row says "+ more"
+/// rather than paging a monorepo's checks every poll.
+///
+/// The rollup mixes two kinds of check, GitHub Actions-style `CheckRun`s and
+/// the older commit `StatusContext`s, so both fragments are needed; dropping
+/// either makes its checks invisible rather than passing.
+const CHECK_DETAIL_QUERY: &str = "\
+query($owner: String!, $name: String!, $number: Int!) { \
+  rateLimit { remaining resetAt } \
+  repository(owner: $owner, name: $name) { \
+    pullRequest(number: $number) { \
+      commits(last: 1) { nodes { commit { statusCheckRollup { \
+        state \
+        contexts(first: 100) { \
+          pageInfo { hasNextPage } \
+          nodes { \
+            ... on CheckRun { name status conclusion isRequired(pullRequestNumber: $number) } \
+            ... on StatusContext { context state isRequired(pullRequestNumber: $number) } \
+          } \
+        } \
+      } } } } \
+    } \
+  } \
+}";
+
 fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> String {
     let after = after
         .map(|c| format!(", after: {}", json!(c)))
@@ -826,6 +937,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
                number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
                isDraft mergeable mergeStateStatus reviewDecision \
                mergeQueueEntry {{ position }} \
+               autoMergeRequest {{ enabledAt }} \
                author {{ __typename login avatarUrl }} \
                assignees(first: {ASSIGNEE_PAGE}) {{ nodes {{ login }} }} \
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
@@ -865,6 +977,12 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         let section = section_for(node, viewer);
         let review_requested = !is_draft && review_requested_for(node, viewer);
         let activity = collect_activity(node, viewer);
+        let checks = checks_for(node);
+        let blocked_reasons = blocked_reasons_for(node, &checks);
+        let ready_to_merge = ready_to_merge(node, section, &blocked_reasons, &checks);
+        // The names belong to the CI pill, so they go only where it shows: a
+        // draft or an unsettled mergeability suppresses both together.
+        let ci_raised = blocked_reasons.contains(&BlockedReason::Ci);
         out.push(PullRequest {
             number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
             title: node
@@ -903,7 +1021,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .unwrap_or_default()
                 .to_string(),
             section,
-            blocked_reasons: blocked_reasons_for(node),
+            blocked_reasons,
             is_draft,
             // Suppressed on drafts, matching the blocked pills: a draft is the
             // author's not-ready choice, so the row never nags you to act on
@@ -929,6 +1047,15 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             merge_queue_position: node
                 .pointer("/mergeQueueEntry/position")
                 .and_then(Value::as_u64),
+            failing_checks_truncated: ci_raised && checks.truncated,
+            checks_running: !is_draft && checks.pending && !checks.failed,
+            failing_checks: if ci_raised {
+                checks.failing
+            } else {
+                Vec::new()
+            },
+            auto_merge: !is_draft && is_set(node, "autoMergeRequest"),
+            ready_to_merge,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.human,
@@ -1017,8 +1144,9 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 }
 
 /// Composes the row's blocked indicator from mergeability, the head commit's
-/// CI rollup, the review decision, unresolved review threads, and the
-/// merge-state status, in the fixed severity order. Only negative states
+/// checks (see [`checks_for`]), the review decision, unresolved review
+/// threads, and the merge-state status, in the fixed severity order. Only
+/// negative states
 /// light it: a mergeable, in-flight, or quiet PR yields an empty list so an
 /// undecorated row keeps meaning "nothing is stuck".
 ///
@@ -1040,21 +1168,21 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 /// act-states. An exact `BEHIND` match degrades to no pill on a repo we
 /// cannot see into, rather than to a wrong one; the cost is that the behind
 /// signal is simply absent for PRs in repos the viewer cannot push to.
-fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
+///
+/// `checks` must be `checks_for(node)`; it is a parameter only so the caller
+/// reads the checks once for everything that needs them.
+fn blocked_reasons_for(node: &Value, checks: &Checks) -> Vec<BlockedReason> {
     let field = |name: &str| node.get(name).and_then(Value::as_str);
     if node.get("isDraft").and_then(Value::as_bool) == Some(true)
         || field("mergeable") == Some("UNKNOWN")
     {
         return Vec::new();
     }
-    let ci = node
-        .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
-        .and_then(Value::as_str);
     let mut reasons = Vec::new();
     if field("mergeable") == Some("CONFLICTING") {
         reasons.push(BlockedReason::Conflict);
     }
-    if matches!(ci, Some("FAILURE") | Some("ERROR")) {
+    if checks.failed {
         reasons.push(BlockedReason::Ci);
     }
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
@@ -1080,6 +1208,162 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
         reasons.push(BlockedReason::Behind);
     }
     reasons
+}
+
+/// What the head commit's checks say about merging the PR.
+#[derive(Debug, Default, PartialEq)]
+struct Checks {
+    /// Names of the failed checks that gate the merge, in GitHub's order.
+    failing: Vec<String>,
+    /// Whether a gating check failed. True with `failing` empty when only
+    /// the rollup says so and there is no check to name.
+    failed: bool,
+    /// Whether a gating check has yet to finish. Independent of `failed`.
+    pending: bool,
+    /// Whether GitHub holds more checks than the page read.
+    truncated: bool,
+}
+
+enum CheckOutcome {
+    Failed,
+    Pending,
+    Passed,
+}
+
+/// Normalizes one rollup context. The two kinds GitHub mixes in the list
+/// spell their verdict differently: a `CheckRun` in `conclusion`, which is
+/// null until the run completes, and a `StatusContext` in `state`. Anything
+/// that is neither a pass nor a failure is still on its way, a missing
+/// conclusion included.
+fn check_outcome(context: &Value) -> CheckOutcome {
+    let verdict = ["conclusion", "state"]
+        .iter()
+        .find_map(|field| context.get(*field).and_then(Value::as_str));
+    match verdict {
+        Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => CheckOutcome::Passed,
+        Some(
+            "FAILURE" | "ERROR" | "CANCELLED" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE",
+        ) => CheckOutcome::Failed,
+        _ => CheckOutcome::Pending,
+    }
+}
+
+/// Reads the head commit's checks, counting only the ones that gate the
+/// merge: the required checks, or every check when none of those read is
+/// marked required, where the rollup's "any failure fails" is all there is
+/// to go on. An optional check listed beside a required one never counts,
+/// failed or running.
+///
+/// The individual checks are on the node only once
+/// [`Client::add_check_detail`] has put them there. Without them the rollup
+/// state answers alone, as it also does for whatever a truncated page leaves
+/// unseen: a failing or pending rollup that the page cannot account for is
+/// believed rather than read as a pass.
+fn checks_for(node: &Value) -> Checks {
+    let rollup = node.pointer("/commits/nodes/0/commit/statusCheckRollup");
+    let state = rollup.and_then(|r| r.get("state")).and_then(Value::as_str);
+    let rollup_failed = matches!(state, Some("FAILURE" | "ERROR"));
+    let rollup_pending = matches!(state, Some("PENDING" | "EXPECTED"));
+    let Some(contexts) = rollup
+        .and_then(|r| r.get("contexts"))
+        .filter(|c| !c.is_null())
+    else {
+        return Checks {
+            failed: rollup_failed,
+            pending: rollup_pending,
+            ..Checks::default()
+        };
+    };
+
+    let truncated = contexts
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let required = |c: &Value| c.get("isRequired").and_then(Value::as_bool) == Some(true);
+    let nodes = list(contexts, "/nodes");
+    let any_required = nodes.iter().any(required);
+    let mut failing = Vec::new();
+    let mut failed = false;
+    let mut pending = false;
+    for context in nodes.iter().filter(|c| !any_required || required(c)) {
+        match check_outcome(context) {
+            CheckOutcome::Failed => {
+                failed = true;
+                // A `CheckRun` is named by `name`, a `StatusContext` by
+                // `context`. A failure with neither still counts; it just
+                // has nothing to put on the pill.
+                let name = ["name", "context"]
+                    .iter()
+                    .find_map(|field| context.get(*field).and_then(Value::as_str));
+                failing.extend(name.filter(|n| !n.is_empty()).map(String::from));
+            }
+            CheckOutcome::Pending => pending = true,
+            CheckOutcome::Passed => {}
+        }
+    }
+    Checks {
+        failed: failed || (truncated && rollup_failed),
+        pending: pending || (truncated && rollup_pending),
+        failing,
+        truncated,
+    }
+}
+
+/// Whether the PR's rollup leaves a question only its individual checks
+/// answer: which check failed and whether it is required, or whether the
+/// ones still running are. A passing or absent rollup leaves none, and a
+/// draft shows no check marks at all.
+fn needs_check_detail(node: &Value) -> bool {
+    let state = node
+        .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
+        .and_then(Value::as_str);
+    node.get("isDraft").and_then(Value::as_bool) != Some(true)
+        && matches!(state, Some("FAILURE" | "ERROR" | "PENDING" | "EXPECTED"))
+}
+
+/// Whether `node` carries a non-null `name` field: GitHub answers null for
+/// an object field with nothing behind it, such as a PR that is not queued.
+fn is_set(node: &Value, name: &str) -> bool {
+    node.get(name).is_some_and(|v| !v.is_null())
+}
+
+/// Whether the merge button is all that is left: the PR is the viewer's,
+/// GitHub can merge it, nothing blocks it, every gating check has passed,
+/// and review is settled. Review is settled by an explicit approval, or, on
+/// a repo that requires none (a null decision), by nobody still being asked.
+///
+/// Mergeability must be an explicit `MERGEABLE`: `UNKNOWN` empties the
+/// blocked reasons (see [`blocked_reasons_for`]) and so would otherwise read
+/// as ready for the one poll after every push.
+///
+/// A PR in the merge queue or with auto-merge armed is not ready: the merge
+/// is already under way and needs nothing from the viewer.
+///
+/// A `mergeStateStatus` of `CLEAN` would be the obvious shortcut. It is not
+/// read, for the reasons recorded on [`blocked_reasons_for`].
+///
+/// `reasons` and `checks` must be the ones read off this `node`.
+fn ready_to_merge(
+    node: &Value,
+    section: Section,
+    reasons: &[BlockedReason],
+    checks: &Checks,
+) -> bool {
+    let field = |name: &str| node.get(name).and_then(Value::as_str);
+    let review_settled = match field("reviewDecision") {
+        Some("APPROVED") => true,
+        None => !has_pending_review_request(node),
+        Some(_) => false,
+    };
+    section == Section::Mine
+        && node.get("isDraft").and_then(Value::as_bool) != Some(true)
+        && field("mergeable") == Some("MERGEABLE")
+        // A failed check is among the reasons; one still running is not.
+        && reasons.is_empty()
+        && !checks.pending
+        && review_settled
+        && !is_set(node, "mergeQueueEntry")
+        && !is_set(node, "autoMergeRequest")
 }
 
 /// Whether the viewer appears among the PR's requested reviewers. Team
@@ -1179,6 +1463,11 @@ mod tests {
             .unwrap()
             .extend(overrides.as_object().unwrap().clone());
         node
+    }
+
+    /// The blocked reasons of a node, as `collect_repo_prs` derives them.
+    fn blocked_reasons(node: &Value) -> Vec<BlockedReason> {
+        blocked_reasons_for(node, &checks_for(node))
     }
 
     fn pr_node(overrides: Value) -> Value {
@@ -1430,7 +1719,7 @@ mod tests {
 
     #[test]
     fn each_blocked_trigger_lights_the_marker_on_its_own() {
-        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
         assert_eq!(
             reasons(json!({ "mergeable": "CONFLICTING" })),
             vec![BlockedReason::Conflict]
@@ -1462,7 +1751,7 @@ mod tests {
     /// severity order still lists harder reasons first.
     #[test]
     fn unresolved_threads_flag_independently_of_other_signals() {
-        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
         let unresolved = || review_threads(&[false]);
         assert_eq!(
             reasons(json!({
@@ -1520,7 +1809,7 @@ mod tests {
 
     #[test]
     fn mergeable_in_flight_and_quiet_prs_stay_undecorated() {
-        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
         // The pr_node fixture has no CI, mergeability, or review fields at all.
         assert_eq!(reasons(json!({})), Vec::<BlockedReason>::new());
         assert_eq!(
@@ -1570,7 +1859,7 @@ mod tests {
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(
-            blocked_reasons_for(&node),
+            blocked_reasons(&node),
             vec![
                 BlockedReason::Conflict,
                 BlockedReason::Ci,
@@ -1593,7 +1882,7 @@ mod tests {
             "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
-        assert_eq!(blocked_reasons_for(&node), Vec::new());
+        assert_eq!(blocked_reasons(&node), Vec::new());
     }
 
     /// GitHub computes `mergeable` lazily and answers `UNKNOWN` until it
@@ -1607,7 +1896,317 @@ mod tests {
             "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
-        assert_eq!(blocked_reasons_for(&node), Vec::new());
+        assert_eq!(blocked_reasons(&node), Vec::new());
+    }
+
+    fn check_run(name: &str, conclusion: Option<&str>, required: bool) -> Value {
+        let status = if conclusion.is_some() {
+            "COMPLETED"
+        } else {
+            "IN_PROGRESS"
+        };
+        json!({ "name": name, "status": status, "conclusion": conclusion, "isRequired": required })
+    }
+
+    fn status_context(context: &str, state: &str, required: bool) -> Value {
+        json!({ "context": context, "state": state, "isRequired": required })
+    }
+
+    /// A `commits` connection whose head commit rolls up to `state` and
+    /// lists `contexts`, as a node reads once its checks are filled in.
+    /// `more` says GitHub holds further checks past this page.
+    fn checked_commits(state: &str, contexts: Vec<Value>, more: bool) -> Value {
+        json!({ "nodes": [{ "commit": { "statusCheckRollup": {
+            "state": state,
+            "contexts": { "pageInfo": { "hasNextPage": more }, "nodes": contexts }
+        } } }] })
+    }
+
+    /// The row `collect_repo_prs` builds for one PR node.
+    fn row(overrides: Value) -> PullRequest {
+        let mut out = Vec::new();
+        collect_repo_prs(&repo_with(vec![pr_node(overrides)]), "khiet", &mut out);
+        out.remove(0)
+    }
+
+    #[test]
+    fn a_failed_required_check_raises_ci_and_is_the_one_named() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![
+                check_run("lint-optional", Some("FAILURE"), false),
+                check_run("e2e-safari", Some("FAILURE"), true),
+                check_run("build", Some("SUCCESS"), true),
+            ],
+            false,
+        ) }));
+        assert_eq!(pr.blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(pr.failing_checks, vec!["e2e-safari"]);
+        assert!(!pr.failing_checks_truncated);
+    }
+
+    #[test]
+    fn failures_in_optional_checks_alone_raise_nothing() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![
+                check_run("lint-optional", Some("FAILURE"), false),
+                check_run("build", Some("SUCCESS"), true),
+            ],
+            false,
+        ) }));
+        assert_eq!(pr.blocked_reasons, Vec::new());
+        assert_eq!(pr.failing_checks, Vec::<String>::new());
+        assert!(!pr.checks_running);
+    }
+
+    /// With nothing marked required there is no gate to read, so the rollup's
+    /// meaning stands: any failure is a failure.
+    #[test]
+    fn any_failed_check_counts_when_the_repo_requires_none() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![
+                check_run("build", Some("SUCCESS"), false),
+                check_run("lint", Some("TIMED_OUT"), false),
+            ],
+            false,
+        ) }));
+        assert_eq!(pr.blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(pr.failing_checks, vec!["lint"]);
+    }
+
+    /// A pill reading "CI: " would name nothing; the plain label is honest.
+    #[test]
+    fn a_failed_check_without_a_name_raises_ci_and_names_nothing() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![json!({ "conclusion": "FAILURE", "isRequired": true })],
+            false,
+        ) }));
+        assert_eq!(pr.blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(pr.failing_checks, Vec::<String>::new());
+    }
+
+    #[test]
+    fn check_runs_and_commit_statuses_are_both_read_as_checks() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![
+                status_context("ci/legacy", "ERROR", true),
+                check_run("e2e-safari", Some("FAILURE"), true),
+                status_context("coverage", "SUCCESS", true),
+            ],
+            false,
+        ) }));
+        assert_eq!(pr.failing_checks, vec!["ci/legacy", "e2e-safari"]);
+    }
+
+    #[test]
+    fn a_check_run_without_a_conclusion_is_still_running() {
+        let pr = row(json!({ "commits": checked_commits(
+            "PENDING",
+            vec![
+                check_run("build", Some("SUCCESS"), true),
+                check_run("e2e-safari", None, true),
+            ],
+            false,
+        ) }));
+        assert!(pr.checks_running);
+        assert_eq!(pr.blocked_reasons, Vec::new());
+    }
+
+    #[test]
+    fn a_pending_commit_status_is_running_too() {
+        let pr = row(json!({ "commits": checked_commits(
+            "PENDING",
+            vec![status_context("ci/legacy", "PENDING", true)],
+            false,
+        ) }));
+        assert!(pr.checks_running);
+    }
+
+    /// Running means "nothing has failed yet"; once a required check fails
+    /// the CI pill says so and the running mark would only add noise.
+    #[test]
+    fn a_failed_check_outranks_the_ones_still_running() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![
+                check_run("build", Some("FAILURE"), true),
+                check_run("e2e-safari", None, true),
+            ],
+            false,
+        ) }));
+        assert_eq!(pr.blocked_reasons, vec![BlockedReason::Ci]);
+        assert!(!pr.checks_running);
+    }
+
+    #[test]
+    fn checks_past_the_fetched_page_mark_the_failing_list_truncated() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![check_run("e2e-safari", Some("FAILURE"), true)],
+            true,
+        ) }));
+        assert_eq!(pr.failing_checks, vec!["e2e-safari"]);
+        assert!(pr.failing_checks_truncated);
+    }
+
+    /// The failure sits past the page, so whether it is required is unknown;
+    /// the rollup's verdict stands rather than being read as a pass.
+    #[test]
+    fn a_failing_rollup_whose_failure_is_past_the_page_still_raises_ci() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![check_run("build", Some("SUCCESS"), true)],
+            true,
+        ) }));
+        assert_eq!(pr.blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(pr.failing_checks, Vec::<String>::new());
+    }
+
+    /// The names belong to the CI pill; where the pill is held back, a
+    /// check name with nothing to label would only invite a second reading.
+    #[test]
+    fn failing_check_names_are_held_back_with_the_ci_pill() {
+        let failed = || {
+            checked_commits(
+                "FAILURE",
+                vec![check_run("e2e-safari", Some("FAILURE"), true)],
+                true,
+            )
+        };
+        for held_back in [
+            json!({ "mergeable": "UNKNOWN", "commits": failed() }),
+            json!({ "isDraft": true, "commits": failed() }),
+        ] {
+            let pr = row(held_back);
+            assert_eq!(pr.blocked_reasons, Vec::new());
+            assert_eq!(pr.failing_checks, Vec::<String>::new());
+            assert!(!pr.failing_checks_truncated);
+        }
+    }
+
+    #[test]
+    fn a_pending_rollup_without_check_detail_reads_as_running() {
+        assert!(row(json!({ "commits": ci_commits("PENDING") })).checks_running);
+        assert!(!row(json!({ "commits": ci_commits("SUCCESS") })).checks_running);
+    }
+
+    #[test]
+    fn a_draft_shows_no_running_or_auto_merge_mark() {
+        let pr = row(json!({
+            "isDraft": true,
+            "commits": ci_commits("PENDING"),
+            "autoMergeRequest": { "enabledAt": "2026-07-11T09:00:00Z" },
+        }));
+        assert!(!pr.checks_running);
+        assert!(!pr.auto_merge);
+    }
+
+    #[test]
+    fn armed_auto_merge_is_read_onto_the_row() {
+        let armed = json!({ "autoMergeRequest": { "enabledAt": "2026-07-11T09:00:00Z" } });
+        assert!(row(armed).auto_merge);
+        assert!(!row(json!({ "autoMergeRequest": null })).auto_merge);
+    }
+
+    /// One of the viewer's PRs with nothing between it and the merge button.
+    fn ready_node(overrides: Value) -> Value {
+        with(
+            json!({
+                "viewerDidAuthor": true,
+                "mergeable": "MERGEABLE",
+                "reviewDecision": "APPROVED",
+                "commits": ci_commits("SUCCESS"),
+            }),
+            overrides,
+        )
+    }
+
+    #[test]
+    fn an_approved_mergeable_pr_of_the_viewers_with_nothing_in_the_way_is_ready() {
+        assert!(row(ready_node(json!({}))).ready_to_merge);
+    }
+
+    #[test]
+    fn unknown_mergeability_is_never_ready() {
+        assert!(!row(ready_node(json!({ "mergeable": "UNKNOWN" }))).ready_to_merge);
+    }
+
+    /// A null decision means the repo asks for no review; an outstanding
+    /// request shows the author asked for one anyway.
+    #[test]
+    fn without_required_reviews_a_pr_is_ready_once_no_request_is_outstanding() {
+        assert!(row(ready_node(json!({ "reviewDecision": null }))).ready_to_merge);
+        let asked = ready_node(json!({
+            "reviewDecision": null,
+            "reviewRequests": review_requests(&["someone"]),
+        }));
+        assert!(!row(asked).ready_to_merge);
+        assert!(!row(ready_node(json!({ "reviewDecision": "REVIEW_REQUIRED" }))).ready_to_merge);
+    }
+
+    #[test]
+    fn any_blocked_reason_keeps_an_approved_pr_from_ready() {
+        let unresolved = ready_node(json!({ "reviewThreads": review_threads(&[false]) }));
+        assert!(!row(unresolved).ready_to_merge);
+        let behind = ready_node(json!({ "mergeStateStatus": "BEHIND" }));
+        assert!(!row(behind).ready_to_merge);
+    }
+
+    #[test]
+    fn a_required_check_still_running_keeps_a_pr_from_ready() {
+        let running = ready_node(json!({ "commits": checked_commits(
+            "PENDING",
+            vec![check_run("e2e-safari", None, true)],
+            false,
+        ) }));
+        assert!(!row(running).ready_to_merge);
+    }
+
+    /// Optional checks do not gate the merge, so neither their failure nor
+    /// their progress holds a PR back.
+    #[test]
+    fn optional_checks_do_not_keep_a_pr_from_ready() {
+        let optional = ready_node(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![
+                check_run("build", Some("SUCCESS"), true),
+                check_run("lint-optional", Some("FAILURE"), false),
+                check_run("preview", None, false),
+            ],
+            false,
+        ) }));
+        assert!(row(optional).ready_to_merge);
+    }
+
+    /// Queued or armed, the merge is already under way: there is nothing
+    /// left for the viewer to press.
+    #[test]
+    fn a_queued_or_auto_merging_pr_is_not_ready() {
+        let queued = ready_node(json!({ "mergeQueueEntry": { "position": 1 } }));
+        assert!(!row(queued).ready_to_merge);
+        let armed = ready_node(json!({
+            "autoMergeRequest": { "enabledAt": "2026-07-11T09:00:00Z" }
+        }));
+        assert!(!row(armed).ready_to_merge);
+    }
+
+    #[test]
+    fn only_a_pr_in_mine_is_ever_ready() {
+        let participated = ready_node(json!({
+            "viewerDidAuthor": false,
+            "viewerSubscription": "SUBSCRIBED",
+        }));
+        assert!(!row(participated).ready_to_merge);
+        assert!(!row(ready_node(json!({ "viewerDidAuthor": false }))).ready_to_merge);
+    }
+
+    #[test]
+    fn a_draft_is_never_ready() {
+        assert!(!row(ready_node(json!({ "isDraft": true }))).ready_to_merge);
     }
 
     /// `PrList.tsx` maps these exact strings to tooltip labels, so every
@@ -2685,34 +3284,37 @@ mod tests {
     /// only shows them if that query asks for each one.
     #[test]
     fn a_fetched_row_carries_its_queue_position_and_blocked_state() {
-        let github = Canned::new(vec![ok(prs_round(
-            5000,
-            vec![repo_named(
-                "acme/widgets",
-                vec![
-                    pr_node(json!({
-                        "number": 1,
-                        "updatedAt": "2026-07-11T03:00:00Z",
-                        "mergeQueueEntry": { "position": 3 },
-                        "mergeable": "CONFLICTING",
-                        "commits": ci_commits("FAILURE"),
-                        "reviewDecision": "CHANGES_REQUESTED",
-                        "reviewThreads": review_threads(&[false]),
-                    })),
-                    pr_node(json!({
-                        "number": 2,
-                        "updatedAt": "2026-07-11T02:00:00Z",
-                        "mergeStateStatus": "BEHIND",
-                    })),
-                    pr_node(json!({
-                        "number": 3,
-                        "updatedAt": "2026-07-11T01:00:00Z",
-                        "isDraft": true,
-                    })),
-                ],
-                None,
-            )],
-        ))]);
+        let github = Canned::new(vec![
+            ok(prs_round(
+                5000,
+                vec![repo_named(
+                    "acme/widgets",
+                    vec![
+                        pr_node(json!({
+                            "number": 1,
+                            "updatedAt": "2026-07-11T03:00:00Z",
+                            "mergeQueueEntry": { "position": 3 },
+                            "mergeable": "CONFLICTING",
+                            "commits": ci_commits("FAILURE"),
+                            "reviewDecision": "CHANGES_REQUESTED",
+                            "reviewThreads": review_threads(&[false]),
+                        })),
+                        pr_node(json!({
+                            "number": 2,
+                            "updatedAt": "2026-07-11T02:00:00Z",
+                            "mergeStateStatus": "BEHIND",
+                        })),
+                        pr_node(json!({
+                            "number": 3,
+                            "updatedAt": "2026-07-11T01:00:00Z",
+                            "isDraft": true,
+                        })),
+                    ],
+                    None,
+                )],
+            )),
+            ok(checks_answer(4999, ci_commits("FAILURE"))),
+        ]);
 
         let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
 
@@ -2741,30 +3343,267 @@ mod tests {
                 .collect();
             json!({ "nodes": nodes })
         };
-        let github = Canned::new(vec![ok(prs_round(
-            5000,
-            vec![repo_named(
-                "acme/widgets",
-                vec![
-                    pr_node(json!({
-                        "number": 1,
-                        "updatedAt": "2026-07-11T02:00:00Z",
-                        "commits": history(&["SUCCESS", "FAILURE"]),
-                    })),
-                    pr_node(json!({
-                        "number": 2,
-                        "updatedAt": "2026-07-11T01:00:00Z",
-                        "commits": history(&["FAILURE", "SUCCESS"]),
-                    })),
-                ],
-                None,
-            )],
-        ))]);
+        let github = Canned::new(vec![
+            ok(prs_round(
+                5000,
+                vec![repo_named(
+                    "acme/widgets",
+                    vec![
+                        pr_node(json!({
+                            "number": 1,
+                            "updatedAt": "2026-07-11T02:00:00Z",
+                            "commits": history(&["SUCCESS", "FAILURE"]),
+                        })),
+                        pr_node(json!({
+                            "number": 2,
+                            "updatedAt": "2026-07-11T01:00:00Z",
+                            "commits": history(&["FAILURE", "SUCCESS"]),
+                        })),
+                    ],
+                    None,
+                )],
+            )),
+            ok(checks_answer(4999, ci_commits("FAILURE"))),
+        ]);
 
         let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
 
         assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Ci]);
         assert_eq!(prs[1].blocked_reasons, vec![]);
+    }
+
+    /// The `data` answering one PR's check-detail query: its head commit
+    /// with the individual checks.
+    fn checks_answer(remaining: u64, commits: Value) -> Value {
+        json!({
+            "rateLimit": { "remaining": remaining, "resetAt": "1970-01-01T01:00:00Z" },
+            "repository": { "pullRequest": { "commits": commits } }
+        })
+    }
+
+    /// One open-PR round holding `nodes` in acme/widgets.
+    fn widgets_round(nodes: Vec<Value>) -> HttpResponse {
+        ok(prs_round(
+            5000,
+            vec![repo_named("acme/widgets", nodes, None)],
+        ))
+    }
+
+    /// The rollup says only that something failed. Which check, and whether
+    /// it is required, takes a query that can name the PR.
+    #[test]
+    fn a_failing_rollup_is_followed_up_for_the_checks_behind_it() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({
+                "number": 12,
+                "commits": ci_commits("FAILURE"),
+            }))]),
+            ok(checks_answer(
+                4999,
+                checked_commits(
+                    "FAILURE",
+                    vec![
+                        check_run("lint-optional", Some("FAILURE"), false),
+                        status_context("ci/legacy", "FAILURE", true),
+                        check_run("e2e-safari", Some("FAILURE"), true),
+                    ],
+                    false,
+                ),
+            )),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(github.request_count(), 2);
+        assert_eq!(
+            github.variables(1),
+            json!({ "owner": "acme", "name": "widgets", "number": 12 })
+        );
+        assert!(github
+            .query(1)
+            .contains("isRequired(pullRequestNumber: $number)"));
+        assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(prs[0].failing_checks, vec!["ci/legacy", "e2e-safari"]);
+        assert!(!prs[0].failing_checks_truncated);
+    }
+
+    #[test]
+    fn a_pending_rollup_is_followed_up_for_whether_a_required_check_is_running() {
+        let pending = |number: u64, updated: &str| {
+            pr_node(json!({
+                "number": number,
+                "updatedAt": updated,
+                "commits": ci_commits("PENDING"),
+            }))
+        };
+        let github = Canned::new(vec![
+            widgets_round(vec![
+                pending(1, "2026-07-11T02:00:00Z"),
+                pending(2, "2026-07-11T01:00:00Z"),
+            ]),
+            ok(checks_answer(
+                4999,
+                checked_commits("PENDING", vec![check_run("build", None, true)], false),
+            )),
+            ok(checks_answer(
+                4998,
+                checked_commits(
+                    "PENDING",
+                    vec![
+                        check_run("build", Some("SUCCESS"), true),
+                        check_run("preview", None, false),
+                    ],
+                    false,
+                ),
+            )),
+        ]);
+
+        let fetched = fetch_open(&github, &["acme/widgets"]).unwrap();
+
+        assert_eq!(github.variables(1)["number"], json!(1));
+        assert_eq!(github.variables(2)["number"], json!(2));
+        assert!(fetched.prs[0].checks_running);
+        assert!(!fetched.prs[1].checks_running);
+        // The budget the sync loop plans around is the one after the last
+        // request, and the follow-ups come last.
+        assert_eq!(fetched.rate_limit.unwrap().remaining, 4998);
+    }
+
+    /// Follow-ups are the sync's variable cost, so they go only where the
+    /// rollup leaves a question: not to a passing PR, one with no checks, or
+    /// a draft, which shows no check marks whatever they say.
+    #[test]
+    fn a_pr_whose_rollup_settles_it_costs_no_follow_up() {
+        let github = Canned::new(vec![widgets_round(vec![
+            pr_node(json!({ "number": 1, "commits": ci_commits("SUCCESS") })),
+            pr_node(json!({ "number": 2 })),
+            pr_node(json!({
+                "number": 3,
+                "isDraft": true,
+                "commits": ci_commits("FAILURE"),
+            })),
+        ])]);
+
+        fetch_open(&github, &["acme/widgets"]).unwrap();
+
+        assert_eq!(github.request_count(), 1);
+    }
+
+    #[test]
+    fn a_pr_with_more_checks_than_one_page_reports_its_failures_truncated() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({ "commits": ci_commits("FAILURE") }))]),
+            ok(checks_answer(
+                4999,
+                checked_commits(
+                    "FAILURE",
+                    vec![check_run("e2e-safari", Some("FAILURE"), true)],
+                    true,
+                ),
+            )),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].failing_checks, vec!["e2e-safari"]);
+        assert!(prs[0].failing_checks_truncated);
+    }
+
+    /// The check names are an extra on top of the rollup; a token GitHub will
+    /// not show them to still gets the PR and the pill it had before.
+    #[test]
+    fn a_follow_up_github_declines_costs_only_the_check_detail() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({ "commits": ci_commits("FAILURE") }))]),
+            answer(
+                200,
+                &[],
+                json!({ "data": null, "errors": [{ "message": "Resource not accessible" }] }),
+            ),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(prs[0].failing_checks, Vec::<String>::new());
+    }
+
+    /// A push can land between the page and the follow-up. The row then
+    /// describes the newer commit throughout, not the old verdict beside
+    /// the new checks.
+    #[test]
+    fn check_detail_for_a_newer_commit_replaces_the_pages_verdict() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({ "commits": ci_commits("FAILURE") }))]),
+            ok(checks_answer(
+                4999,
+                checked_commits(
+                    "SUCCESS",
+                    vec![check_run("e2e-safari", Some("SUCCESS"), true)],
+                    false,
+                ),
+            )),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].blocked_reasons, Vec::new());
+    }
+
+    /// Merged or closed between the two queries: there is nothing to add,
+    /// and the row keeps what the page said until the next sync drops it.
+    #[test]
+    fn a_pr_gone_by_the_follow_up_keeps_the_rollups_reading() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({ "commits": ci_commits("FAILURE") }))]),
+            ok(json!({
+                "rateLimit": { "remaining": 4999, "resetAt": "1970-01-01T01:00:00Z" },
+                "repository": { "pullRequest": null }
+            })),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Ci]);
+    }
+
+    /// Out of quota is not a refusal to skip past: the sync loop has to hear
+    /// of it to back off.
+    #[test]
+    fn a_rate_limited_follow_up_fails_the_fetch_as_rate_limited() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({ "commits": ci_commits("FAILURE") }))]),
+            answer(
+                200,
+                &[],
+                json!({
+                    "data": null,
+                    "errors": [{ "type": "RATE_LIMITED", "message": "API rate limit exceeded" }]
+                }),
+            ),
+        ]);
+
+        let result = fetch_open(&github, &["acme/widgets"]);
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::RateLimited {
+                reset_epoch_secs: None
+            })
+        );
+    }
+
+    /// Auto-merge rides the paged query, so the row shows it only if that
+    /// query asks.
+    #[test]
+    fn a_fetched_row_carries_armed_auto_merge() {
+        let github = Canned::new(vec![widgets_round(vec![pr_node(json!({
+            "autoMergeRequest": { "enabledAt": "2026-07-11T09:00:00Z" },
+        }))])]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert!(prs[0].auto_merge);
     }
 
     /// The query asks for the newest ten threads, where the open ones skew;
