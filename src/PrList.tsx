@@ -5,61 +5,15 @@ import {
   markRead,
   openUrl,
   prKey,
-  type BlockedReason,
   type MergedPr,
-  type PullRequest,
 } from "./backend";
-
-/* Neutral PR-property wording, deliberately not "you must act": the section
-   the row sits in supplies the "is this mine to fix?" context. */
-const BLOCKED_LABELS: Record<BlockedReason, string> = {
-  conflict: "Merge conflict",
-  ci: "CI failing",
-  review: "Changes requested",
-  threads: "Unresolved threads",
-  behind: "Behind base",
-};
-
-// Joined reason labels in the backend's fixed order; feeds the +N pill's
-// tooltip (called with the reasons the primary pill did not show).
-export function blockedTitle(reasons: BlockedReason[]): string {
-  return reasons.map((reason) => BLOCKED_LABELS[reason]).join("; ");
-}
-
-// The visible pill texts for a blocked row: the first reason spelled out,
-// then "+N" for the rest, so a doubly-blocked row stays width-bounded
-// ("Merge conflict" "+1") instead of listing everything inline. The first
-// reason wins because the backend orders by severity (conflict, ci, review,
-// threads, behind).
-export function blockedPills(reasons: BlockedReason[]): string[] {
-  if (reasons.length === 0) return [];
-  const pills = [BLOCKED_LABELS[reasons[0]]];
-  if (reasons.length > 1) pills.push(`+${reasons.length - 1}`);
-  return pills;
-}
-
-// English ordinal for a positive integer. The suffix follows the last digit,
-// except that 11, 12 and 13 (in every hundred) take "th".
-export function ordinal(n: number): string {
-  const teen = n % 100 >= 11 && n % 100 <= 13;
-  const suffix = teen ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th");
-  return `${n}${suffix}`;
-}
-
-// Tooltip and aria-label of the merge queue mark.
-export function mergeQueueTitle(position: number): string {
-  return `${ordinal(position)} in merge queue`;
-}
-
-const SECTIONS = [
-  { key: "mine", label: "Mine" },
-  { key: "participated", label: "Participated" },
-  { key: "all", label: "All" },
-] as const;
-
-/** Every collapsible top-level section; repo sub-groups inside "All" are
- * deliberately not collapsible. */
-export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
+import type {
+  ListView,
+  Mark,
+  RowView,
+  SectionKey,
+  SectionView,
+} from "./popoverView";
 
 /* Mine and All start collapsed: they are ambient context, not act-now queues,
    so the popover opens on what needs attention (Participated, Merged). */
@@ -88,10 +42,9 @@ function saveCollapsed(state: Record<SectionKey, boolean>): void {
   try {
     localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // After a failed write the toggle lives only until this component next
-    // remounts and re-reads the stale store (a Settings visit or a no-match
-    // filter); acceptable for the exotic failures a persistent WKWebView
-    // can hit.
+    // After a failed write the toggle lives only until the app reloads and
+    // re-reads the stale store; acceptable for the exotic failures a
+    // persistent WKWebView can hit.
   }
 }
 
@@ -112,6 +65,23 @@ export function parseCollapsed(raw: string | null): Record<SectionKey, boolean> 
     // Corrupt JSON: keep the defaults.
   }
   return state;
+}
+
+/** The stored collapse state and its toggle. Call it where the popover view is
+ * derived, above anything that unmounts with the list, so the state outlives
+ * a Settings visit or a no-match filter. */
+export function useCollapsedSections(): [
+  Record<SectionKey, boolean>,
+  (key: SectionKey) => void,
+] {
+  const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const toggle = (key: SectionKey) => {
+    const next = { ...collapsed, [key]: !collapsed[key] };
+    setCollapsed(next);
+    // Persisted outside the state updater: StrictMode double-invokes updaters.
+    saveCollapsed(next);
+  };
+  return [collapsed, toggle];
 }
 
 // Neutral grey silhouette shown while an avatar loads and when it fails.
@@ -140,35 +110,6 @@ export function formatUpdated(iso: string, now: Date = new Date()): string {
   return days === 1 ? "Yesterday" : `${then.getDate()} ${MONTHS[then.getMonth()]}`;
 }
 
-export function totalUnread(prs: PullRequest[]): number {
-  return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
-}
-
-// The fields a filter term can match: title, repo, "#number", and author.
-// Only PullRequest and MergedPr flow through here, and both carry these.
-type Filterable = Pick<PullRequest, "title" | "repo" | "author" | "number">;
-
-const queryTerms = (query: string) =>
-  query.toLowerCase().split(/\s+/).filter(Boolean);
-
-// True when the query carries at least one searchable term. The single owner
-// of "is a filter active": it shares matchesFilter's tokenization, so it can
-// never disagree with "an empty query matches everything".
-export function hasQuery(query: string): boolean {
-  return queryTerms(query).length > 0;
-}
-
-// True when every whitespace-separated term appears somewhere in the row's
-// searchable text (case-insensitive). Terms are AND'd, so "acme fix" narrows
-// rather than widens. An empty or whitespace-only query matches everything.
-export function matchesFilter(item: Filterable, query: string): boolean {
-  const terms = queryTerms(query);
-  if (terms.length === 0) return true;
-  const haystack =
-    `${item.title} ${item.repo} #${item.number} ${item.author}`.toLowerCase();
-  return terms.every((term) => haystack.includes(term));
-}
-
 // Footer label for the last successful sync, reusing the row-timestamp
 // format: "Synced 14:59" today, then "Synced Yesterday", "Synced 14 Jul".
 export function formatLastSync(
@@ -177,28 +118,6 @@ export function formatLastSync(
 ): string | null {
   if (ms === null) return null;
   return `Synced ${formatUpdated(new Date(ms).toISOString(), now)}`;
-}
-
-export interface RepoGroup {
-  repo: string;
-  prs: PullRequest[];
-}
-
-// Groups ordered by their most recently updated PR, so the repo that just moved
-// leads; within a group the caller's order is preserved. An unparseable
-// updated_at sorts as the epoch rather than throwing.
-export function groupByRepo(prs: PullRequest[]): RepoGroup[] {
-  const groups = new Map<string, PullRequest[]>();
-  for (const pr of prs) {
-    const existing = groups.get(pr.repo);
-    if (existing) existing.push(pr);
-    else groups.set(pr.repo, [pr]);
-  }
-  const latest = (rows: PullRequest[]) =>
-    rows.reduce((max, pr) => Math.max(max, Date.parse(pr.updated_at) || 0), 0);
-  return [...groups.entries()]
-    .map(([repo, rows]) => ({ repo, prs: rows }))
-    .sort((a, b) => latest(b.prs) - latest(a.prs));
 }
 
 // The round author avatar with badged corners, app-icon style: the face says
@@ -377,12 +296,70 @@ function DirectionArrow({ dir }: { dir: "in" | "out" }) {
   );
 }
 
+// One item of the marker cluster. Which marks a row has, and their order, is
+// decided by the popover view; this only draws the one it is handed.
+function MarkView({ mark }: { mark: Mark }) {
+  switch (mark.kind) {
+    // The green check: the required approvals are in.
+    case "approved":
+      return (
+        <RowMark tip={mark.tip} ok>
+          <Check />
+        </RowMark>
+      );
+    // Glasses with an incoming arrow: your review is requested. A grey mark
+    // like the draft pill, not a blocked signal: an invitation to act, outside
+    // the blocked pill's "something is stuck" vocabulary.
+    case "review-requested":
+      return (
+        <RowMark tip={mark.tip} wide>
+          <DirectionArrow dir="in" />
+          <Glasses />
+        </RowMark>
+      );
+    // Glasses with an outgoing arrow: one of your PRs is waiting on a
+    // reviewer.
+    case "awaiting-review":
+      return (
+        <RowMark tip={mark.tip} wide>
+          <Glasses />
+          <DirectionArrow dir="out" />
+        </RowMark>
+      );
+    // The stack with the PR's place in the merge queue. A grey mark like the
+    // glasses, since being queued is neither stuck nor a call to act.
+    case "merge-queue":
+      return (
+        <RowMark tip={mark.tip} count>
+          <Stack />
+          {mark.position}
+        </RowMark>
+      );
+    /* A blocked reason, spelled out in a pill (the Draft pill's shape in the
+       blocked orange) so "why is this stuck" reads without hovering. Only the
+       +N pill has a tooltip; the primary pill IS its own label. Distinct from
+       the red unread badge in hue and meaning: orange here says "this PR is
+       blocked", red there says "someone spoke". */
+    case "blocked":
+      return mark.tip === null ? (
+        <span className="pr-blocked-pill">{mark.label}</span>
+      ) : (
+        <span
+          className="pr-blocked-pill pr-tip"
+          role="img"
+          data-tip={mark.tip}
+          aria-label={mark.tip}
+        >
+          {mark.label}
+        </span>
+      );
+  }
+}
+
 // showRepo is false inside a repo group, where the header already names it.
-function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean }) {
+function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
+  const { pr, draft, marks } = row;
   const unread = pr.unread_count > 0;
-  const pills = blockedPills(pr.blocked_reasons);
-  // The +N pill's tooltip: the reasons its count stands for.
-  const overflowTitle = blockedTitle(pr.blocked_reasons.slice(1));
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
@@ -412,86 +389,17 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
                 author give way to truncation, the number never does. */}
             <span className="pr-number">#{pr.number}</span>
             {showRepo && <span className="pr-repo">{pr.repo}</span>}
-            {/* A neutral state pill, never a signal. The backend suppresses
-                the other markers on a draft (the author has not declared
-                readiness), so a draft row shows only this pill, with room to
-                spare. */}
-            {pr.is_draft && <span className="pr-draft">Draft</span>}
+            {/* A neutral state pill, never a signal. */}
+            {draft && <span className="pr-draft">Draft</span>}
             {/* The action markers cluster at the row's right edge as one group
-                instead of scattering through the metadata: the approved check,
-                the review glyph (incoming or outgoing, never both on one row),
-                the merge queue mark, then the blocked pills. Never shown on a
-                draft, so this and the draft pill are exclusive: the backend
-                suppresses the check, the review glyphs and the blocked pills,
-                and a draft cannot be merged, so GitHub should never report
-                one as queued. */}
-            {(pr.approved ||
-              pr.review_requested ||
-              pr.awaiting_review ||
-              pr.merge_queue_position !== null ||
-              pr.blocked_reasons.length > 0) && (
+                instead of scattering through the metadata. A quiet row has no
+                cluster at all, so it keeps meaning "nothing is stuck". */}
+            {marks.length > 0 && (
               <span className="pr-marks">
-                {/* The green check: the required approvals are in. Leads the
-                    cluster as its one positive mark, so approval reads before
-                    whatever still stands in the way; every other marker can
-                    coexist with it. */}
-                {pr.approved && (
-                  <RowMark tip="Approved" ok>
-                    <Check />
-                  </RowMark>
-                )}
-                {/* Glasses with an incoming arrow: your review is requested. A
-                    grey mark like the draft pill, not a blocked signal: an
-                    invitation to act, outside the blocked pill's "something is
-                    stuck" vocabulary. Self-clears once you review. */}
-                {pr.review_requested && (
-                  <RowMark tip="Review requested" wide>
-                    <DirectionArrow dir="in" />
-                    <Glasses />
-                  </RowMark>
-                )}
-                {/* Glasses with an outgoing arrow: one of your PRs is waiting on
-                    a reviewer. The Mine-only mirror of the incoming glyph, so
-                    it never shares a row with it. Self-clears as reviewers
-                    submit (the backend drops the request). */}
-                {pr.awaiting_review && (
-                  <RowMark tip="Awaiting review" wide>
-                    <Glasses />
-                    <DirectionArrow dir="out" />
-                  </RowMark>
-                )}
-                {/* The stack with the PR's place in the merge queue. Position
-                    only: the entry's state and the queue's size are
-                    deliberately not shown. A grey mark like the glasses,
-                    since being queued is neither stuck nor a call to act. */}
-                {pr.merge_queue_position !== null && (
-                  <RowMark tip={mergeQueueTitle(pr.merge_queue_position)} count>
-                    <Stack />
-                    {pr.merge_queue_position}
-                  </RowMark>
-                )}
-                {/* The blocked reason, spelled out in a pill (the Draft
-                    pill's shape in the blocked orange) so "why is this stuck"
-                    reads without hovering. Extra reasons collapse into a +N
-                    pill whose tooltip names them; the primary pill needs no
-                    tooltip because it IS its own label. In-flight and healthy
-                    states stay undecorated so a quiet row keeps meaning
-                    "nothing is stuck". Distinct from the red unread badge in
-                    hue and meaning: orange here says "this PR is blocked",
-                    red there says "someone spoke". */}
-                {pills.length > 0 && (
-                  <span className="pr-blocked-pill">{pills[0]}</span>
-                )}
-                {pills.length > 1 && (
-                  <span
-                    className="pr-blocked-pill pr-tip"
-                    role="img"
-                    data-tip={overflowTitle}
-                    aria-label={overflowTitle}
-                  >
-                    {pills[1]}
-                  </span>
-                )}
+                {marks.map((mark, index) => (
+                  // Marks have no identity beyond their slot in the cluster.
+                  <MarkView key={index} mark={mark} />
+                ))}
               </span>
             )}
           </span>
@@ -565,8 +473,8 @@ function SectionHeader({
    * aria-disabled rather than disabled so the header stays focusable and
    * announced to assistive tech while inert. */
   disabled?: boolean;
-  /** Unread total inside the section; shown as a red badge only while
-   * collapsed, when the rows carrying the per-PR badges are hidden. */
+  /** Unread total to show as a red badge; the caller passes zero while the
+   * section is expanded and its rows carry the per-PR badges. */
   unread?: number;
   children?: ReactNode;
 }) {
@@ -587,10 +495,7 @@ function SectionHeader({
           <span className="pr-section-count" aria-hidden="true">
             {count}
           </span>
-          {/* The tray badge counts these rows even when the section hides
-              them; without this cue a collapsed Mine makes the popover look
-              read while the tray says otherwise. */}
-          {!expanded && unread > 0 && (
+          {unread > 0 && (
             <span className="pr-section-unread" aria-hidden="true">
               {unread}
             </span>
@@ -599,7 +504,7 @@ function SectionHeader({
               so the spoken name gets a worded equivalent instead. */}
           <span className="visually-hidden">
             {`${count} pull request${count === 1 ? "" : "s"}` +
-              (!expanded && unread > 0 ? `, ${unread} unread` : "")}
+              (unread > 0 ? `, ${unread} unread` : "")}
           </span>
         </button>
       </h2>
@@ -608,102 +513,72 @@ function SectionHeader({
   );
 }
 
+function SectionBodyView({ section }: { section: SectionView }) {
+  const { body } = section;
+  switch (body.kind) {
+    case "empty":
+      /* Inside the slab, not bare text, so an empty section keeps the shape
+         rows will appear in. */
+      return (
+        <ul>
+          <li className="pr-empty">Nothing to wine about</li>
+        </ul>
+      );
+    case "rows":
+      return (
+        <ul>
+          {body.rows.map((row) => (
+            <PrRow key={prKey(row.pr)} row={row} />
+          ))}
+        </ul>
+      );
+    case "groups":
+      return body.groups.map(({ repo, rows }) => (
+        <div key={repo} className="pr-repo-group">
+          <div className="pr-repo-header">
+            <h3 className="pr-repo-name">{repo}</h3>
+            <span className="pr-repo-count">{rows.length}</span>
+          </div>
+          <ul>
+            {rows.map((row) => (
+              <PrRow key={prKey(row.pr)} row={row} showRepo={false} />
+            ))}
+          </ul>
+        </div>
+      ));
+    case "merged":
+      return (
+        <ul>
+          {body.rows.map((pr) => (
+            <MergedRow key={prKey(pr)} pr={pr} />
+          ))}
+        </ul>
+      );
+  }
+}
+
+// Renders the sections it is given: which exist, what they hold and whether
+// they are open is the popover view's call.
 function PrList({
-  prs,
-  merged,
-  filtering = false,
+  view,
+  onToggle,
 }: {
-  prs: PullRequest[];
-  merged: MergedPr[];
-  /** True while the header filter has a query. Filtering force-expands every
-   * section (a match hidden inside a collapsed section would read as "no
-   * match") and suspends toggling; the stored state returns untouched when
-   * the query clears. */
-  filtering?: boolean;
+  view: ListView;
+  onToggle: (key: SectionKey) => void;
 }) {
-  const [collapsed, setCollapsed] = useState(loadCollapsed);
-  const isExpanded = (key: SectionKey) => filtering || !collapsed[key];
-  const toggle = (key: SectionKey) => {
-    // aria-disabled buttons still fire clicks, so the suspend-while-filtering
-    // rule is enforced here, not by the button.
-    if (filtering) return;
-    const next = { ...collapsed, [key]: !collapsed[key] };
-    setCollapsed(next);
-    // Persisted outside the state updater: StrictMode double-invokes updaters.
-    saveCollapsed(next);
-  };
   return (
     <main className="pr-list">
-      {SECTIONS.map(({ key, label }) => {
-        const rows = prs.filter((pr) => pr.section === key);
-        /* The three PR sections always render, empty or not, so the popover
-           keeps one stable scaffold (an absent "Mine" would read as broken,
-           not empty). Filtering is the exception: rows are pre-filtered, so
-           an empty section there means "no matches here" and showing it
-           would clutter the force-expanded results. */
-        if (rows.length === 0 && filtering) return null;
-        let body: ReactNode;
-        if (rows.length === 0) {
-          /* Inside the slab, not bare text, so an empty section keeps the
-             shape rows will appear in. */
-          body = (
-            <ul>
-              <li className="pr-empty">Nothing to wine about</li>
-            </ul>
-          );
-        } else if (key === "all") {
-          body = groupByRepo(rows).map(({ repo, prs: group }) => (
-            <div key={repo} className="pr-repo-group">
-              <div className="pr-repo-header">
-                <h3 className="pr-repo-name">{repo}</h3>
-                <span className="pr-repo-count">{group.length}</span>
-              </div>
-              <ul>
-                {group.map((pr) => (
-                  <PrRow
-                    key={prKey(pr)}
-                    pr={pr}
-                    showRepo={false}
-                  />
-                ))}
-              </ul>
-            </div>
-          ));
-        } else {
-          body = (
-            <ul>
-              {rows.map((pr) => (
-                <PrRow key={prKey(pr)} pr={pr} />
-              ))}
-            </ul>
-          );
-        }
-        return (
-          <section key={key} className="pr-section">
-            <SectionHeader
-              label={label}
-              count={rows.length}
-              expanded={isExpanded(key)}
-              onToggle={() => toggle(key)}
-              disabled={filtering}
-              unread={totalUnread(rows)}
-            />
-            {isExpanded(key) && body}
-          </section>
-        );
-      })}
-      {merged.length > 0 && (
-        <section className="pr-section">
+      {view.sections.map((section) => (
+        <section key={section.key} className="pr-section">
           <SectionHeader
-            label="Merged"
-            count={merged.length}
-            expanded={isExpanded("merged")}
-            onToggle={() => toggle("merged")}
-            disabled={filtering}
+            label={section.label}
+            count={section.count}
+            expanded={section.expanded}
+            onToggle={() => onToggle(section.key)}
+            disabled={!view.canToggle}
+            unread={section.collapsedUnread}
           >
-            {/* Hidden while collapsed: clearing rows you cannot see invites
-                a destructive misclick from the adjacent whole-row toggle. */}
-            {isExpanded("merged") && (
+            {section.offerClearAll && (
               <button
                 type="button"
                 className="pr-section-clear"
@@ -713,15 +588,9 @@ function PrList({
               </button>
             )}
           </SectionHeader>
-          {isExpanded("merged") && (
-            <ul>
-              {merged.map((pr) => (
-                <MergedRow key={prKey(pr)} pr={pr} />
-              ))}
-            </ul>
-          )}
+          {section.expanded && <SectionBodyView section={section} />}
         </section>
-      )}
+      ))}
     </main>
   );
 }

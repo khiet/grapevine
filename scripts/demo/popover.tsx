@@ -5,7 +5,7 @@ import ReactDOM from "react-dom/client";
 import App from "../../src/App";
 import { setAdapter, type Snapshot } from "../../src/backend";
 import { createFakeBackend } from "../../src/backend/fake";
-import { totalUnread } from "../../src/PrList";
+import { totalUnread } from "../../src/popoverView";
 import { demoSnapshot } from "./fixture";
 
 // The stage's tray count mirrors the unread total the way the Rust side sets

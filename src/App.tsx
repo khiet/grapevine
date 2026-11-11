@@ -6,12 +6,8 @@ import {
   subscribeSnapshot,
   type Snapshot,
 } from "./backend";
-import PrList, {
-  formatLastSync,
-  hasQuery,
-  matchesFilter,
-  totalUnread,
-} from "./PrList";
+import { derivePopover } from "./popoverView";
+import PrList, { formatLastSync, useCollapsedSections } from "./PrList";
 import SettingsView from "./SettingsView";
 import { restartToUpdate, startUpdateChecks, useUpdateState } from "./updater";
 
@@ -22,12 +18,15 @@ function App() {
   const inSettings = view === "settings";
   const updateState = useUpdateState();
 
-  // The filter is a view over the current snapshot, recomputed each render.
-  const visiblePrs = snapshot.prs.filter((pr) => matchesFilter(pr, filter));
-  const visibleMerged = snapshot.merged.filter((pr) => matchesFilter(pr, filter));
-  const hasAny = snapshot.prs.length > 0 || snapshot.merged.length > 0;
-  const hasVisible = visiblePrs.length > 0 || visibleMerged.length > 0;
-  const filtering = hasQuery(filter);
+  const [collapsed, toggleSection] = useCollapsedSections();
+
+  // Recomputed each render: what to show is a pure view over the snapshot,
+  // the filter and the collapse state.
+  const { offerMarkAllRead, content } = derivePopover(
+    snapshot,
+    filter,
+    collapsed,
+  );
 
   useEffect(() => {
     startUpdateChecks();
@@ -65,7 +64,7 @@ function App() {
           </div>
         )}
         <span className="header-actions">
-          {!inSettings && totalUnread(snapshot.prs) > 0 && (
+          {!inSettings && offerMarkAllRead && (
             <button
               type="button"
               className="settings-link"
@@ -96,28 +95,22 @@ function App() {
       )}
       {inSettings ? (
         <SettingsView />
-      ) : !snapshot.has_synced && !hasAny ? (
-        /* Pre-setup only; once a sync has happened the scaffold below owns
-           the empty state. */
+      ) : content.kind === "setup" ? (
         <main className="popover-body">
           <p className="placeholder-heading">No pull requests yet</p>
           <p className="placeholder-detail">
             Configure a token and repositories to start watching.
           </p>
         </main>
-      ) : hasVisible || !filtering ? (
-        /* Renders even fully empty: the section scaffold is the one stable
-           layout for every synced state, so nothing flips wholesale when the
-           last row clears. */
-        <PrList prs={visiblePrs} merged={visibleMerged} filtering={filtering} />
-      ) : (
-        /* A filter is active and hid every row. */
+      ) : content.kind === "no-matches" ? (
         <main className="popover-body">
           <p className="placeholder-heading">No matches</p>
           <p className="placeholder-detail">
-            No pull requests match "{filter}".
+            No pull requests match "{content.query}".
           </p>
         </main>
+      ) : (
+        <PrList view={content} onToggle={toggleSection} />
       )}
       {!inSettings && (snapshot.last_sync_at !== null || snapshot.sync_error) && (
         <footer className="sync-status">
