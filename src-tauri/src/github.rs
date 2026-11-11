@@ -677,7 +677,7 @@ fn error_from_graphql(errors: Vec<GraphQlError>) -> GithubError {
 /// Parses GitHub's fixed ISO-8601 UTC form ("2026-07-16T12:00:00Z") to epoch
 /// seconds; `None` on anything else. Hand-rolled to avoid a date-time crate
 /// for one field: GitHub never sends offsets or fractional seconds here.
-fn rfc3339_utc_to_epoch_secs(iso: &str) -> Option<u64> {
+pub(crate) fn rfc3339_utc_to_epoch_secs(iso: &str) -> Option<u64> {
     let bytes = iso.as_bytes();
     if bytes.len() != 20 || bytes[4] != b'-' || bytes[7] != b'-' {
         return None;

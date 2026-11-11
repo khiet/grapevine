@@ -35,6 +35,9 @@ pub struct SyncState {
     delivery: Mutex<()>,
     /// Wakes the poll loop early, e.g. right after settings change.
     pub wake: Notify,
+    /// Tells the poll loop's wait that the snoozes changed, so the expiry it
+    /// is timing may no longer be the earliest.
+    snoozes_changed: Notify,
 }
 
 impl SyncState {
@@ -56,6 +59,7 @@ pub fn start(app: &AppHandle) {
             store.load(&store::READ_STATE).unwrap_or_default(),
             store.load(&store::MERGED).unwrap_or_default(),
             store.load(&store::TURN_STARTS).unwrap_or_default(),
+            store.load(&store::SNOOZES).unwrap_or_default(),
         );
     }
     tauri::async_runtime::spawn(async move {
@@ -80,13 +84,55 @@ pub fn start(app: &AppHandle) {
                     delay_after_failure(consecutive_failures, rate_limited, reset_epoch_secs, now)
                 }
             };
-            let state = app.state::<SyncState>();
-            tokio::select! {
-                _ = tokio::time::sleep(delay) => {}
-                _ = state.wake.notified() => {}
-            }
+            wait_for_next_sync(&app, delay).await;
         }
     });
+}
+
+/// Longest the wait goes without re-reading the wall clock. The timer under
+/// `tokio::time::sleep` stops while the machine sleeps, so a single sleep
+/// until 08:00 would fire hours late after a night with the lid closed.
+const EXPIRY_RECHECK: Duration = Duration::from_secs(60);
+
+/// Sleeps until the next sync is due or [`SyncState::wake`] asks for one.
+/// Snoozes that run out in the meantime are woken on time: the wait can be a
+/// long rate-limit backoff, and that must not hold a row past its expiry.
+async fn wait_for_next_sync(app: &AppHandle, delay: Duration) {
+    let state = app.state::<SyncState>();
+    let due = tokio::time::sleep(delay);
+    tokio::pin!(due);
+    loop {
+        // Read afresh each round: a snooze made during the wait has to be
+        // timed too, and `snoozes_changed` ends the round when one is.
+        let expiry = async {
+            match state.pr_state.next_snooze_expiry() {
+                Some(at) => {
+                    let wait = Duration::from_millis(at.saturating_sub(now_epoch_ms()));
+                    tokio::time::sleep(wait.min(EXPIRY_RECHECK)).await
+                }
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            _ = &mut due => return,
+            _ = state.wake.notified() => return,
+            _ = state.snoozes_changed.notified() => {}
+            _ = expiry => {
+                let now = now_epoch_ms();
+                if state.pr_state.next_snooze_expiry().is_some_and(|at| at <= now) {
+                    wake_expired_snoozes(app);
+                }
+            }
+        }
+    }
+}
+
+/// Wakes the rows whose snooze has run out by the local clock, with no sync
+/// involved.
+pub fn wake_expired_snoozes(app: &AppHandle) {
+    if let Err(e) = transition(app, |state| state.wake_expired(now_epoch_ms())) {
+        eprintln!("cannot deliver woken snoozes: {e}");
+    }
 }
 
 /// Reads the poll interval fresh each round, so a settings change takes
@@ -183,6 +229,10 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
     let saved_merged = effects
         .save_merged
         .map_or(Ok(()), |merged| store.save(&store::MERGED, &merged));
+    let saved_snoozes = effects.save_snoozes.map_or(Ok(()), |snoozes| {
+        state.snoozes_changed.notify_one();
+        store.save(&store::SNOOZES, &snoozes)
+    });
     if let Some(total) = effects.tray_count {
         if let Some(tray) = app.tray_by_id("main") {
             let _ = tray.set_title(Some(tray_title(total)));
@@ -191,7 +241,11 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
     let emitted = app
         .emit("prs-updated", effects.snapshot)
         .map_err(|e| e.to_string());
-    saved_read.and(saved_turns).and(saved_merged).and(emitted)
+    saved_read
+        .and(saved_turns)
+        .and(saved_merged)
+        .and(saved_snoozes)
+        .and(emitted)
 }
 
 /// What one sync attempt means for scheduling the next one.

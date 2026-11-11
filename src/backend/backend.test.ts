@@ -3,9 +3,12 @@ import {
   dismissMerged,
   listRepos,
   markRead,
+  nextLocalMorning,
   prKey,
   setAdapter,
+  snooze,
   subscribeSnapshot,
+  wake,
   type PullRequest,
   type Snapshot,
 } from "./index";
@@ -50,6 +53,7 @@ function snapshot(prs: PullRequest[]): Snapshot {
   return {
     prs,
     merged: [],
+    snoozed: [],
     has_synced: true,
     last_sync_at: 1_790_000_000_000,
     sync_error: null,
@@ -163,6 +167,31 @@ test("dismissing a merged PR removes only the row with that key", async () => {
   await dismissMerged("acme/api#5");
 
   expect(seen[seen.length - 1].merged.map((pr) => pr.repo)).toEqual(["acme/web"]);
+});
+
+test("snoozing a PR lists its key as snoozed without marking it read, and waking unlists it", async () => {
+  const fake = createFakeBackend(snapshot([pr("acme/api", 1, 2), pr("acme/web", 7, 0)]));
+  setAdapter(fake.adapter);
+  const seen: Snapshot[] = [];
+  subscribeSnapshot((next) => seen.push(next));
+  await settle();
+
+  await snooze("acme/api#1");
+  const parked = seen[seen.length - 1];
+  expect(parked.snoozed).toEqual(["acme/api#1"]);
+  expect(parked.prs[0].unread_count).toBe(2);
+
+  await wake("acme/api#1");
+  expect(seen[seen.length - 1].snoozed).toEqual([]);
+});
+
+// Built in local time, so the expectations hold in any timezone.
+test("a snooze runs until the next local 08:00", () => {
+  const local = (d: number, h: number, m = 0) => new Date(2026, 6, d, h, m);
+  expect(nextLocalMorning(local(16, 15, 30))).toBe(local(17, 8).getTime());
+  expect(nextLocalMorning(local(16, 7, 59))).toBe(local(16, 8).getTime());
+  // At 08:00 sharp the next one is tomorrow's: a snooze never expires at once.
+  expect(nextLocalMorning(local(16, 8))).toBe(local(17, 8).getTime());
 });
 
 test("a command the fake does not implement rejects", async () => {

@@ -5,6 +5,8 @@ import {
   markRead,
   openUrl,
   prKey,
+  snooze,
+  wake,
   type MergedPr,
 } from "./backend";
 import type {
@@ -13,6 +15,7 @@ import type {
   RowView,
   SectionKey,
   SectionView,
+  SnoozedGroupView,
 } from "./popoverView";
 
 /* Mine and All start collapsed: they are ambient context, not act-now queues,
@@ -417,6 +420,47 @@ function MarkView({ mark }: { mark: Mark }) {
   }
 }
 
+// The crescent of the snooze control.
+function Moon() {
+  return (
+    <GlyphSvg strokeWidth={2}>
+      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z" />
+    </GlyphSvg>
+  );
+}
+
+// The sun of the wake control.
+function Sun() {
+  return (
+    <GlyphSvg strokeWidth={2}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    </GlyphSvg>
+  );
+}
+
+/* The row's one snooze control: park it, or wake it once parked. A sibling of
+   the row button rather than a child (nested buttons are invalid HTML), in
+   its own strip at the row's edge so opening a row cannot land on it, and
+   hidden until the row is hovered or the control focused. */
+function SnoozeControl({ row }: { row: RowView }) {
+  if (row.snooze === null) return null;
+  const key = prKey(row.pr);
+  const parked = row.snooze === "wake";
+  const label = parked ? "Wake" : "Snooze until it changes";
+  return (
+    <button
+      type="button"
+      className="pr-snooze pr-tip"
+      data-tip={label}
+      aria-label={label}
+      onClick={() => (parked ? wake(key) : snooze(key)).catch(() => {})}
+    >
+      {parked ? <Sun /> : <Moon />}
+    </button>
+  );
+}
+
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const { pr, draft, marks, botAuthor, botNote, waiting } = row;
@@ -427,7 +471,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
     markRead(prKey(pr)).catch(() => {});
   };
   return (
-    <li>
+    <li className={row.snooze === null ? undefined : "pr-row-split"}>
       <button
         type="button"
         className={unread ? "pr-row is-unread" : "pr-row"}
@@ -473,7 +517,36 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           </span>
         </span>
       </button>
+      <SnoozeControl row={row} />
     </li>
+  );
+}
+
+/* The snoozed rows of a section behind one folded line at its foot. Whether
+   the line is open is not persisted: it starts folded whenever the section
+   is rendered afresh, since snoozed rows were put out of the way on purpose. */
+function SnoozedGroup({ group }: { group: SnoozedGroupView }) {
+  const [opened, setOpened] = useState(false);
+  const open = opened || group.forcedOpen;
+  return (
+    <>
+      <li className="pr-snoozed-line">
+        <button
+          type="button"
+          className="pr-snoozed-toggle"
+          aria-expanded={open}
+          aria-disabled={group.forcedOpen}
+          onClick={group.forcedOpen ? undefined : () => setOpened(!opened)}
+        >
+          <GlyphSvg strokeWidth={2.5} size={10} className="pr-section-chevron">
+            <path d="M9 5l7 7-7 7" />
+          </GlyphSvg>
+          {group.label}
+        </button>
+      </li>
+      {open &&
+        group.rows.map((row) => <PrRow key={prKey(row.pr)} row={row} />)}
+    </>
   );
 }
 
@@ -598,6 +671,7 @@ function SectionBodyView({ section }: { section: SectionView }) {
           {body.rows.map((row) => (
             <PrRow key={prKey(row.pr)} row={row} />
           ))}
+          {body.snoozed && <SnoozedGroup group={body.snoozed} />}
         </ul>
       );
     case "groups":

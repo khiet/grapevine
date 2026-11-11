@@ -12,7 +12,7 @@ import { demoSnapshot } from "./fixture";
 // sets the tray title.
 const showTrayCount = (snapshot: Snapshot) => {
   const count = parent.document.getElementById("tray-count");
-  if (count) count.textContent = String(yourTurnCount(snapshot.prs) || "");
+  if (count) count.textContent = String(yourTurnCount(snapshot) || "");
 };
 
 // Login to data URI, injected by demo.mjs before this module runs.

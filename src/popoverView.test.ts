@@ -11,6 +11,7 @@ import {
   type RowView,
   type SectionKey,
   type SectionView,
+  yourTurnCount,
 } from "./popoverView";
 
 const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
@@ -685,4 +686,76 @@ test("a turn that began within the hour reads as under an hour, not zero", () =>
 
 test("a your-turn row with no known start has no waiting label", () => {
   expect(rowFor(pr({ turn: "yours", turn_since: null })).waiting).toBeNull();
+});
+
+const SNOOZE_FIXTURE = synced({
+  prs: [
+    pr({ number: 1, title: "Quiet one" }),
+    pr({ number: 2, title: "Parked review", turn: "yours", unread_count: 2 }),
+    pr({ number: 3, title: "Waiting", turn: "yours" }),
+    pr({ number: 4, title: "Parked elsewhere", section: "participated" }),
+    pr({ number: 5, section: "all" }),
+  ],
+  snoozed: ["acme/widgets#2", "acme/widgets#4"],
+});
+
+// The folded group at the foot of a flat section; fails when there is none.
+function snoozedGroup(view: ListView, key: SectionKey) {
+  const { body } = section(view, key);
+  if (body.kind !== "rows" || !body.snoozed) throw new Error(`no snoozed group in ${key}`);
+  return body.snoozed;
+}
+
+test("snoozed rows leave the ordered rows for a folded group at the section's foot", () => {
+  const view = list(SNOOZE_FIXTURE);
+  expect(numbers(view, "mine")).toEqual([3, 1]);
+  // The header still counts the snoozed row: it has not left the section.
+  expect(section(view, "mine").count).toBe(3);
+  const group = snoozedGroup(view, "mine");
+  expect(group.rows.map((row) => row.pr.number)).toEqual([2]);
+  expect(group.label).toBe("1 snoozed");
+  expect(group.forcedOpen).toBe(false);
+});
+
+test("a section with nothing snoozed has no folded group", () => {
+  const { body } = section(list(synced({ prs: [pr()] })), "mine");
+  expect(body).toMatchObject({ kind: "rows", snoozed: null });
+});
+
+test("a section whose every row is snoozed keeps its header count and shows only the folded group", () => {
+  const view = list(SNOOZE_FIXTURE);
+  expect(section(view, "participated").count).toBe(1);
+  expect(numbers(view, "participated")).toEqual([]);
+  expect(snoozedGroup(view, "participated").label).toBe("1 snoozed");
+});
+
+test("a filter shows matching snoozed rows by forcing their group open", () => {
+  const view = list(SNOOZE_FIXTURE, "parked");
+  expect(numbers(view, "mine")).toEqual([]);
+  const group = snoozedGroup(view, "mine");
+  expect(group.rows.map((row) => row.pr.number)).toEqual([2]);
+  expect(group.forcedOpen).toBe(true);
+});
+
+test("a filter that matches no snoozed row leaves no folded group", () => {
+  const { body } = section(list(SNOOZE_FIXTURE, "quiet"), "mine");
+  expect(body).toMatchObject({ kind: "rows", snoozed: null });
+});
+
+test("rows in Mine and Participated offer snooze, snoozed rows offer wake, All offers neither", () => {
+  const view = list(SNOOZE_FIXTURE);
+  expect(rows(view, "mine").map((row) => row.snooze)).toEqual(["offer", "offer"]);
+  expect(snoozedGroup(view, "mine").rows[0].snooze).toBe("wake");
+  const { body } = section(view, "all");
+  if (body.kind !== "groups") throw new Error("All is not grouped");
+  expect(body.groups[0].rows[0].snooze).toBeNull();
+});
+
+test("a snoozed row's unread stays off its collapsed section's badge", () => {
+  const view = list(SNOOZE_FIXTURE, "", ALL_COLLAPSED);
+  expect(section(view, "mine").collapsedUnread).toBe(0);
+});
+
+test("the your-turn count leaves snoozed rows out", () => {
+  expect(yourTurnCount(SNOOZE_FIXTURE)).toBe(1);
 });

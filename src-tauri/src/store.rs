@@ -2,7 +2,9 @@ use std::{fs, marker::PhantomData, path::PathBuf};
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{merged::MergedState, settings::Settings, turns::TurnStarts, unread::ReadState};
+use crate::{
+    merged::MergedState, settings::Settings, snooze::Snoozes, turns::TurnStarts, unread::ReadState,
+};
 
 /// What a load does when the file exists but cannot be read or parsed. A
 /// missing file is never an error: every document loads as its default then.
@@ -58,6 +60,15 @@ pub const TURN_STARTS: Document<Option<TurnStarts>> = Document {
 pub const MERGED: Document<MergedState> = Document {
     file: "merged.json",
     label: "merged state",
+    on_corrupt: OnCorrupt::StartEmpty,
+    holds: PhantomData,
+};
+
+/// A corrupt file starts over empty: every snoozed row wakes, which is noisy
+/// once but never hides a row that has news.
+pub const SNOOZES: Document<Snoozes> = Document {
+    file: "snoozed.json",
+    label: "snoozed state",
     on_corrupt: OnCorrupt::StartEmpty,
     holds: PhantomData,
 };
@@ -138,7 +149,7 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::{testing::temp_store, *};
-    use crate::merged::MergedPr;
+    use crate::{merged::MergedPr, snooze::Snooze};
 
     fn merged_entry() -> MergedPr {
         MergedPr {
@@ -205,6 +216,21 @@ mod tests {
         let state = vec![merged_entry()];
         store.save(&MERGED, &state).unwrap();
         assert_eq!(store.load(&MERGED).unwrap(), state);
+    }
+
+    #[test]
+    fn the_snoozed_set_round_trips() {
+        let (_dir, store) = temp_store();
+        let state = Snoozes::from([(
+            "acme/widgets#3".into(),
+            Snooze {
+                baseline_at: 1_784_205_296_000,
+                request_outstanding: true,
+                expires_at: 1_784_250_000_000,
+            },
+        )]);
+        store.save(&SNOOZES, &state).unwrap();
+        assert_eq!(store.load(&SNOOZES).unwrap(), state);
     }
 
     #[test]
