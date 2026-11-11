@@ -164,70 +164,276 @@ struct GraphQlResponse {
     errors: Vec<GraphQlError>,
 }
 
-async fn graphql(
-    token: &str,
-    query: &str,
-    variables: Value,
-) -> Result<GraphQlResponse, GithubError> {
-    Ok(graphql_with_scopes(token, query, variables).await?.0)
+/// What GitHub answered, before any interpretation.
+struct HttpResponse {
+    status: u16,
+    headers: reqwest::header::HeaderMap,
+    body: String,
 }
 
-/// Like [`graphql`], but also reports the raw `X-OAuth-Scopes` header: `None`
-/// when GitHub sent none (fine-grained PATs and App tokens have permissions,
-/// not scopes), `Some` — possibly empty — for classic tokens.
-async fn graphql_with_scopes(
-    token: &str,
-    query: &str,
-    variables: Value,
-) -> Result<(GraphQlResponse, Option<String>), GithubError> {
-    let client = reqwest::Client::builder()
-        .user_agent("grapevine")
-        .build()
-        .map_err(|e| GithubError::Other(format!("cannot build HTTP client: {e}")))?;
-    let response = client
-        .post(GRAPHQL_URL)
-        .bearer_auth(token)
-        .json(&json!({ "query": query, "variables": variables }))
-        .send()
-        .await
-        .map_err(|_| {
-            GithubError::Other("Could not reach GitHub. Check your network connection.".into())
-        })?;
+/// The seam between this module and the wire: a GraphQL payload goes in, the
+/// raw answer comes out. Implementations do no interpretation; mapping a
+/// status or body to a [`GithubError`] belongs to [`Client`], so every adapter
+/// gets the same rules. `Err` is reserved for "no answer at all".
+trait Transport {
+    async fn post(&self, token: &str, payload: &Value) -> Result<HttpResponse, GithubError>;
+}
 
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(GithubError::Other(
-            "GitHub rejected the token. Check that it is valid and not expired.".into(),
-        ));
+/// The production adapter: GitHub's GraphQL endpoint over `reqwest`.
+struct ReqwestTransport;
+
+impl Transport for ReqwestTransport {
+    async fn post(&self, token: &str, payload: &Value) -> Result<HttpResponse, GithubError> {
+        let unreachable =
+            |_| GithubError::Other("Could not reach GitHub. Check your network connection.".into());
+        let client = reqwest::Client::builder()
+            .user_agent("grapevine")
+            .build()
+            .map_err(|e| GithubError::Other(format!("cannot build HTTP client: {e}")))?;
+        let response = client
+            .post(GRAPHQL_URL)
+            .bearer_auth(token)
+            .json(payload)
+            .send()
+            .await
+            .map_err(unreachable)?;
+        Ok(HttpResponse {
+            status: response.status().as_u16(),
+            headers: response.headers().clone(),
+            body: response.text().await.map_err(unreachable)?,
+        })
     }
-    // Both are read as quota refusals: the primary limit answers 403, the
-    // secondary limit 429.
-    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-    {
-        return Err(GithubError::RateLimited {
-            reset_epoch_secs: rate_limit_reset(response.headers()),
-        });
+}
+
+/// Everything this module asks of GitHub, over a [`Transport`]. The public
+/// functions below run it against [`ReqwestTransport`]; tests run it against
+/// canned responses.
+struct Client<'a, T> {
+    transport: &'a T,
+    token: &'a str,
+    /// Read when a response needs "now", never ahead of the request, so a
+    /// relative `retry-after` is anchored to when GitHub said it.
+    now_epoch_secs: fn() -> u64,
+}
+
+impl<'a> Client<'a, ReqwestTransport> {
+    fn live(token: &'a str) -> Self {
+        Client {
+            transport: &ReqwestTransport,
+            token,
+            now_epoch_secs,
+        }
     }
-    if !status.is_success() {
-        return Err(GithubError::Other(format!(
-            "GitHub returned an error (HTTP {}).",
-            status.as_u16()
-        )));
+}
+
+impl<T: Transport> Client<'_, T> {
+    async fn graphql(&self, query: &str, variables: Value) -> Result<GraphQlResponse, GithubError> {
+        Ok(self.graphql_with_scopes(query, variables).await?.0)
     }
-    let scopes = response
-        .headers()
-        .get("x-oauth-scopes")
-        .map(|v| v.to_str().unwrap_or_default().to_string());
-    let parsed = response
-        .json::<GraphQlResponse>()
+
+    /// Like [`Client::graphql`], but also reports the raw `X-OAuth-Scopes`
+    /// header: `None` when GitHub sent none (fine-grained PATs and App tokens
+    /// have permissions, not scopes), `Some` (possibly empty) for classic
+    /// tokens.
+    async fn graphql_with_scopes(
+        &self,
+        query: &str,
+        variables: Value,
+    ) -> Result<(GraphQlResponse, Option<String>), GithubError> {
+        let response = self
+            .transport
+            .post(
+                self.token,
+                &json!({ "query": query, "variables": variables }),
+            )
+            .await?;
+
+        if response.status == 401 {
+            return Err(GithubError::Other(
+                "GitHub rejected the token. Check that it is valid and not expired.".into(),
+            ));
+        }
+        // Both are read as quota refusals: the primary limit answers 403, the
+        // secondary limit 429.
+        if response.status == 403 || response.status == 429 {
+            return Err(GithubError::RateLimited {
+                reset_epoch_secs: rate_limit_reset(&response.headers, (self.now_epoch_secs)()),
+            });
+        }
+        if !(200..300).contains(&response.status) {
+            return Err(GithubError::Other(format!(
+                "GitHub returned an error (HTTP {}).",
+                response.status
+            )));
+        }
+        let scopes = response
+            .headers
+            .get("x-oauth-scopes")
+            .map(|v| v.to_str().unwrap_or_default().to_string());
+        let parsed = serde_json::from_str::<GraphQlResponse>(&response.body)
+            .map_err(|_| GithubError::Other("GitHub returned an unexpected response.".into()))?;
+        Ok((parsed, scopes))
+    }
+
+    async fn validate_token(&self) -> Result<ValidatedToken, String> {
+        let (response, scopes) = self
+            .graphql_with_scopes("query { viewer { login } }", json!({}))
+            .await
+            .map_err(String::from)?;
+        if let Some(login) = response
+            .data
+            .as_ref()
+            .and_then(|d| d.pointer("/viewer/login"))
+            .and_then(Value::as_str)
+        {
+            return Ok(ValidatedToken {
+                login: login.to_string(),
+                scope_warning: scope_warning(scopes.as_deref()),
+            });
+        }
+        Err(error_from_graphql(response.errors).into())
+    }
+
+    async fn validate_repo(&self, owner: &str, name: &str) -> Result<String, String> {
+        let response = self.graphql("query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { nameWithOwner } }",
+            json!({ "owner": owner, "name": name }),
+        )
         .await
-        .map_err(|_| GithubError::Other("GitHub returned an unexpected response.".into()))?;
-    Ok((parsed, scopes))
+        .map_err(String::from)?;
+        if let Some(full_name) = response
+            .data
+            .as_ref()
+            .and_then(|d| d.pointer("/repository/nameWithOwner"))
+            .and_then(Value::as_str)
+        {
+            return Ok(full_name.to_string());
+        }
+        if response
+            .errors
+            .iter()
+            .any(|e| e.kind.as_deref() == Some("NOT_FOUND"))
+        {
+            return Err(format!(
+                "{owner}/{name} was not found or is not accessible with this token."
+            ));
+        }
+        Err(error_from_graphql(response.errors).into())
+    }
+
+    async fn fetch_affiliated_repos(&self) -> Result<Vec<String>, GithubError> {
+        let mut repos = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..10 {
+            let response = self
+                .graphql(AFFILIATED_REPOS_QUERY, json!({ "cursor": cursor }))
+                .await?;
+            let Some(data) = response.data else {
+                return Err(error_from_graphql(response.errors));
+            };
+            cursor = collect_affiliated_page(&data, &mut repos);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Ok(repos)
+    }
+
+    async fn fetch_open_prs(&self, repos: &[String]) -> Result<FetchedPrs, GithubError> {
+        // (owner, name, resume cursor); repos drop out once fully fetched.
+        let mut pending: Vec<(String, String, Option<String>)> = repos
+            .iter()
+            .filter_map(|full| full.split_once('/'))
+            .map(|(owner, name)| (owner.to_string(), name.to_string(), None))
+            .collect();
+        let mut prs = Vec::new();
+        let mut rate_limit = None;
+
+        let mut rounds = 0;
+        while !pending.is_empty() {
+            rounds += 1;
+            if rounds > 20 {
+                return Err(GithubError::Other(
+                    "GitHub returned too many pages of pull requests.".into(),
+                ));
+            }
+            let mut query =
+                String::from("query { viewer { login } rateLimit { remaining resetAt } ");
+            for (i, (owner, name, cursor)) in pending.iter().enumerate() {
+                query.push_str(&repo_field(
+                    &format!("r{i}"),
+                    owner,
+                    name,
+                    cursor.as_deref(),
+                ));
+            }
+            query.push('}');
+
+            let response = self.graphql(&query, json!({})).await?;
+            let Some(data) = response.data else {
+                return Err(error_from_graphql(response.errors));
+            };
+            // Later pages overwrite: the budget after the final request is the
+            // one the sync loop plans around.
+            if let Some(limit) = collect_rate_limit(&data) {
+                rate_limit = Some(limit);
+            }
+            let viewer = data
+                .pointer("/viewer/login")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+
+            let mut still_pending = Vec::new();
+            for (i, (owner, name, _)) in pending.iter().enumerate() {
+                let alias = format!("r{i}");
+                let Some(repo) = data.get(alias.as_str()).filter(|v| !v.is_null()) else {
+                    continue;
+                };
+                if let Some(cursor) = collect_repo_prs(repo, &viewer, &mut prs) {
+                    still_pending.push((owner.clone(), name.clone(), Some(cursor)));
+                }
+            }
+            pending = still_pending;
+        }
+
+        // Most recently updated first across all repos; ISO-8601 UTC timestamps
+        // sort lexically.
+        prs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(FetchedPrs { prs, rate_limit })
+    }
+
+    async fn fetch_merged_status(
+        &self,
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, GithubError> {
+        let mut query = String::from("query { ");
+        // Keys come from PRs the app itself fetched, so skipping a malformed one
+        // drops corrupt data, not a real PR.
+        let mut targets: Vec<(String, String)> = Vec::new();
+        for key in keys {
+            let Some((owner, name, number)) = parse_pr_key(key) else {
+                continue;
+            };
+            let alias = format!("p{}", targets.len());
+            query.push_str(&merged_status_field(&alias, owner, name, number));
+            targets.push((alias, key.clone()));
+        }
+        if targets.is_empty() {
+            return Ok(HashMap::new());
+        }
+        query.push('}');
+
+        let response = self.graphql(&query, json!({})).await?;
+        let Some(data) = response.data else {
+            return Err(error_from_graphql(response.errors));
+        };
+        Ok(collect_merged(&data, &targets))
+    }
 }
 
 /// When the current quota window resets. `retry-after` counts seconds from
-/// now; `x-ratelimit-reset` is already an absolute epoch.
-fn rate_limit_reset(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+/// `now_epoch_secs`; `x-ratelimit-reset` is already an absolute epoch.
+fn rate_limit_reset(headers: &reqwest::header::HeaderMap, now_epoch_secs: u64) -> Option<u64> {
     let value = |name: &str| {
         headers
             .get(name)
@@ -235,7 +441,7 @@ fn rate_limit_reset(headers: &reqwest::header::HeaderMap) -> Option<u64> {
             .and_then(|v| v.parse::<u64>().ok())
     };
     if let Some(seconds) = value("retry-after") {
-        return Some(now_epoch_secs() + seconds);
+        return Some(now_epoch_secs + seconds);
     }
     value("x-ratelimit-reset")
 }
@@ -324,51 +530,13 @@ fn scope_warning(header: Option<&str>) -> Option<String> {
 
 /// Validates the token by asking GitHub who it belongs to.
 pub async fn validate_token(token: &str) -> Result<ValidatedToken, String> {
-    let (response, scopes) = graphql_with_scopes(token, "query { viewer { login } }", json!({}))
-        .await
-        .map_err(String::from)?;
-    if let Some(login) = response
-        .data
-        .as_ref()
-        .and_then(|d| d.pointer("/viewer/login"))
-        .and_then(Value::as_str)
-    {
-        return Ok(ValidatedToken {
-            login: login.to_string(),
-            scope_warning: scope_warning(scopes.as_deref()),
-        });
-    }
-    Err(error_from_graphql(response.errors).into())
+    Client::live(token).validate_token().await
 }
 
 /// Checks that `owner/name` exists and is accessible with this token.
 /// Returns the canonical `nameWithOwner` (fixes user-typed casing).
 pub async fn validate_repo(token: &str, owner: &str, name: &str) -> Result<String, String> {
-    let response = graphql(
-        token,
-        "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { nameWithOwner } }",
-        json!({ "owner": owner, "name": name }),
-    )
-    .await
-    .map_err(String::from)?;
-    if let Some(full_name) = response
-        .data
-        .as_ref()
-        .and_then(|d| d.pointer("/repository/nameWithOwner"))
-        .and_then(Value::as_str)
-    {
-        return Ok(full_name.to_string());
-    }
-    if response
-        .errors
-        .iter()
-        .any(|e| e.kind.as_deref() == Some("NOT_FOUND"))
-    {
-        return Err(format!(
-            "{owner}/{name} was not found or is not accessible with this token."
-        ));
-    }
-    Err(error_from_graphql(response.errors).into())
+    Client::live(token).validate_repo(owner, name).await
 }
 
 /// Both affiliation arguments matter: `ownerAffiliations` defaults to
@@ -395,19 +563,7 @@ query($cursor: String) { \
 /// error, since the settings view unions in watched repos anyway and a
 /// truncated browse list degrades more gracefully than a blank one.
 pub async fn fetch_affiliated_repos(token: &str) -> Result<Vec<String>, GithubError> {
-    let mut repos = Vec::new();
-    let mut cursor: Option<String> = None;
-    for _ in 0..10 {
-        let response = graphql(token, AFFILIATED_REPOS_QUERY, json!({ "cursor": cursor })).await?;
-        let Some(data) = response.data else {
-            return Err(error_from_graphql(response.errors));
-        };
-        cursor = collect_affiliated_page(&data, &mut repos);
-        if cursor.is_none() {
-            break;
-        }
-    }
-    Ok(repos)
+    Client::live(token).fetch_affiliated_repos().await
 }
 
 /// Appends one page of non-archived repo names to `out`. Returns the cursor
@@ -444,66 +600,7 @@ pub struct FetchedPrs {
 /// fields; only repos spilling past [`PAGE_SIZE`] need a follow-up query.
 /// Vanished or inaccessible repos are skipped rather than failing the sync.
 pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<FetchedPrs, GithubError> {
-    // (owner, name, resume cursor); repos drop out once fully fetched.
-    let mut pending: Vec<(String, String, Option<String>)> = repos
-        .iter()
-        .filter_map(|full| full.split_once('/'))
-        .map(|(owner, name)| (owner.to_string(), name.to_string(), None))
-        .collect();
-    let mut prs = Vec::new();
-    let mut rate_limit = None;
-
-    let mut rounds = 0;
-    while !pending.is_empty() {
-        rounds += 1;
-        if rounds > 20 {
-            return Err(GithubError::Other(
-                "GitHub returned too many pages of pull requests.".into(),
-            ));
-        }
-        let mut query = String::from("query { viewer { login } rateLimit { remaining resetAt } ");
-        for (i, (owner, name, cursor)) in pending.iter().enumerate() {
-            query.push_str(&repo_field(
-                &format!("r{i}"),
-                owner,
-                name,
-                cursor.as_deref(),
-            ));
-        }
-        query.push('}');
-
-        let response = graphql(token, &query, json!({})).await?;
-        let Some(data) = response.data else {
-            return Err(error_from_graphql(response.errors));
-        };
-        // Later pages overwrite: the budget after the final request is the
-        // one the sync loop plans around.
-        if let Some(limit) = collect_rate_limit(&data) {
-            rate_limit = Some(limit);
-        }
-        let viewer = data
-            .pointer("/viewer/login")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-
-        let mut still_pending = Vec::new();
-        for (i, (owner, name, _)) in pending.iter().enumerate() {
-            let alias = format!("r{i}");
-            let Some(repo) = data.get(alias.as_str()).filter(|v| !v.is_null()) else {
-                continue;
-            };
-            if let Some(cursor) = collect_repo_prs(repo, &viewer, &mut prs) {
-                still_pending.push((owner.clone(), name.clone(), Some(cursor)));
-            }
-        }
-        pending = still_pending;
-    }
-
-    // Most recently updated first across all repos; ISO-8601 UTC timestamps
-    // sort lexically.
-    prs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(FetchedPrs { prs, rate_limit })
+    Client::live(token).fetch_open_prs(repos).await
 }
 
 /// Reads the `rateLimit` field out of a response; `None` rather than failing
@@ -529,28 +626,7 @@ pub async fn fetch_merged_status(
     token: &str,
     keys: &[String],
 ) -> Result<HashMap<String, String>, GithubError> {
-    let mut query = String::from("query { ");
-    // Keys come from PRs the app itself fetched, so skipping a malformed one
-    // drops corrupt data, not a real PR.
-    let mut targets: Vec<(String, String)> = Vec::new();
-    for key in keys {
-        let Some((owner, name, number)) = parse_pr_key(key) else {
-            continue;
-        };
-        let alias = format!("p{}", targets.len());
-        query.push_str(&merged_status_field(&alias, owner, name, number));
-        targets.push((alias, key.clone()));
-    }
-    if targets.is_empty() {
-        return Ok(HashMap::new());
-    }
-    query.push('}');
-
-    let response = graphql(token, &query, json!({})).await?;
-    let Some(data) = response.data else {
-        return Err(error_from_graphql(response.errors));
-    };
-    Ok(collect_merged(&data, &targets))
+    Client::live(token).fetch_merged_status(keys).await
 }
 
 fn parse_pr_key(key: &str) -> Option<(&str, &str, u64)> {
@@ -1529,14 +1605,6 @@ mod tests {
         assert_eq!(out[2].merge_queue_position, None);
     }
 
-    /// The position rides the PR node the sync already fetches: a nested
-    /// object, not a connection, so it adds no request and no pagination.
-    #[test]
-    fn repo_field_asks_for_the_merge_queue_position() {
-        let field = repo_field("r0", "acme", "widgets", None);
-        assert!(field.contains("mergeQueueEntry { position }"));
-    }
-
     #[test]
     fn a_draft_never_shows_the_approved_check() {
         // Matches the other markers: an approval left on a PR later flipped
@@ -1656,33 +1724,6 @@ mod tests {
         assert!(field.contains(r#"repository(owner: "acme", name: "widgets")"#));
         assert!(field.contains(r#"after: "abc""#));
         assert!(!repo_field("r0", "acme", "widgets", None).contains("after:"));
-    }
-
-    /// Everything the blocked indicator needs rides the existing PR query
-    /// rather than a new request. The CI rollup must be read off the head
-    /// commit (`commits(last: 1)`) since the rollup is per-commit.
-    #[test]
-    fn repo_field_asks_for_the_blocked_indicator_fields() {
-        let field = repo_field("r0", "acme", "widgets", None);
-        assert!(field.contains("commits(last: 1)"));
-        assert!(field.contains("statusCheckRollup { state }"));
-        assert!(field.contains("isDraft"));
-        assert!(field.contains("mergeable"));
-        assert!(field.contains("mergeStateStatus"));
-        assert!(field.contains("reviewDecision"));
-        assert!(field.contains("reviewThreads(last: 10) { nodes { isResolved } }"));
-    }
-
-    /// Sectioning reads these fields off the node, so the fixture-driven tests
-    /// pass whether or not the query ever asked for them. Drop
-    /// `viewerSubscription` and nothing else fails: every PR reads as
-    /// unsubscribed, the list collapses into All, and unread badges stop.
-    #[test]
-    fn repo_field_asks_for_the_involvement_field() {
-        let field = repo_field("r0", "acme", "widgets", None);
-        assert!(field.contains("viewerSubscription"));
-        assert!(field.contains("viewerDidAuthor"));
-        assert!(field.contains("reviewRequests(first: 50)"));
     }
 
     /// `ownerAffiliations` defaults to [OWNER, COLLABORATOR]; if the query
@@ -1888,22 +1929,23 @@ mod tests {
     /// it outranks the standing `x-ratelimit-reset`.
     #[test]
     fn retry_after_is_read_as_seconds_from_now_and_outranks_the_reset_header() {
-        let assert_roughly_a_minute_out = |pairs: &[(&str, &str)]| {
-            let before = now_epoch_secs();
-            let reset = rate_limit_reset(&headers(pairs)).unwrap();
-            assert!(
-                (before + 60..=now_epoch_secs() + 60).contains(&reset),
-                "expected roughly 60s from now, got {reset} for {pairs:?}"
-            );
-        };
-        assert_roughly_a_minute_out(&[("retry-after", "60")]);
-        assert_roughly_a_minute_out(&[("retry-after", "60"), ("x-ratelimit-reset", "1784205296")]);
+        assert_eq!(
+            rate_limit_reset(&headers(&[("retry-after", "60")]), 1_000),
+            Some(1_060)
+        );
+        assert_eq!(
+            rate_limit_reset(
+                &headers(&[("retry-after", "60"), ("x-ratelimit-reset", "1784205296")]),
+                1_000
+            ),
+            Some(1_060)
+        );
     }
 
     #[test]
     fn the_reset_header_is_read_as_an_absolute_epoch() {
         assert_eq!(
-            rate_limit_reset(&headers(&[("x-ratelimit-reset", "1784205296")])),
+            rate_limit_reset(&headers(&[("x-ratelimit-reset", "1784205296")]), 1_000),
             Some(1_784_205_296)
         );
     }
@@ -1911,9 +1953,9 @@ mod tests {
     /// No reset time means the caller falls back to its own backoff.
     #[test]
     fn missing_or_unparsable_reset_headers_report_no_reset_time() {
-        assert_eq!(rate_limit_reset(&headers(&[])), None);
+        assert_eq!(rate_limit_reset(&headers(&[]), 1_000), None);
         assert_eq!(
-            rate_limit_reset(&headers(&[("x-ratelimit-reset", "soon")])),
+            rate_limit_reset(&headers(&[("x-ratelimit-reset", "soon")]), 1_000),
             None
         );
     }
@@ -1968,5 +2010,632 @@ mod tests {
             ("p1".to_string(), "acme/widgets#8".to_string()),
         ];
         assert!(collect_merged(&data, &targets).is_empty());
+    }
+
+    // Fetch-level tests: the public operations run against canned responses,
+    // so pagination, status mapping and the query itself are under test
+    // together.
+
+    /// Stands in for GitHub: answers each request with the next canned
+    /// response and records the payload it was sent. Like GitHub, it returns
+    /// only the fields the query names, so a field dropped from a query goes
+    /// missing from the answer and the test reading it fails.
+    struct Canned {
+        responses: std::sync::Mutex<std::collections::VecDeque<HttpResponse>>,
+        payloads: std::sync::Mutex<Vec<Value>>,
+    }
+
+    impl Canned {
+        fn new(responses: Vec<HttpResponse>) -> Self {
+            Canned {
+                responses: std::sync::Mutex::new(responses.into()),
+                payloads: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn client(&self) -> Client<'_, Canned> {
+            Client {
+                transport: self,
+                token: "token",
+                now_epoch_secs: || 1_000,
+            }
+        }
+
+        fn request_count(&self) -> usize {
+            self.payloads.lock().unwrap().len()
+        }
+
+        /// The query text of the `index`th request.
+        fn query(&self, index: usize) -> String {
+            self.payloads.lock().unwrap()[index]["query"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+
+        fn variables(&self, index: usize) -> Value {
+            self.payloads.lock().unwrap()[index]["variables"].clone()
+        }
+    }
+
+    impl Transport for Canned {
+        async fn post(&self, _token: &str, payload: &Value) -> Result<HttpResponse, GithubError> {
+            let mut response = self
+                .responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a request beyond the canned responses");
+            if let Ok(mut body) = serde_json::from_str::<Value>(&response.body) {
+                if let Some(data) = body.get_mut("data") {
+                    keep_requested_fields(data, payload["query"].as_str().unwrap());
+                }
+                response.body = body.to_string();
+            }
+            self.payloads.lock().unwrap().push(payload.clone());
+            Ok(response)
+        }
+    }
+
+    /// Drops every object key the query never names, at any depth. Matching
+    /// is by name alone, not position, so it cannot tell a field asked for on
+    /// the wrong type; it catches a field missing from the query outright.
+    fn keep_requested_fields(value: &mut Value, query: &str) {
+        match value {
+            Value::Object(map) => {
+                map.retain(|key, _| names(query, key));
+                map.values_mut()
+                    .for_each(|v| keep_requested_fields(v, query));
+            }
+            Value::Array(items) => items
+                .iter_mut()
+                .for_each(|v| keep_requested_fields(v, query)),
+            _ => {}
+        }
+    }
+
+    /// Whether `field` appears in `query` as a whole word, so `state` is not
+    /// found inside `states`.
+    fn names(query: &str, field: &str) -> bool {
+        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        query.match_indices(field).any(|(i, _)| {
+            !query[..i].chars().next_back().is_some_and(is_word)
+                && !query[i + field.len()..].chars().next().is_some_and(is_word)
+        })
+    }
+
+    fn run<F: std::future::Future>(future: F) -> F::Output {
+        tauri::async_runtime::block_on(future)
+    }
+
+    fn answer(status: u16, header_pairs: &[(&str, &str)], body: Value) -> HttpResponse {
+        HttpResponse {
+            status,
+            headers: headers(header_pairs),
+            body: body.to_string(),
+        }
+    }
+
+    fn ok(data: Value) -> HttpResponse {
+        answer(200, &[], json!({ "data": data }))
+    }
+
+    /// One repo's page of PRs; `next` is the cursor of the page after it.
+    fn repo_named(name: &str, nodes: Vec<Value>, next: Option<&str>) -> Value {
+        let mut repo = repo_with(nodes);
+        repo["nameWithOwner"] = json!(name);
+        repo["pullRequests"]["pageInfo"] =
+            json!({ "hasNextPage": next.is_some(), "endCursor": next });
+        repo
+    }
+
+    /// The `data` of one open-PR round: `repos` answer aliases `r0`, `r1`, ...
+    /// in order; a `Value::Null` entry is a repository GitHub could not
+    /// resolve.
+    fn prs_round(remaining: u64, repos: Vec<Value>) -> Value {
+        let mut data = json!({
+            "viewer": { "login": "khiet" },
+            "rateLimit": { "remaining": remaining, "resetAt": "1970-01-01T01:00:00Z" }
+        });
+        for (i, repo) in repos.into_iter().enumerate() {
+            data[format!("r{i}")] = repo;
+        }
+        data
+    }
+
+    fn watched(repos: &[&str]) -> Vec<String> {
+        repos.iter().map(|r| r.to_string()).collect()
+    }
+
+    /// (repo, number) of each fetched PR, in the order returned.
+    fn rows(fetched: &FetchedPrs) -> Vec<(&str, u64)> {
+        fetched
+            .prs
+            .iter()
+            .map(|pr| (pr.repo.as_str(), pr.number))
+            .collect()
+    }
+
+    /// Aliases are renumbered over the repos still pending, so in the second
+    /// round `r0` is the repo that was `r1` in the first. Resuming the wrong
+    /// repo, or the right one without its cursor, would refetch page one.
+    #[test]
+    fn a_repo_with_more_pages_is_resumed_alone_from_its_cursor() {
+        let github = Canned::new(vec![
+            ok(prs_round(
+                5000,
+                vec![
+                    repo_named(
+                        "acme/widgets",
+                        vec![pr_node(
+                            json!({ "number": 1, "updatedAt": "2026-07-13T00:00:00Z" }),
+                        )],
+                        None,
+                    ),
+                    repo_named(
+                        "acme/gadgets",
+                        vec![pr_node(
+                            json!({ "number": 2, "updatedAt": "2026-07-12T00:00:00Z" }),
+                        )],
+                        Some("g1"),
+                    ),
+                ],
+            )),
+            ok(prs_round(
+                4999,
+                vec![repo_named(
+                    "acme/gadgets",
+                    vec![pr_node(
+                        json!({ "number": 3, "updatedAt": "2026-07-11T00:00:00Z" }),
+                    )],
+                    None,
+                )],
+            )),
+        ]);
+
+        let fetched = run(github
+            .client()
+            .fetch_open_prs(&watched(&["acme/widgets", "acme/gadgets"])))
+        .unwrap();
+
+        assert_eq!(
+            rows(&fetched),
+            vec![
+                ("acme/widgets", 1),
+                ("acme/gadgets", 2),
+                ("acme/gadgets", 3)
+            ]
+        );
+        assert_eq!(github.request_count(), 2);
+        let first = github.query(0);
+        assert!(first.contains(r#"r0: repository(owner: "acme", name: "widgets")"#));
+        assert!(first.contains(r#"r1: repository(owner: "acme", name: "gadgets")"#));
+        assert!(!first.contains("after:"));
+        let second = github.query(1);
+        assert!(second.contains(r#"r0: repository(owner: "acme", name: "gadgets")"#));
+        assert!(second.contains(r#"after: "g1""#));
+        assert!(!second.contains("widgets"));
+    }
+
+    /// A repo that never stops reporting another page must not keep the sync
+    /// spinning: the fetch gives up after 20 requests.
+    #[test]
+    fn a_fetch_that_never_reaches_a_last_page_stops_after_twenty_rounds() {
+        let endless = || {
+            ok(prs_round(
+                5000,
+                vec![repo_named(
+                    "acme/widgets",
+                    vec![pr_node(json!({}))],
+                    Some("more"),
+                )],
+            ))
+        };
+        let github = Canned::new((0..20).map(|_| endless()).collect());
+
+        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::Other(
+                "GitHub returned too many pages of pull requests.".into()
+            ))
+        );
+        assert_eq!(github.request_count(), 20);
+    }
+
+    /// GitHub answers a deleted or newly private repository with a null alias
+    /// and a NOT_FOUND error beside the data it could resolve.
+    #[test]
+    fn a_watched_repo_that_no_longer_exists_is_skipped() {
+        let github = Canned::new(vec![answer(
+            200,
+            &[],
+            json!({
+                "data": prs_round(
+                    5000,
+                    vec![
+                        Value::Null,
+                        repo_named("acme/gadgets", vec![pr_node(json!({ "number": 2 }))], None),
+                    ],
+                ),
+                "errors": [{ "type": "NOT_FOUND", "message": "Could not resolve to a Repository." }]
+            }),
+        )]);
+
+        let fetched = run(github
+            .client()
+            .fetch_open_prs(&watched(&["acme/gone", "acme/gadgets"])))
+        .unwrap();
+
+        assert_eq!(rows(&fetched), vec![("acme/gadgets", 2)]);
+        assert_eq!(github.request_count(), 1);
+    }
+
+    /// The sync loop plans its next poll around the budget left after the
+    /// whole fetch, which is what the final request reported.
+    #[test]
+    fn the_rate_limit_reported_is_the_one_from_the_last_page() {
+        let github = Canned::new(vec![
+            ok(prs_round(
+                4000,
+                vec![repo_named(
+                    "acme/widgets",
+                    vec![pr_node(json!({}))],
+                    Some("w1"),
+                )],
+            )),
+            ok(prs_round(
+                3999,
+                vec![repo_named("acme/widgets", vec![pr_node(json!({}))], None)],
+            )),
+        ]);
+
+        let fetched = run(github.client().fetch_open_prs(&watched(&["acme/widgets"]))).unwrap();
+
+        assert_eq!(
+            fetched.rate_limit,
+            Some(RateLimit {
+                remaining: 3999,
+                reset_epoch_secs: Some(3600),
+            })
+        );
+    }
+
+    #[test]
+    fn prs_from_several_repos_come_back_most_recently_updated_first() {
+        let updated = |number: u64, at: &str| pr_node(json!({ "number": number, "updatedAt": at }));
+        let github = Canned::new(vec![ok(prs_round(
+            5000,
+            vec![
+                repo_named(
+                    "acme/widgets",
+                    vec![
+                        updated(1, "2026-07-11T11:00:00Z"),
+                        updated(2, "2026-07-11T09:00:00Z"),
+                    ],
+                    None,
+                ),
+                repo_named(
+                    "acme/gadgets",
+                    vec![
+                        updated(3, "2026-07-11T12:00:00Z"),
+                        updated(4, "2026-07-11T10:00:00Z"),
+                    ],
+                    None,
+                ),
+            ],
+        ))]);
+
+        let fetched = run(github
+            .client()
+            .fetch_open_prs(&watched(&["acme/widgets", "acme/gadgets"])))
+        .unwrap();
+
+        assert_eq!(
+            rows(&fetched),
+            vec![
+                ("acme/gadgets", 3),
+                ("acme/widgets", 1),
+                ("acme/gadgets", 4),
+                ("acme/widgets", 2),
+            ]
+        );
+    }
+
+    /// The marker fields ride the PR query the sync already makes, so the row
+    /// only shows them if that query asks for each one.
+    #[test]
+    fn a_fetched_row_carries_its_queue_position_and_blocked_state() {
+        let github = Canned::new(vec![ok(prs_round(
+            5000,
+            vec![repo_named(
+                "acme/widgets",
+                vec![
+                    pr_node(json!({
+                        "number": 1,
+                        "updatedAt": "2026-07-11T03:00:00Z",
+                        "mergeQueueEntry": { "position": 3 },
+                        "mergeable": "CONFLICTING",
+                        "commits": ci_commits("FAILURE"),
+                        "reviewDecision": "CHANGES_REQUESTED",
+                        "reviewThreads": review_threads(&[false]),
+                    })),
+                    pr_node(json!({
+                        "number": 2,
+                        "updatedAt": "2026-07-11T02:00:00Z",
+                        "mergeStateStatus": "BEHIND",
+                    })),
+                    pr_node(json!({
+                        "number": 3,
+                        "updatedAt": "2026-07-11T01:00:00Z",
+                        "isDraft": true,
+                    })),
+                ],
+                None,
+            )],
+        ))]);
+
+        let prs = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])))
+            .unwrap()
+            .prs;
+
+        assert_eq!(prs[0].merge_queue_position, Some(3));
+        assert_eq!(
+            prs[0].blocked_reasons,
+            vec![
+                BlockedReason::Conflict,
+                BlockedReason::Ci,
+                BlockedReason::Review,
+                BlockedReason::Threads,
+            ]
+        );
+        assert_eq!(prs[1].blocked_reasons, vec![BlockedReason::Behind]);
+        assert!(prs[2].is_draft);
+    }
+
+    /// Sectioning reads involvement off the node, so a query that stopped
+    /// asking for it would collapse every PR into All and stop unread badges.
+    #[test]
+    fn a_fetched_row_is_sectioned_by_the_viewers_involvement() {
+        let github = Canned::new(vec![ok(prs_round(
+            5000,
+            vec![repo_named(
+                "acme/widgets",
+                vec![
+                    pr_node(json!({
+                        "number": 1,
+                        "updatedAt": "2026-07-11T04:00:00Z",
+                        "viewerDidAuthor": true,
+                    })),
+                    pr_node(json!({
+                        "number": 2,
+                        "updatedAt": "2026-07-11T03:00:00Z",
+                        "viewerSubscription": "SUBSCRIBED",
+                    })),
+                    pr_node(json!({
+                        "number": 3,
+                        "updatedAt": "2026-07-11T02:00:00Z",
+                        "reviewRequests": {
+                            "nodes": [{ "requestedReviewer": { "login": "khiet" } }]
+                        },
+                    })),
+                    pr_node(json!({ "number": 4, "updatedAt": "2026-07-11T01:00:00Z" })),
+                ],
+                None,
+            )],
+        ))]);
+
+        let prs = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])))
+            .unwrap()
+            .prs;
+
+        assert_eq!(
+            prs.iter().map(|pr| pr.section).collect::<Vec<_>>(),
+            vec![
+                Section::Mine,
+                Section::Participated,
+                Section::Participated,
+                Section::All,
+            ]
+        );
+        assert!(prs[2].review_requested);
+    }
+
+    #[test]
+    fn a_rejected_token_fails_the_fetch_with_a_message_about_the_token() {
+        let github = Canned::new(vec![answer(
+            401,
+            &[],
+            json!({ "message": "Bad credentials" }),
+        )]);
+
+        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::Other(
+                "GitHub rejected the token. Check that it is valid and not expired.".into()
+            ))
+        );
+    }
+
+    /// The primary limit answers 403 with the absolute reset epoch.
+    #[test]
+    fn a_403_is_rate_limiting_until_the_reset_header() {
+        let github = Canned::new(vec![answer(
+            403,
+            &[("x-ratelimit-reset", "1784205296")],
+            json!({ "message": "API rate limit exceeded" }),
+        )]);
+
+        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::RateLimited {
+                reset_epoch_secs: Some(1_784_205_296)
+            })
+        );
+    }
+
+    /// The secondary limit answers 429 with a wait in seconds; the canned
+    /// clock reads 1000.
+    #[test]
+    fn a_429_is_rate_limiting_until_retry_after_has_passed() {
+        let github = Canned::new(vec![answer(
+            429,
+            &[("retry-after", "60")],
+            json!({ "message": "You have exceeded a secondary rate limit" }),
+        )]);
+
+        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::RateLimited {
+                reset_epoch_secs: Some(1_060)
+            })
+        );
+    }
+
+    #[test]
+    fn other_http_failures_report_the_status() {
+        let github = Canned::new(vec![answer(502, &[], json!({}))]);
+
+        let result = run(github.client().fetch_open_prs(&watched(&["acme/widgets"])));
+
+        assert_eq!(
+            result.err(),
+            Some(GithubError::Other(
+                "GitHub returned an error (HTTP 502).".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_valid_token_reports_its_login() {
+        let github = Canned::new(vec![answer(
+            200,
+            &[("x-oauth-scopes", "repo, read:org")],
+            json!({ "data": { "viewer": { "login": "khiet" } } }),
+        )]);
+
+        let validated = run(github.client().validate_token()).unwrap();
+
+        assert_eq!(validated.login, "khiet");
+        assert_eq!(validated.scope_warning, None);
+    }
+
+    #[test]
+    fn a_valid_classic_token_without_repo_scope_carries_a_warning() {
+        let github = Canned::new(vec![answer(
+            200,
+            &[("x-oauth-scopes", "read:org")],
+            json!({ "data": { "viewer": { "login": "khiet" } } }),
+        )]);
+
+        let validated = run(github.client().validate_token()).unwrap();
+
+        assert_eq!(validated.login, "khiet");
+        assert_eq!(
+            validated.scope_warning.as_deref(),
+            Some("This token has no repo scope, so private repositories won't be visible.")
+        );
+    }
+
+    #[test]
+    fn a_rejected_token_fails_validation() {
+        let github = Canned::new(vec![answer(
+            401,
+            &[],
+            json!({ "message": "Bad credentials" }),
+        )]);
+
+        let result = run(github.client().validate_token());
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("GitHub rejected the token. Check that it is valid and not expired.")
+        );
+    }
+
+    /// The canonical name fixes whatever casing the user typed.
+    #[test]
+    fn an_accessible_repo_validates_to_its_canonical_name() {
+        let github = Canned::new(vec![ok(json!({
+            "repository": { "nameWithOwner": "Acme/Widgets" }
+        }))]);
+
+        let result = run(github.client().validate_repo("acme", "widgets"));
+
+        assert_eq!(result.as_deref(), Ok("Acme/Widgets"));
+        assert_eq!(
+            github.variables(0),
+            json!({ "owner": "acme", "name": "widgets" })
+        );
+    }
+
+    #[test]
+    fn a_missing_or_inaccessible_repo_fails_validation_by_name() {
+        let github = Canned::new(vec![answer(
+            200,
+            &[],
+            json!({
+                "data": { "repository": null },
+                "errors": [{ "type": "NOT_FOUND", "message": "Could not resolve to a Repository." }]
+            }),
+        )]);
+
+        let result = run(github.client().validate_repo("acme", "nope"));
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("acme/nope was not found or is not accessible with this token.")
+        );
+    }
+
+    #[test]
+    fn affiliated_repos_are_gathered_across_pages() {
+        let github = Canned::new(vec![
+            ok(repo_page(
+                json!([{ "nameWithOwner": "acme/gadgets", "isArchived": false }]),
+                json!({ "hasNextPage": true, "endCursor": "c1" }),
+            )),
+            ok(repo_page(
+                json!([
+                    { "nameWithOwner": "acme/old", "isArchived": true },
+                    { "nameWithOwner": "acme/widgets", "isArchived": false }
+                ]),
+                json!({ "hasNextPage": false, "endCursor": null }),
+            )),
+        ]);
+
+        let repos = run(github.client().fetch_affiliated_repos()).unwrap();
+
+        assert_eq!(repos, vec!["acme/gadgets", "acme/widgets"]);
+        assert_eq!(github.variables(0), json!({ "cursor": null }));
+        assert_eq!(github.variables(1), json!({ "cursor": "c1" }));
+    }
+
+    /// Malformed keys take no alias, so the aliases in the answer line up
+    /// with the well-formed keys only.
+    #[test]
+    fn merged_status_maps_each_answer_back_to_its_pr_key() {
+        let github = Canned::new(vec![ok(json!({
+            "p0": { "pullRequest": { "merged": false, "mergedAt": null } },
+            "p1": { "pullRequest": { "merged": true, "mergedAt": "2026-07-12T08:00:00Z" } }
+        }))]);
+        let keys = watched(&["acme/widgets#1", "not a key", "acme/gadgets#2"]);
+
+        let merged = run(github.client().fetch_merged_status(&keys)).unwrap();
+
+        assert_eq!(
+            merged,
+            HashMap::from([(
+                "acme/gadgets#2".to_string(),
+                "2026-07-12T08:00:00Z".to_string()
+            )])
+        );
     }
 }
