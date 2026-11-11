@@ -136,16 +136,16 @@ pub struct PullRequest {
     /// Whether a review is outstanding from a team the viewer belongs to,
     /// with no request naming the viewer. Kept apart from `review_requested`
     /// because the obligation differs: a request by name is the viewer's, a
-    /// team request is the team's. Renders as its own grey mark in the review
-    /// glyph's slot, so it is never set beside `review_requested` or
-    /// `awaiting_review`, and never on a PR the viewer authored. GitHub drops the team from the pending list once a
-    /// member reviews, so this clears itself. Suppressed on drafts like the
-    /// other review marks. It never changes the section (see [`section_for`])
-    /// and, by the property-not-event rule of `blocked_reasons`, never
-    /// reaches a badge or the tray count. Out of [`collect_repo_prs`] it
-    /// means only "could be one" (see [`could_be_team_request`]);
-    /// [`Client::fetch_open_prs`] keeps it for the PRs the team-request
-    /// search confirms.
+    /// team request is the team's. It shares the row's one review slot, so it
+    /// is never set beside `review_requested` or `awaiting_review`, and never
+    /// on a PR the viewer authored. GitHub drops the team from the pending
+    /// list once a member reviews, so this clears itself. Suppressed on
+    /// drafts like the other review marks. It never changes the section (see
+    /// [`section_for`]) and, by the property-not-event rule of
+    /// `blocked_reasons`, never reaches a badge or the tray count. Out of
+    /// [`collect_repo_prs`] it means only "could be one" (see
+    /// [`could_be_team_request`]); [`Client::fetch_open_prs`] keeps it for
+    /// the PRs the team-request search confirms.
     pub team_review_requested: bool,
     /// Whether one of the viewer's own PRs is waiting on a reviewer: it has at
     /// least one outstanding requested reviewer. The outgoing mirror of
@@ -766,11 +766,10 @@ fn pr_key(repo: &str, number: u64) -> String {
 }
 
 /// The search for open PRs in `repos` whose pending reviewers include the
-/// viewer, by name or through one of their teams. This is the only route to
-/// team requests open to a `repo`-scoped token: every GraphQL `Team` field
-/// needs `read:org`, and asking for one fails the whole query, so
-/// `reviewRequests` reports a team as a null reviewer. Search resolves the
-/// membership on GitHub's side instead.
+/// viewer, by name or through one of their teams. Search resolves the team
+/// membership on GitHub's side, which a `repo`-scoped token cannot do in
+/// the PR query: every GraphQL `Team` field needs `read:org`, and asking for
+/// one fails the whole query. Never add a `Team` selection here or there.
 fn team_search_field(repos: &[String], after: Option<&str>) -> String {
     let mut search = String::from("is:open is:pr review-requested:@me");
     for repo in repos {
