@@ -30,6 +30,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     blocked_reasons: [],
     is_draft: false,
     review_requested: false,
+    team_review_requested: false,
     awaiting_review: false,
     approved: false,
     merge_queue_position: null,

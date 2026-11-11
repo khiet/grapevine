@@ -300,6 +300,20 @@ function DirectionArrow({ dir }: { dir: "in" | "out" }) {
   );
 }
 
+// The team glyph that pairs with the glasses when the request went to one of
+// the viewer's teams: two heads where the personal request has its arrow, so
+// the two read apart at a glance. Narrower than the glasses, like the arrow.
+function TeamGlyph() {
+  return (
+    <GlyphSvg strokeWidth={2.4} width={11}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </GlyphSvg>
+  );
+}
+
 // One item of the marker cluster. Which marks a row has, and their order, is
 // decided by the popover view; this only draws the one it is handed.
 function MarkView({ mark }: { mark: Mark }) {
@@ -318,6 +332,15 @@ function MarkView({ mark }: { mark: Mark }) {
       return (
         <RowMark tip={mark.tip} wide>
           <DirectionArrow dir="in" />
+          <Glasses />
+        </RowMark>
+      );
+    // Glasses with the team glyph: a review is requested from one of your
+    // teams, not from you by name.
+    case "team-review-requested":
+      return (
+        <RowMark tip={mark.tip} wide>
+          <TeamGlyph />
           <Glasses />
         </RowMark>
       );
