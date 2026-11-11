@@ -38,9 +38,7 @@ pub fn clear_merged(app: AppHandle) -> Result<(), String> {
 /// time zone: the next local 08:00.
 #[tauri::command]
 pub fn snooze(app: AppHandle, key: String, expires_at: u64) -> Result<(), String> {
-    sync::transition(&app, |prs| {
-        prs.snooze(&key, sync::now_epoch_ms(), expires_at)
-    })
+    sync::transition(&app, |prs| prs.snooze(&key, expires_at))
 }
 
 #[tauri::command]

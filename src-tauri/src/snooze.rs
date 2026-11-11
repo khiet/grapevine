@@ -11,10 +11,12 @@ use crate::{
 /// snooze runs out regardless.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snooze {
-    /// Epoch ms of the snooze: the activity baseline. Human activity dated
-    /// after it wakes the row. Unread is not the signal, since unread
-    /// activity may predate the snooze.
-    pub snoozed_at: u64,
+    /// The activity baseline: epoch ms of the last successful sync before
+    /// the snooze, which dates the row the viewer was looking at. Human
+    /// activity after it wakes the row, so a comment that landed between
+    /// that sync and the click is not lost. Unread is not the signal, since
+    /// unread activity may predate the snooze.
+    pub baseline_at: u64,
     /// Whether a review request naming the viewer was outstanding when last
     /// looked at. Starts as the state at snooze time and follows a request
     /// that clears, so a re-request after reviewing reads as fresh.
@@ -32,9 +34,9 @@ pub fn can_snooze(pr: &PullRequest) -> bool {
     pr.section != Section::All
 }
 
-pub fn entry(pr: &PullRequest, now_epoch_ms: u64, expires_at: u64) -> Snooze {
+pub fn entry(pr: &PullRequest, baseline_at: u64, expires_at: u64) -> Snooze {
     Snooze {
-        snoozed_at: now_epoch_ms,
+        baseline_at,
         request_outstanding: pr.review_requested,
         expires_at,
     }
@@ -70,7 +72,7 @@ pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> b
         if !can_snooze(pr)
             || snooze.expires_at <= now_epoch_ms
             || fresh_request
-            || has_activity_after(pr, snooze.snoozed_at)
+            || has_activity_after(pr, snooze.baseline_at)
         {
             continue;
         }

@@ -260,7 +260,7 @@ enum Outcome {
     },
 }
 
-pub fn now_epoch_ms() -> u64 {
+fn now_epoch_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

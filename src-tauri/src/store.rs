@@ -224,7 +224,7 @@ mod tests {
         let state = Snoozes::from([(
             "acme/widgets#3".into(),
             Snooze {
-                snoozed_at: 1_784_205_296_000,
+                baseline_at: 1_784_205_296_000,
                 request_outstanding: true,
                 expires_at: 1_784_250_000_000,
             },
