@@ -89,6 +89,7 @@ mod tests {
             blocked_reasons: vec![],
             is_draft: false,
             review_requested: false,
+            team_review_requested: false,
             awaiting_review: false,
             approved: false,
             merge_queue_position: None,

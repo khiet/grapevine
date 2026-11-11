@@ -32,6 +32,12 @@ export interface PullRequest {
    * glasses glyph with an incoming arrow. Backend-computed, suppressed on
    * drafts, and self-clearing once the viewer reviews. */
   review_requested: boolean;
+  /** A review is outstanding from one of the viewer's teams, with no request
+   * naming the viewer; renders the glasses glyph with the team glyph. Never
+   * set beside review_requested or awaiting_review, suppressed on drafts,
+   * self-clearing once a team member reviews, and never part of the unread
+   * count. */
+  team_review_requested: boolean;
   /** One of the viewer's own PRs is waiting on a reviewer; renders the glasses
    * glyph with an outgoing arrow. The Mine-only mirror of review_requested
    * (the two never share a row), suppressed on drafts, and self-clearing as

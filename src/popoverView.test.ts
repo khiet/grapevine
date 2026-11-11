@@ -28,6 +28,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   blocked_reasons: [],
   is_draft: false,
   review_requested: false,
+  team_review_requested: false,
   awaiting_review: false,
   approved: false,
   merge_queue_position: null,
@@ -124,6 +125,26 @@ test("the outgoing review glyph takes the review slot on the viewer's own PR", (
     { kind: "approved", tip: "Approved" },
     { kind: "awaiting-review", tip: "Awaiting review" },
     { kind: "merge-queue", position: 1, tip: "1st in merge queue" },
+  ]);
+});
+
+test("a team review request takes the review slot with its own mark", () => {
+  const row = rowFor(
+    pr({ approved: true, team_review_requested: true, merge_queue_position: 1 }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "approved", tip: "Approved" },
+    { kind: "team-review-requested", tip: "Review requested from your team" },
+    { kind: "merge-queue", position: 1, tip: "1st in merge queue" },
+  ]);
+});
+
+test("a request naming you shows alone, never beside the team mark", () => {
+  const row = rowFor(
+    pr({ review_requested: true, team_review_requested: true }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "review-requested", tip: "Review requested" },
   ]);
 });
 

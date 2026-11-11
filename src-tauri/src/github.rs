@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -54,6 +54,9 @@ const REVIEW_PAGE: usize = 20;
 const REVIEW_COMMENT_PAGE: usize = 10;
 /// GitHub caps a PR at ten assignees, so one page always holds them all.
 const ASSIGNEE_PAGE: usize = 10;
+/// Search hits per page; 100 is GitHub's maximum, and a viewer with more
+/// team requests than that across the watched repos is paged.
+const TEAM_SEARCH_PAGE: usize = 100;
 
 /// Which popover section a PR belongs to, from the viewer's perspective.
 ///
@@ -125,8 +128,22 @@ pub struct PullRequest {
     /// like the blocked pills, so a not-ready PR never nags for a review; the
     /// request still counts toward Participated membership (see
     /// [`section_for`]). Same property-not-event rule as `blocked_reasons`;
-    /// team requests never set it (see [`review_requested_for`]).
+    /// team requests never set it (see [`review_requested_for`]); they set
+    /// `team_review_requested` instead.
     pub review_requested: bool,
+    /// Whether a review is outstanding from a team the viewer belongs to,
+    /// with no request naming the viewer. Kept apart from `review_requested`
+    /// because the obligation differs: a request by name is the viewer's, a
+    /// team request is the team's. Renders as its own grey mark in the review
+    /// glyph's slot, so it is never set beside `review_requested` or
+    /// `awaiting_review`. GitHub drops the team from the pending list once a
+    /// member reviews, so this clears itself. Suppressed on drafts like the
+    /// other review marks. It never changes the section (see [`section_for`])
+    /// and, by the property-not-event rule of `blocked_reasons`, never
+    /// reaches a badge or the tray count. Filled in by
+    /// [`Client::fetch_open_prs`] from the team-request search; false out of
+    /// [`collect_repo_prs`].
+    pub team_review_requested: bool,
     /// Whether one of the viewer's own PRs is waiting on a reviewer: it has at
     /// least one outstanding requested reviewer. The outgoing mirror of
     /// `review_requested` (see [`has_pending_review_request`]), set only on
@@ -379,9 +396,14 @@ impl<T: Transport> Client<'_, T> {
             .collect();
         let mut prs = Vec::new();
         let mut rate_limit = None;
+        // The team-request search rides along with the repo pages. Outer
+        // `Some` while it has a page left to ask for; the inner value is the
+        // cursor to resume from. Nothing watched means nothing to search.
+        let mut team_search: Option<Option<String>> = (!pending.is_empty()).then_some(None);
+        let mut team_requested: HashSet<String> = HashSet::new();
 
         let mut rounds = 0;
-        while !pending.is_empty() {
+        while !pending.is_empty() || team_search.is_some() {
             rounds += 1;
             if rounds > 20 {
                 return Err(GithubError::Other(
@@ -398,12 +420,18 @@ impl<T: Transport> Client<'_, T> {
                     cursor.as_deref(),
                 ));
             }
+            if let Some(cursor) = &team_search {
+                query.push_str(&team_search_field(repos, cursor.as_deref()));
+            }
             query.push('}');
 
             let response = self.graphql(&query, json!({})).await?;
             let Some(data) = response.data else {
                 return Err(error_from_graphql(response.errors));
             };
+            if team_search.is_some() {
+                team_search = collect_team_requested(&data, &mut team_requested).map(Some);
+            }
             // Later pages overwrite: the budget after the final request is the
             // one the sync loop plans around.
             if let Some(limit) = collect_rate_limit(&data) {
@@ -426,6 +454,18 @@ impl<T: Transport> Client<'_, T> {
                 }
             }
             pending = still_pending;
+        }
+
+        // The search matches a request naming the viewer as well as one
+        // through a team; dropping the named ones leaves the team-only
+        // requests. A draft never matches because both flags are suppressed
+        // on drafts. `awaiting_review` already holds the review slot on the
+        // viewer's own PR, so it wins there.
+        for pr in &mut prs {
+            pr.team_review_requested = !pr.is_draft
+                && !pr.review_requested
+                && !pr.awaiting_review
+                && team_requested.contains(&pr_key(&pr.repo, pr.number));
         }
 
         // Most recently updated first across all repos; ISO-8601 UTC timestamps
@@ -698,6 +738,57 @@ fn collect_merged(data: &Value, targets: &[(String, String)]) -> HashMap<String,
     merged
 }
 
+fn pr_key(repo: &str, number: u64) -> String {
+    format!("{repo}#{number}")
+}
+
+/// The search for open PRs in `repos` whose pending reviewers include the
+/// viewer, by name or through one of their teams. This is the only route to
+/// team requests open to a `repo`-scoped token: every GraphQL `Team` field
+/// needs `read:org`, and asking for one fails the whole query, so
+/// `reviewRequests` reports a team as a null reviewer. Search resolves the
+/// membership on GitHub's side instead.
+fn team_search_field(repos: &[String], after: Option<&str>) -> String {
+    let mut search = String::from("is:open is:pr review-requested:@me");
+    for repo in repos {
+        search.push_str(" repo:");
+        search.push_str(repo);
+    }
+    let after = after
+        .map(|c| format!(", after: {}", json!(c)))
+        .unwrap_or_default();
+    format!(
+        "search(query: {search}, type: ISSUE, first: {TEAM_SEARCH_PAGE}{after}) {{ \
+           pageInfo {{ hasNextPage endCursor }} \
+           nodes {{ ... on PullRequest {{ number repository {{ nameWithOwner }} }} }} \
+         }} ",
+        search = json!(search),
+    )
+}
+
+/// Adds one page of search hits to `out`, keyed like [`pr_key`]. Returns the
+/// cursor to resume from when more pages remain. A search GitHub declined to
+/// answer reads as its last page: the team mark is an extra, and must never
+/// cost a sync the PRs it would otherwise report.
+fn collect_team_requested(data: &Value, out: &mut HashSet<String>) -> Option<String> {
+    for node in list(data, "/search/nodes") {
+        let repo = node
+            .pointer("/repository/nameWithOwner")
+            .and_then(Value::as_str);
+        let number = node.get("number").and_then(Value::as_u64);
+        if let (Some(repo), Some(number)) = (repo, number) {
+            out.insert(pr_key(repo, number));
+        }
+    }
+    let page = data.pointer("/search/pageInfo")?;
+    if page.get("hasNextPage").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    page.get("endCursor")
+        .and_then(Value::as_str)
+        .map(String::from)
+}
+
 fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> String {
     let after = after
         .map(|c| format!(", after: {}", json!(c)))
@@ -797,6 +888,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
             review_requested,
+            team_review_requested: false,
             // The outgoing mirror: your own PR waiting on a reviewer. Gated to
             // Mine so it cannot fire on a PR you merely participate in, and
             // suppressed on drafts like `review_requested`. It also yields to
@@ -970,7 +1062,8 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
 
 /// Whether the viewer appears among the PR's requested reviewers. Team
 /// requests carry no `login` (GitHub only exposes it via `... on User`), so
-/// they never match: a viewer whose team was asked is not flagged.
+/// they never match: a viewer whose team was asked is flagged through
+/// `team_review_requested` instead.
 fn review_requested_for(node: &Value, viewer: &str) -> bool {
     list(node, "/reviewRequests/nodes").iter().any(|n| {
         n.pointer("/requestedReviewer/login")
@@ -2967,6 +3060,273 @@ mod tests {
 
         assert!(prs[0].awaiting_review);
         assert!(!prs[0].review_requested);
+    }
+
+    /// What the PR query reports for a team request to a `repo`-scoped token:
+    /// a pending reviewer GitHub will not name.
+    fn team_request() -> Value {
+        json!({ "nodes": [{ "requestedReviewer": null }] })
+    }
+
+    /// `round` with the review-request search answering `hits`, each the
+    /// (repo, number) of a PR asking the viewer or one of their teams.
+    fn with_search(mut round: Value, hits: &[(&str, u64)], next: Option<&str>) -> Value {
+        let nodes: Vec<Value> = hits
+            .iter()
+            .map(|(repo, number)| json!({ "number": number, "repository": { "nameWithOwner": repo } }))
+            .collect();
+        round["search"] = json!({
+            "pageInfo": { "hasNextPage": next.is_some(), "endCursor": next },
+            "nodes": nodes
+        });
+        round
+    }
+
+    /// One fetch of `acme/widgets` whose open PRs are `nodes`, with the
+    /// review-request search answering the PR numbers in `hits`.
+    fn fetch_with_search(nodes: Vec<Value>, hits: &[u64]) -> Vec<PullRequest> {
+        let hits: Vec<(&str, u64)> = hits.iter().map(|n| ("acme/widgets", *n)).collect();
+        let github = Canned::new(vec![ok(with_search(
+            prs_round(5000, vec![repo_named("acme/widgets", nodes, None)]),
+            &hits,
+            None,
+        ))]);
+        fetch_open(&github, &["acme/widgets"]).unwrap().prs
+    }
+
+    #[test]
+    fn a_request_to_one_of_the_viewers_teams_is_read_onto_the_row() {
+        let prs = fetch_with_search(
+            vec![
+                pr_node(json!({
+                    "number": 1,
+                    "updatedAt": "2026-07-11T02:00:00Z",
+                    "reviewRequests": team_request(),
+                })),
+                // Asked of a team the viewer is not in: the PR query reports
+                // the same unnamed reviewer, and only the search tells them
+                // apart.
+                pr_node(json!({
+                    "number": 2,
+                    "updatedAt": "2026-07-11T01:00:00Z",
+                    "reviewRequests": team_request(),
+                })),
+            ],
+            &[1],
+        );
+
+        assert!(prs[0].team_review_requested);
+        assert!(!prs[0].review_requested);
+        assert!(!prs[1].team_review_requested);
+    }
+
+    /// The search matches a request by name too, so a hit alone is not a team
+    /// request: the viewer's own name on the PR wins.
+    #[test]
+    fn a_pr_asking_the_viewer_and_their_team_carries_only_the_named_request() {
+        let prs = fetch_with_search(
+            vec![pr_node(json!({
+                "reviewRequests": { "nodes": [
+                    { "requestedReviewer": { "login": "khiet" } },
+                    { "requestedReviewer": null },
+                ] },
+            }))],
+            &[7],
+        );
+
+        assert!(prs[0].review_requested);
+        assert!(!prs[0].team_review_requested);
+    }
+
+    #[test]
+    fn a_draft_never_flags_a_team_review_request() {
+        let prs = fetch_with_search(
+            vec![pr_node(json!({
+                "isDraft": true,
+                "reviewRequests": team_request(),
+            }))],
+            &[7],
+        );
+
+        assert!(!prs[0].team_review_requested);
+    }
+
+    /// The viewer's own PR keeps the outgoing mark in the review slot.
+    #[test]
+    fn a_team_request_on_the_viewers_own_pr_stays_awaiting_review() {
+        let prs = fetch_with_search(
+            vec![pr_node(json!({
+                "viewerDidAuthor": true,
+                "reviewRequests": team_request(),
+            }))],
+            &[7],
+        );
+
+        assert!(prs[0].awaiting_review);
+        assert!(!prs[0].team_review_requested);
+    }
+
+    #[test]
+    fn a_team_request_leaves_the_section_where_involvement_put_it() {
+        let nodes = || {
+            vec![
+                pr_node(json!({
+                    "number": 1,
+                    "updatedAt": "2026-07-11T02:00:00Z",
+                    "viewerSubscription": "SUBSCRIBED",
+                    "reviewRequests": team_request(),
+                })),
+                // A muted thread: the team request does not pull it back.
+                pr_node(json!({
+                    "number": 2,
+                    "updatedAt": "2026-07-11T01:00:00Z",
+                    "viewerSubscription": "IGNORED",
+                    "reviewRequests": team_request(),
+                })),
+            ]
+        };
+        let sections = |prs: Vec<PullRequest>| prs.iter().map(|pr| pr.section).collect::<Vec<_>>();
+
+        let with_request = fetch_with_search(nodes(), &[1, 2]);
+        assert!(with_request.iter().all(|pr| pr.team_review_requested));
+        assert_eq!(
+            sections(with_request),
+            vec![Section::Participated, Section::All]
+        );
+        assert_eq!(
+            sections(fetch_with_search(nodes(), &[])),
+            vec![Section::Participated, Section::All]
+        );
+    }
+
+    #[test]
+    fn a_team_request_adds_nothing_to_the_tray() {
+        let node = || vec![joined(json!({ "reviewRequests": team_request() }))];
+        let sync_with = |state: &PrState, hits: &[u64]| {
+            state.sync_succeeded(fetch_with_search(node(), hits), vec![], 0)
+        };
+        let state = PrState::default();
+        sync_with(&state, &[]);
+
+        let effects = sync_with(&state, &[7]);
+
+        assert!(effects.snapshot.prs[0].team_review_requested);
+        assert_eq!(effects.snapshot.prs[0].unread_count, 0);
+        assert_eq!(effects.tray_count, Some(0));
+    }
+
+    /// The search is scoped to the watched repos and travels in the same
+    /// request as their PRs, so it costs no extra round.
+    #[test]
+    fn the_team_request_search_rides_the_first_round_scoped_to_the_watched_repos() {
+        let github = Canned::new(vec![ok(with_search(
+            prs_round(
+                5000,
+                vec![
+                    repo_named("acme/widgets", vec![], None),
+                    repo_named("acme/gadgets", vec![], None),
+                ],
+            ),
+            &[],
+            None,
+        ))]);
+
+        fetch_open(&github, &["acme/widgets", "acme/gadgets"]).unwrap();
+
+        assert_eq!(github.request_count(), 1);
+        assert!(github.query(0).contains(
+            r#"search(query: "is:open is:pr review-requested:@me repo:acme/widgets repo:acme/gadgets", type: ISSUE"#
+        ));
+    }
+
+    /// The repos are done after one round; only the search goes back for
+    /// more, from its own cursor.
+    #[test]
+    fn a_search_with_more_pages_is_resumed_alone_from_its_cursor() {
+        let node =
+            |number: u64| pr_node(json!({ "number": number, "reviewRequests": team_request() }));
+        let github = Canned::new(vec![
+            ok(with_search(
+                prs_round(
+                    5000,
+                    vec![repo_named("acme/widgets", vec![node(1), node(2)], None)],
+                ),
+                &[("acme/widgets", 1)],
+                Some("s1"),
+            )),
+            ok(with_search(
+                prs_round(4999, vec![]),
+                &[("acme/widgets", 2)],
+                None,
+            )),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert!(prs.iter().all(|pr| pr.team_review_requested));
+        assert_eq!(github.request_count(), 2);
+        let second = github.query(1);
+        assert!(second.contains(r#"after: "s1""#));
+        assert!(!second.contains("repository(owner:"));
+    }
+
+    /// A hit is matched on repo and number together: the same number in
+    /// another watched repo is a different PR.
+    #[test]
+    fn a_search_hit_marks_only_the_pr_in_its_own_repo() {
+        let node = || pr_node(json!({ "number": 5, "reviewRequests": team_request() }));
+        let github = Canned::new(vec![ok(with_search(
+            prs_round(
+                5000,
+                vec![
+                    repo_named("acme/widgets", vec![node()], None),
+                    repo_named("acme/gadgets", vec![node()], None),
+                ],
+            ),
+            &[("acme/gadgets", 5)],
+            None,
+        ))]);
+
+        let prs = fetch_open(&github, &["acme/widgets", "acme/gadgets"])
+            .unwrap()
+            .prs;
+
+        let marked: Vec<&str> = prs
+            .iter()
+            .filter(|pr| pr.team_review_requested)
+            .map(|pr| pr.repo.as_str())
+            .collect();
+        assert_eq!(marked, vec!["acme/gadgets"]);
+    }
+
+    /// GitHub answers a field it cannot resolve with null and an error beside
+    /// the rest of the data. The sync reports every PR and drops only the
+    /// team marks.
+    #[test]
+    fn a_search_github_declines_to_answer_costs_only_the_team_marks() {
+        let mut data = prs_round(
+            5000,
+            vec![repo_named(
+                "acme/widgets",
+                vec![pr_node(json!({ "reviewRequests": team_request() }))],
+                None,
+            )],
+        );
+        data["search"] = Value::Null;
+        let github = Canned::new(vec![answer(
+            200,
+            &[],
+            json!({
+                "data": data,
+                "errors": [{ "type": "FORBIDDEN", "message": "Resource not accessible." }]
+            }),
+        )]);
+
+        let fetched = fetch_open(&github, &["acme/widgets"]).unwrap();
+
+        assert_eq!(rows(&fetched), vec![("acme/widgets", 7)]);
+        assert!(!fetched.prs[0].team_review_requested);
+        assert_eq!(github.request_count(), 1);
     }
 
     #[test]

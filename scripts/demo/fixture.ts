@@ -31,6 +31,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     blocked_reasons: [],
     is_draft: false,
     review_requested: false,
+    team_review_requested: false,
     awaiting_review: false,
     approved: false,
     merge_queue_position: null,
