@@ -1,7 +1,7 @@
 import type { MergedPr, PullRequest, Snapshot } from "../../src/backend";
 
-// Every PR here is fictional; the people and repo owners are real GitHub
-// accounts. The capture clock in demo.mjs is set just after the newest
+// Every PR here is fictional; the people, the bot and the repo owners are real
+// GitHub accounts. The capture clock in demo.mjs is set just after the newest
 // timestamp below.
 const ME = "khiet";
 const at = (time: string) => `2026-09-${time}+01:00`;
@@ -22,6 +22,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     url: `https://github.com/${repo}/pull/${number}`,
     repo,
     author,
+    author_is_bot: false,
     avatar_url: avatars[author],
     owner_avatar_url: avatars[repo.split("/")[0]],
     created_at: at("20T09:00:00"),
@@ -34,6 +35,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     approved: false,
     merge_queue_position: null,
     unread_count: 0,
+    bot_unread_count: 0,
     ...extra,
   });
   const merged = (
@@ -66,10 +68,10 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
       pr("teampave/web-app", 2320, "Upgrade to React 19 and drop legacy context", ME, "30T11:40:00", { ...mine, approved: true, merge_queue_position: 2 }),
       pr("khiet/design-tokens", 88, "Rename the spacing scale to t-shirt sizes", "MarcusAl", "29T17:20:00", { review_requested: true }),
       pr("fuseinsight/ingest", 415, "Parse chapter markers from ID3 tags", ME, "29T16:05:00", { ...mine, blocked_reasons: ["ci"] }),
-      pr("teampave/checkout-api", 1279, "Fix rounding in multi-currency refunds", "doutatsu", "28T10:45:00", { unread_count: 2, blocked_reasons: ["conflict", "behind"] }),
+      pr("teampave/checkout-api", 1279, "Fix rounding in multi-currency refunds", "doutatsu", "28T10:45:00", { unread_count: 2, bot_unread_count: 8, blocked_reasons: ["conflict", "behind"] }),
       pr("teampave/web-app", 2322, "Spike: dark mode for the receipt page", ME, "26T14:30:00", { ...mine, is_draft: true }),
       pr("teampave/web-app", 2315, "Lazy-load the order history table", "MarcusAl", "30T10:20:00", all),
-      pr("teampave/checkout-api", 1270, "Bump stripe-node to 17.4", "doutatsu", "29T08:00:00", all),
+      pr("teampave/checkout-api", 1270, "Bump stripe-node to 17.4", "dependabot", "29T08:00:00", { ...all, author_is_bot: true }),
       pr("fuseinsight/ingest", 409, "Move transcoding jobs to the shared queue", "MarcusAl", "27T13:15:00", all),
     ],
     merged: [

@@ -80,6 +80,7 @@ mod tests {
             url: format!("https://github.com/{repo}/pull/{number}"),
             repo: repo.into(),
             author: "someone".into(),
+            author_is_bot: false,
             avatar_url: "https://avatars.example/someone".into(),
             owner_avatar_url: "https://avatars.example/acme".into(),
             created_at: "2026-07-01T00:00:00Z".into(),
@@ -92,7 +93,9 @@ mod tests {
             approved: false,
             merge_queue_position: None,
             unread_count: 0,
+            bot_unread_count: 0,
             activity: vec![],
+            bot_activity: vec![],
         }
     }
 
