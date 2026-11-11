@@ -303,7 +303,7 @@ function DirectionArrow({ dir }: { dir: "in" | "out" }) {
 // The team glyph that pairs with the glasses when the request went to one of
 // the viewer's teams: two heads where the personal request has its arrow, so
 // the two read apart at a glance. Narrower than the glasses, like the arrow.
-function Team() {
+function TeamGlyph() {
   return (
     <GlyphSvg strokeWidth={2.4} width={11}>
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -340,7 +340,7 @@ function MarkView({ mark }: { mark: Mark }) {
     case "team-review-requested":
       return (
         <RowMark tip={mark.tip} wide>
-          <Team />
+          <TeamGlyph />
           <Glasses />
         </RowMark>
       );

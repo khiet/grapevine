@@ -133,11 +133,12 @@ function ordinal(n: number): string {
 
 // The marker cluster in display order: the approved check, the review glyph
 // (incoming, incoming through a team, or outgoing; the backend sends at most
-// one for a row, and on an agent's PR in Mine that asks for your review it
-// sends the incoming one), the merge queue mark, then the blocked pills. Approval leads as the one positive
-// mark, so it reads before whatever still stands in the way. A new signal
-// needs a Mark kind, a line here for when and where it shows, and its glyph
-// in MarkView; no condition elsewhere has to learn about it.
+// one for a row, and the chain below holds the slot to one mark regardless,
+// a request naming you first), the merge queue mark, then the blocked pills.
+// Approval leads as the one positive mark, so it reads before whatever still
+// stands in the way. A new signal needs a Mark kind, a line here for when and
+// where it shows, and its glyph in MarkView; no condition elsewhere has to
+// learn about it.
 //
 // Drafts need no special case: the backend suppresses the check, the review
 // glyphs and the blocked reasons on a draft, so whatever it does send shows.
@@ -147,14 +148,11 @@ function rowMarks(pr: PullRequest): Mark[] {
   if (pr.review_requested) {
     marks.push({ kind: "review-requested", tip: "Review requested" });
   } else if (pr.team_review_requested) {
-    // Guarded here as well as in the backend: a request by name is the
-    // stronger claim, and the two must never read as one doubled mark.
     marks.push({
       kind: "team-review-requested",
       tip: "Review requested from your team",
     });
-  }
-  if (pr.awaiting_review) {
+  } else if (pr.awaiting_review) {
     marks.push({ kind: "awaiting-review", tip: "Awaiting review" });
   }
   if (pr.merge_queue_position !== null) {

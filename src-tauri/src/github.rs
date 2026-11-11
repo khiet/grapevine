@@ -57,6 +57,8 @@ const ASSIGNEE_PAGE: usize = 10;
 /// Search hits per page; 100 is GitHub's maximum, and a viewer with more
 /// team requests than that across the watched repos is paged.
 const TEAM_SEARCH_PAGE: usize = 100;
+/// GitHub search serves at most 1000 results for one query.
+const TEAM_SEARCH_MAX_PAGES: usize = 10;
 
 /// Which popover section a PR belongs to, from the viewer's perspective.
 ///
@@ -136,13 +138,14 @@ pub struct PullRequest {
     /// because the obligation differs: a request by name is the viewer's, a
     /// team request is the team's. Renders as its own grey mark in the review
     /// glyph's slot, so it is never set beside `review_requested` or
-    /// `awaiting_review`. GitHub drops the team from the pending list once a
+    /// `awaiting_review`, and never on a PR the viewer authored. GitHub drops the team from the pending list once a
     /// member reviews, so this clears itself. Suppressed on drafts like the
     /// other review marks. It never changes the section (see [`section_for`])
     /// and, by the property-not-event rule of `blocked_reasons`, never
-    /// reaches a badge or the tray count. Filled in by
-    /// [`Client::fetch_open_prs`] from the team-request search; false out of
-    /// [`collect_repo_prs`].
+    /// reaches a badge or the tray count. Out of [`collect_repo_prs`] it
+    /// means only "could be one" (see [`could_be_team_request`]);
+    /// [`Client::fetch_open_prs`] keeps it for the PRs the team-request
+    /// search confirms.
     pub team_review_requested: bool,
     /// Whether one of the viewer's own PRs is waiting on a reviewer: it has at
     /// least one outstanding requested reviewer. The outgoing mirror of
@@ -400,7 +403,12 @@ impl<T: Transport> Client<'_, T> {
         // `Some` while it has a page left to ask for; the inner value is the
         // cursor to resume from. Nothing watched means nothing to search.
         let mut team_search: Option<Option<String>> = (!pending.is_empty()).then_some(None);
+        let mut team_search_pages = 0;
         let mut team_requested: HashSet<String> = HashSet::new();
+        let searched_repos: Vec<String> = pending
+            .iter()
+            .map(|(owner, name, _)| format!("{owner}/{name}"))
+            .collect();
 
         let mut rounds = 0;
         while !pending.is_empty() || team_search.is_some() {
@@ -421,16 +429,32 @@ impl<T: Transport> Client<'_, T> {
                 ));
             }
             if let Some(cursor) = &team_search {
-                query.push_str(&team_search_field(repos, cursor.as_deref()));
+                query.push_str(&team_search_field(&searched_repos, cursor.as_deref()));
             }
             query.push('}');
 
             let response = self.graphql(&query, json!({})).await?;
             let Some(data) = response.data else {
-                return Err(error_from_graphql(response.errors));
+                let error = error_from_graphql(response.errors);
+                // GitHub refuses a whole query over one field it will not
+                // serve. If the search was that field, the round is asked
+                // again without it, so a token that cannot search still
+                // syncs. A quota refusal is not about the search, and asking
+                // again would only spend more of it.
+                if team_search.is_some() && !matches!(error, GithubError::RateLimited { .. }) {
+                    team_search = None;
+                    team_requested.clear();
+                    continue;
+                }
+                return Err(error);
             };
             if team_search.is_some() {
-                team_search = collect_team_requested(&data, &mut team_requested).map(Some);
+                team_search_pages += 1;
+                // Stops at what GitHub search will page through at all, so
+                // the search can never run the fetch into the round limit.
+                team_search = collect_team_requested(&data, &mut team_requested)
+                    .filter(|_| team_search_pages < TEAM_SEARCH_MAX_PAGES)
+                    .map(Some);
             }
             // Later pages overwrite: the budget after the final request is the
             // one the sync loop plans around.
@@ -456,16 +480,15 @@ impl<T: Transport> Client<'_, T> {
             pending = still_pending;
         }
 
-        // The search matches a request naming the viewer as well as one
-        // through a team; dropping the named ones leaves the team-only
-        // requests. A draft never matches because both flags are suppressed
-        // on drafts. `awaiting_review` already holds the review slot on the
-        // viewer's own PR, so it wins there.
         for pr in &mut prs {
-            pr.team_review_requested = !pr.is_draft
-                && !pr.review_requested
-                && !pr.awaiting_review
-                && team_requested.contains(&pr_key(&pr.repo, pr.number));
+            pr.team_review_requested =
+                pr.team_review_requested && team_requested.contains(&pr_key(&pr.repo, pr.number));
+            // One glyph per row: an agent's PR in Mine that asks the viewer's
+            // team shows the incoming mark, as it does when it asks the
+            // viewer by name.
+            if pr.team_review_requested {
+                pr.awaiting_review = false;
+            }
         }
 
         // Most recently updated first across all repos; ISO-8601 UTC timestamps
@@ -888,7 +911,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             // it. Only the marker is hidden; `section_for` still counts the
             // request, so the PR keeps its Participated membership.
             review_requested,
-            team_review_requested: false,
+            team_review_requested: !is_draft && !review_requested && could_be_team_request(node),
             // The outgoing mirror: your own PR waiting on a reviewer. Gated to
             // Mine so it cannot fire on a PR you merely participate in, and
             // suppressed on drafts like `review_requested`. It also yields to
@@ -1070,6 +1093,20 @@ fn review_requested_for(node: &Value, viewer: &str) -> bool {
             .and_then(Value::as_str)
             == Some(viewer)
     })
+}
+
+/// Whether a team request to the viewer is possible on this PR: someone else
+/// wrote it, and a pending reviewer carries no `login`, which is all a
+/// `repo`-scoped token sees of a team. It cannot say whose team; the search
+/// in [`team_search_field`] does. Checking the live list as well ties the
+/// mark's clearing to the PR itself, not to how fresh the search index is.
+fn could_be_team_request(node: &Value) -> bool {
+    node.get("viewerDidAuthor").and_then(Value::as_bool) != Some(true)
+        && list(node, "/reviewRequests/nodes").iter().any(|n| {
+            n.pointer("/requestedReviewer/login")
+                .and_then(Value::as_str)
+                .is_none()
+        })
 }
 
 /// Whether the PR has any outstanding requested reviewer. The outgoing
@@ -3149,6 +3186,99 @@ mod tests {
         );
 
         assert!(!prs[0].team_review_requested);
+    }
+
+    /// An agent's PR in Mine can ask the viewer's team, as it can ask the
+    /// viewer; the incoming mark takes the review slot either way.
+    #[test]
+    fn an_agent_pr_in_mine_that_asks_the_viewers_team_shows_only_the_team_mark() {
+        let prs = fetch_with_search(
+            vec![agent_pr(json!({
+                "assignees": assignees("khiet"),
+                "reviewRequests": team_request(),
+            }))],
+            &[7],
+        );
+
+        assert_eq!(prs[0].section, Section::Mine);
+        assert!(prs[0].team_review_requested);
+        assert!(!prs[0].awaiting_review);
+    }
+
+    /// The search index can trail the PR. Once the team has reviewed, GitHub
+    /// drops it from the pending list, and the mark goes with it even while
+    /// the search still reports the PR.
+    #[test]
+    fn a_stale_search_hit_does_not_keep_the_mark_after_the_team_reviewed() {
+        let prs = fetch_with_search(
+            vec![pr_node(
+                json!({ "reviewRequests": review_requests(&["someone"]) }),
+            )],
+            &[7],
+        );
+
+        assert!(!prs[0].team_review_requested);
+    }
+
+    /// GitHub refuses a whole query over a field it will not serve the
+    /// token. The fetch asks again without the search and reports every PR.
+    #[test]
+    fn a_query_refused_with_the_search_in_it_is_asked_again_without_it() {
+        let round = || {
+            prs_round(
+                5000,
+                vec![repo_named(
+                    "acme/widgets",
+                    vec![pr_node(json!({ "reviewRequests": team_request() }))],
+                    None,
+                )],
+            )
+        };
+        let github = Canned::new(vec![
+            answer(
+                200,
+                &[],
+                json!({
+                    "data": null,
+                    "errors": [{ "type": "INSUFFICIENT_SCOPES", "message": "No search for you." }]
+                }),
+            ),
+            ok(with_search(round(), &[("acme/widgets", 7)], None)),
+        ]);
+
+        let fetched = fetch_open(&github, &["acme/widgets"]).unwrap();
+
+        assert_eq!(rows(&fetched), vec![("acme/widgets", 7)]);
+        assert!(!fetched.prs[0].team_review_requested);
+        assert_eq!(github.request_count(), 2);
+        assert!(github.query(0).contains("search("));
+        assert!(!github.query(1).contains("search("));
+    }
+
+    /// GitHub search stops at 1000 results; the fetch stops asking there
+    /// and keeps what it has, never failing the sync over the search.
+    #[test]
+    fn a_search_that_never_reaches_a_last_page_stops_without_failing_the_sync() {
+        let mut responses = vec![ok(with_search(
+            prs_round(
+                5000,
+                vec![repo_named(
+                    "acme/widgets",
+                    vec![pr_node(json!({ "reviewRequests": team_request() }))],
+                    None,
+                )],
+            ),
+            &[("acme/widgets", 7)],
+            Some("more"),
+        ))];
+        responses
+            .extend((0..9).map(|_| ok(with_search(prs_round(5000, vec![]), &[], Some("more")))));
+        let github = Canned::new(responses);
+
+        let fetched = fetch_open(&github, &["acme/widgets"]).unwrap();
+
+        assert!(fetched.prs[0].team_review_requested);
+        assert_eq!(github.request_count(), 10);
     }
 
     /// The viewer's own PR keeps the outgoing mark in the review slot.
