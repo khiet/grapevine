@@ -11,7 +11,12 @@
 //!   PRs.
 //!
 //! A transition never touches disk, the tray or the webview. It returns
-//! [`Effects`], and the caller owes the outside world all of them.
+//! [`Effects`], and the caller owes the outside world all of them, in the
+//! order the transitions ran: effects delivered out of order would publish or
+//! save an older state over a newer one.
+//!
+//! The only I/O here is [`PrState::detect_merged`], which is not a transition:
+//! it asks GitHub about departed PRs on the way to `sync_succeeded`.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -48,9 +53,9 @@ pub struct Snapshot {
 /// Snapshot, so `snapshot` is always published as `prs-updated`.
 pub struct Effects {
     pub snapshot: Snapshot,
-    /// Read watermarks to write to disk, when they changed.
+    /// Read watermarks to write to disk; `None` when they did not change.
     pub save_read: Option<unread::ReadState>,
-    /// Merged list to write to disk, when it changed.
+    /// Merged list to write to disk; `None` when it did not change.
     pub save_merged: Option<merged::MergedState>,
     /// The tray count to show; `None` leaves the tray as it is.
     pub tray_count: Option<u64>,
@@ -64,7 +69,7 @@ struct Inner {
 }
 
 /// One lock over all three pieces, so a transition is atomic: no command can
-/// land between a sync computing unread counts and publishing them.
+/// land between a sync computing unread counts and storing them.
 #[derive(Default)]
 pub struct PrState {
     inner: Mutex<Inner>,
@@ -194,7 +199,7 @@ impl PrState {
 
     /// The tracked PRs that left the open set since the previous Snapshot:
     /// the candidates for having merged.
-    pub fn departed(&self, live_prs: &[PullRequest], repos: &[String]) -> Vec<PullRequest> {
+    fn departed(&self, live_prs: &[PullRequest], repos: &[String]) -> Vec<PullRequest> {
         departed_prs(&self.inner.lock().unwrap().snapshot.prs, live_prs, repos)
     }
 
@@ -331,8 +336,11 @@ mod tests {
         assert_eq!(after.sync_error.as_deref(), Some("Could not reach GitHub."));
         assert_eq!(after.prs.len(), 1);
         assert_eq!(after.prs[0].number, 7);
+        assert_eq!(after.merged, before.merged);
         assert_eq!(after.has_synced, before.has_synced);
         assert_eq!(after.last_sync_at, Some(NOW_MS));
+        assert_eq!(effects.save_read, None);
+        assert_eq!(effects.save_merged, None);
     }
 
     #[test]
@@ -450,8 +458,9 @@ mod tests {
         assert_eq!(unread_counts(&state.snapshot()), [0, 0]);
     }
 
-    /// The window the single lock closes: the fetch result carries no unread
-    /// counts of its own, so it cannot bring back a badge cleared meanwhile.
+    /// Unread counts come from the watermarks at the moment the result is
+    /// applied, so a fetch that started earlier cannot bring back a badge
+    /// cleared meanwhile.
     #[test]
     fn a_mark_read_between_a_fetch_starting_and_its_result_arriving_survives() {
         let state = state_with_one_unread();
@@ -506,13 +515,18 @@ mod tests {
 
     #[test]
     fn dismissing_a_merged_pr_leaves_the_tray_count_untouched() {
-        let state = state_with_one_unread();
+        let state = PrState::default();
         state.restore(
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![
-                merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string()),
                 merged::from_pr(&pr("acme/widgets", 4, &[]), T2.to_string()),
+                merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string()),
             ],
+        );
+        state.sync_succeeded(
+            vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])],
+            vec![],
+            NOW_MS,
         );
 
         let effects = state.dismiss_merged("acme/widgets#3");

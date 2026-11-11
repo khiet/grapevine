@@ -11,35 +11,27 @@ fn request_sync(app: &AppHandle) {
 
 #[tauri::command]
 pub fn get_prs(state: tauri::State<'_, sync::SyncState>) -> pr_state::Snapshot {
-    state.prs.snapshot()
+    state.snapshot()
 }
 
 #[tauri::command]
 pub fn mark_read(app: AppHandle, key: String) -> Result<(), String> {
-    transition(&app, |prs| prs.mark_read(&key))
+    sync::transition(&app, |prs| prs.mark_read(&key))
 }
 
 #[tauri::command]
 pub fn mark_all_read(app: AppHandle) -> Result<(), String> {
-    transition(&app, |prs| prs.mark_all_read())
+    sync::transition(&app, |prs| prs.mark_all_read())
 }
 
 #[tauri::command]
 pub fn dismiss_merged(app: AppHandle, key: String) -> Result<(), String> {
-    transition(&app, |prs| prs.dismiss_merged(&key))
+    sync::transition(&app, |prs| prs.dismiss_merged(&key))
 }
 
 #[tauri::command]
 pub fn clear_merged(app: AppHandle) -> Result<(), String> {
-    transition(&app, |prs| prs.clear_merged())
-}
-
-fn transition(
-    app: &AppHandle,
-    apply: impl FnOnce(&pr_state::PrState) -> pr_state::Effects,
-) -> Result<(), String> {
-    let effects = apply(&app.state::<sync::SyncState>().prs);
-    sync::carry_out(app, effects)
+    sync::transition(&app, |prs| prs.clear_merged())
 }
 
 #[derive(Serialize)]

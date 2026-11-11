@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Mutex, time::Duration};
 
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
@@ -7,7 +7,7 @@ use crate::{
     github,
     github::{GithubError, PullRequest, RateLimit},
     keychain, merged,
-    pr_state::{Effects, PrState},
+    pr_state::{Effects, PrState, Snapshot},
     settings, unread,
 };
 
@@ -28,9 +28,18 @@ const RESET_BUFFER: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct SyncState {
-    pub prs: PrState,
+    pr_state: PrState,
+    /// Held from a transition until its effects are delivered; see
+    /// [`transition`].
+    delivery: Mutex<()>,
     /// Wakes the poll loop early, e.g. right after settings change.
     pub wake: Notify,
+}
+
+impl SyncState {
+    pub fn snapshot(&self) -> Snapshot {
+        self.pr_state.snapshot()
+    }
 }
 
 /// Spawns the background loop: sync now, then again after a delay picked from
@@ -39,7 +48,7 @@ pub struct SyncState {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     app.state::<SyncState>()
-        .prs
+        .pr_state
         .restore(unread::load(&app), merged::load(&app));
     tauri::async_runtime::spawn(async move {
         let mut consecutive_failures: u32 = 0;
@@ -142,12 +151,19 @@ fn tray_title(total: u64) -> String {
     }
 }
 
-/// Pays what a [`PrState`] transition owes the outside world: changed state
-/// goes to disk, the tray shows the new count, and the popover gets the
-/// Snapshot. A failed save does not hold back the tray or the popover, which
-/// must keep agreeing with the state in memory; the first failure is returned
-/// once everything has been attempted.
-pub fn carry_out(app: &AppHandle, effects: Effects) -> Result<(), String> {
+/// Runs one [`PrState`] transition and pays what it owes the outside world:
+/// changed state goes to disk, the tray shows the new count, and the popover
+/// gets the Snapshot. This is the only way to run a transition, and it
+/// delivers the effects before the next transition may start, so a sync and a
+/// command can never publish or save out of order.
+///
+/// A failed save does not hold back the tray or the popover, which must keep
+/// agreeing with the state in memory; the first failure is returned once
+/// everything has been attempted.
+pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> Result<(), String> {
+    let state = app.state::<SyncState>();
+    let _delivering = state.delivery.lock().unwrap();
+    let effects = apply(&state.pr_state);
     let saved_read = effects
         .save_read
         .map_or(Ok(()), |read_state| unread::save(app, &read_state));
@@ -186,26 +202,30 @@ fn now_epoch_ms() -> u64 {
 
 async fn sync_once(app: &AppHandle) -> Outcome {
     let result = fetch(app).await;
-    let prs_state = &app.state::<SyncState>().prs;
-    let (effects, outcome) = match result {
+    let (delivered, outcome) = match result {
         Ok(Some(FetchResult {
             prs,
             newly_merged,
             rate_limit,
         })) => (
-            prs_state.sync_succeeded(prs, newly_merged, now_epoch_ms()),
+            transition(app, |state| {
+                state.sync_succeeded(prs, newly_merged, now_epoch_ms())
+            }),
             Outcome::Synced { rate_limit },
         ),
-        Ok(None) => (prs_state.unconfigured(), Outcome::Unconfigured),
+        Ok(None) => (
+            transition(app, PrState::unconfigured),
+            Outcome::Unconfigured,
+        ),
         Err(e) => {
             eprintln!("sync failed: {e}");
-            let effects = prs_state.sync_failed(e.to_string());
+            let delivered = transition(app, |state| state.sync_failed(e.to_string()));
             let (rate_limited, reset_epoch_secs) = match e {
                 GithubError::RateLimited { reset_epoch_secs } => (true, reset_epoch_secs),
                 GithubError::Other(_) => (false, None),
             };
             (
-                effects,
+                delivered,
                 Outcome::Failed {
                     rate_limited,
                     reset_epoch_secs,
@@ -213,8 +233,8 @@ async fn sync_once(app: &AppHandle) -> Outcome {
             )
         }
     };
-    if let Err(e) = carry_out(app, effects) {
-        eprintln!("cannot carry out sync effects: {e}");
+    if let Err(e) = delivered {
+        eprintln!("cannot deliver sync effects: {e}");
     }
     outcome
 }
@@ -239,7 +259,7 @@ async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
     let fetched = github::fetch_open_prs(&token, &repos).await?;
     let newly_merged = app
         .state::<SyncState>()
-        .prs
+        .pr_state
         .detect_merged(&token, &repos, &fetched.prs)
         .await?;
     Ok(Some(FetchResult {
