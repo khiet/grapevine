@@ -64,7 +64,8 @@ mod platform {
 /// exactly when the entry exists.
 #[cfg(target_os = "linux")]
 mod platform {
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
+    use std::os::unix::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
     use std::{env, fs, io};
 
@@ -73,9 +74,13 @@ mod platform {
     }
 
     pub fn set_enabled(enabled: bool) -> Result<(), String> {
-        let executable = env::current_exe()
+        let autostart = Autostart::for_this_user()?;
+        if !enabled {
+            return autostart.disable();
+        }
+        let running = env::current_exe()
             .map_err(|e| format!("Could not find the Grapevine executable: {e}"))?;
-        Autostart::for_this_user()?.set_enabled(enabled, &executable)
+        autostart.enable(&installed_path(running))
     }
 
     /// The autostart entry file. Its existence is the setting: there is no
@@ -102,43 +107,54 @@ mod platform {
                 .map_err(|e| format!("Could not read the autostart entry: {e}"))
         }
 
-        /// `executable` is what the session will start; it is only used when
-        /// turning the setting on.
-        fn set_enabled(&self, enabled: bool, executable: &Path) -> Result<(), String> {
-            let result = if enabled {
-                let contents = autostart_entry(executable)?;
-                self.write(&contents)
-            } else {
-                match fs::remove_file(&self.entry) {
-                    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-                    _ => Ok(()),
-                }
-            };
-            result.map_err(|e| format!("Could not update the autostart entry: {e}"))
+        /// Makes the session start `executable` at login, replacing any
+        /// entry already there.
+        fn enable(&self, executable: &Path) -> Result<(), String> {
+            let contents = autostart_entry(executable)?;
+            let written = match self.entry.parent() {
+                Some(directory) => fs::create_dir_all(directory),
+                None => Ok(()),
+            }
+            .and_then(|()| fs::write(&self.entry, contents));
+            written.map_err(|e| format!("Could not write the autostart entry: {e}"))
         }
 
-        fn write(&self, contents: &str) -> io::Result<()> {
-            if let Some(directory) = self.entry.parent() {
-                fs::create_dir_all(directory)?;
+        /// Succeeds when there is no entry: off is already the state asked
+        /// for.
+        fn disable(&self) -> Result<(), String> {
+            match fs::remove_file(&self.entry) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                    Err(format!("Could not remove the autostart entry: {e}"))
+                }
+                _ => Ok(()),
             }
-            fs::write(&self.entry, contents)
         }
     }
 
-    /// The XDG config directory, from the values of `XDG_CONFIG_HOME` and
-    /// `HOME`.
+    /// Where the running executable is installed, given the path Linux
+    /// reports for it. Once an update replaces the file under the running
+    /// app, that report gains a " (deleted)" suffix and names nothing; the
+    /// path without it is where the new version now lives.
+    fn installed_path(reported: PathBuf) -> PathBuf {
+        match reported.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
+            Some(installed) => PathBuf::from(OsStr::from_bytes(installed)),
+            None => reported,
+        }
+    }
+
+    /// Follows the XDG Base Directory spec: a relative or empty
+    /// `XDG_CONFIG_HOME` is invalid and treated as unset.
     fn config_dir(
         xdg_config_home: Option<OsString>,
         home: Option<OsString>,
     ) -> Result<PathBuf, String> {
-        let chosen = xdg_config_home
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute());
-        match chosen {
-            Some(path) => Ok(path),
+        let absolute =
+            |value: OsString| Some(PathBuf::from(value)).filter(|path| path.is_absolute());
+        match xdg_config_home.and_then(absolute) {
+            Some(config) => Ok(config),
             None => home
-                .filter(|home| !home.is_empty())
-                .map(|home| PathBuf::from(home).join(".config"))
+                .and_then(absolute)
+                .map(|home| home.join(".config"))
                 .ok_or_else(|| {
                     "Could not find your config directory: HOME is not set.".to_string()
                 }),
@@ -146,7 +162,6 @@ mod platform {
     }
 
     /// The XDG autostart entry that starts `executable` with the session.
-    /// Pure, so the contents are tested without touching the filesystem.
     fn autostart_entry(executable: &Path) -> Result<String, String> {
         // Desktop entries are UTF-8; a path that is not cannot be written
         // faithfully, and a lossy one would point at the wrong file.
@@ -250,7 +265,7 @@ mod platform {
         const EXECUTABLE: &str = "/usr/bin/grapevine";
 
         fn turn_on(autostart: &Autostart) {
-            autostart.set_enabled(true, Path::new(EXECUTABLE)).unwrap();
+            autostart.enable(Path::new(EXECUTABLE)).unwrap();
         }
 
         #[test]
@@ -282,7 +297,7 @@ mod platform {
             let autostart = Autostart::in_config_dir(config.path());
             turn_on(&autostart);
 
-            autostart.set_enabled(false, Path::new(EXECUTABLE)).unwrap();
+            autostart.disable().unwrap();
 
             assert!(!config.path().join("autostart/grapevine.desktop").exists());
             assert_eq!(autostart.is_enabled(), Ok(false));
@@ -295,7 +310,7 @@ mod platform {
             let config = tempfile::tempdir().unwrap();
             let autostart = Autostart::in_config_dir(config.path());
 
-            assert_eq!(autostart.set_enabled(false, Path::new(EXECUTABLE)), Ok(()));
+            assert_eq!(autostart.disable(), Ok(()));
         }
 
         /// Turning it on again after the app moved must not leave the
@@ -304,9 +319,7 @@ mod platform {
         fn turning_launch_at_login_on_again_points_the_entry_at_the_current_executable() {
             let config = tempfile::tempdir().unwrap();
             let autostart = Autostart::in_config_dir(config.path());
-            autostart
-                .set_enabled(true, Path::new("/opt/old/grapevine"))
-                .unwrap();
+            autostart.enable(Path::new("/opt/old/grapevine")).unwrap();
 
             turn_on(&autostart);
 
@@ -343,10 +356,33 @@ mod platform {
             }
         }
 
+        /// A relative `HOME` would put the entry under whatever directory
+        /// Grapevine happened to start in.
         #[test]
-        fn no_config_directory_and_no_home_is_an_error() {
-            let error = config_dir(None, None).unwrap_err();
-            assert!(error.contains("HOME"), "{error}");
+        fn no_config_directory_and_no_usable_home_is_an_error() {
+            for home in [None, Some("khiet".into())] {
+                let error = config_dir(None, home).unwrap_err();
+                assert!(error.contains("HOME"), "{error}");
+            }
+        }
+
+        /// Installing an update replaces the file under the running app, and
+        /// Linux then reports the running executable with this suffix. The
+        /// entry must name the path the new version was installed at.
+        #[test]
+        fn an_executable_replaced_while_running_is_started_from_its_installed_path() {
+            assert_eq!(
+                installed_path(PathBuf::from("/usr/bin/grapevine (deleted)")),
+                PathBuf::from("/usr/bin/grapevine")
+            );
+        }
+
+        #[test]
+        fn an_executable_still_in_place_is_started_from_where_it_is() {
+            assert_eq!(
+                installed_path(PathBuf::from("/usr/bin/grapevine")),
+                PathBuf::from("/usr/bin/grapevine")
+            );
         }
     }
 }
