@@ -57,5 +57,6 @@ objc2-service-management = { version = "0.3", default-features = false, features
 # back to an in-memory mock that forgets the token on quit.
 keyring = { version = "3", features = ["sync-secret-service", "crypto-openssl"] }
 # Makes a second launch show the running copy's popover instead of adding a
-# second tray icon. Claims a name on the session bus, in pure Rust.
+# second tray icon. Talks to the session bus in pure Rust, so the .deb needs no
+# further run-time dependency for it.
 tauri-plugin-single-instance = "2"

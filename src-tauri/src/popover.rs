@@ -5,7 +5,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     /// A click on the tray icon or its "Open Grapevine" item.
-    Toggle,
+    TrayClick,
     /// Grapevine was launched while already running. Only Linux raises this;
     /// macOS brings the running copy forward by itself.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -19,16 +19,16 @@ pub enum Action {
     Nothing,
 }
 
-/// `recently_auto_hidden` is whether the popover hid itself on losing focus a
-/// moment ago. A tray click on an open popover blurs it first and only then
-/// arrives, so without that flag the click would re-show what it just
-/// dismissed.
+/// A second launch always ends with the popover on screen, whatever its state:
+/// starting the app is never a way to dismiss it. A tray click toggles, except
+/// that a click landing just after the popover hid itself on losing focus
+/// (`recently_auto_hidden`) does nothing; see `LastAutoHide` for why.
 pub fn decide(request: Request, visible: bool, recently_auto_hidden: bool) -> Action {
     match request {
         Request::SecondLaunch => Action::Show,
-        Request::Toggle if visible => Action::Hide,
-        Request::Toggle if recently_auto_hidden => Action::Nothing,
-        Request::Toggle => Action::Show,
+        Request::TrayClick if visible => Action::Hide,
+        Request::TrayClick if recently_auto_hidden => Action::Nothing,
+        Request::TrayClick => Action::Show,
     }
 }
 
@@ -38,17 +38,17 @@ mod tests {
 
     #[test]
     fn a_tray_click_shows_a_hidden_popover() {
-        assert_eq!(decide(Request::Toggle, false, false), Action::Show);
+        assert_eq!(decide(Request::TrayClick, false, false), Action::Show);
     }
 
     #[test]
     fn a_tray_click_hides_an_open_popover() {
-        assert_eq!(decide(Request::Toggle, true, false), Action::Hide);
+        assert_eq!(decide(Request::TrayClick, true, false), Action::Hide);
     }
 
     #[test]
     fn a_tray_click_that_just_dismissed_the_popover_does_not_reopen_it() {
-        assert_eq!(decide(Request::Toggle, false, true), Action::Nothing);
+        assert_eq!(decide(Request::TrayClick, false, true), Action::Nothing);
     }
 
     #[test]

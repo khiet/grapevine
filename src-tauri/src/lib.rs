@@ -107,7 +107,13 @@ pub fn run() {
     // macOS needs none of this; it brings the running copy forward itself.
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        request_popover(app, popover::Request::SecondLaunch);
+        // The plugin starts answering second launches before `setup` below
+        // has run. One landing in that gap finds no Store, which showing the
+        // popover needs, so it is dropped: the copy still starting up is
+        // about to put its tray icon in the panel anyway.
+        if app.try_state::<store::Store>().is_some() {
+            request_popover(app, popover::Request::SecondLaunch);
+        }
     }));
     builder
         .plugin(tauri_plugin_positioner::init())
@@ -183,7 +189,7 @@ pub fn run() {
                 // click. Linux ignores this and opens the menu on every click.
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "open" => request_popover(app, popover::Request::Toggle),
+                    "open" => request_popover(app, popover::Request::TrayClick),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -195,7 +201,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        request_popover(tray.app_handle(), popover::Request::Toggle);
+                        request_popover(tray.app_handle(), popover::Request::TrayClick);
                     }
                 })
                 .build(app)?;
