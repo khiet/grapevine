@@ -34,6 +34,11 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     awaiting_review: false,
     approved: false,
     merge_queue_position: null,
+    failing_checks: [],
+    failing_checks_truncated: false,
+    checks_running: false,
+    auto_merge: false,
+    ready_to_merge: false,
     unread_count,
     bot_unread_count: 0,
   };

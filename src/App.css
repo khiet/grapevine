@@ -420,6 +420,9 @@ body {
 }
 
 .pr-repo {
+  /* Gives way well before a check name in the marker cluster does: on a row
+     with a failing check, the name is the news. */
+  flex-shrink: 8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -447,12 +450,17 @@ body {
      gap does the spacing between a pill pair on its own. */
   gap: 4px;
   margin-left: auto;
+  /* Lets a long check name inside the cluster give way instead of pushing
+     the cluster past the row's right edge. */
+  min-width: 0;
 }
 
 /* The one pill shape, shared so the state pills read as one vocabulary and a
    later tune (radius, size, padding) cannot let them drift apart. Each rule
    below adds only its colors and placement. */
 .pr-draft,
+.pr-neutral-pill,
+.pr-ready-pill,
 .pr-blocked-pill {
   flex: none;
   align-self: center;
@@ -477,6 +485,38 @@ body {
   white-space: nowrap;
   background-color: rgba(255, 159, 10, 0.16);
   color: #995200;
+}
+
+/* The spelled-out pill can carry a check's name ("CI: e2e-safari"), which is
+   as long as its author made it. It is the one mark that shrinks: capped so
+   the repo keeps some room, and giving way with an ellipsis on a row whose
+   cluster is already full, down to a floor that still reads "CI: abc...".
+   Not on the +N pill: clipping overflow would cut off its tooltip, and its
+   label is always short. */
+.pr-blocked-pill:not(.pr-tip) {
+  flex: 0 1 auto;
+  min-width: 56px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The ready pill: the shared pill shape in the approved check's green, the
+   cluster's one positive colour. The text green is darker than the glyph's
+   for the same reason the blocked amber is: 10px text wants 4.5:1 on the
+   tinted fill. */
+.pr-ready-pill {
+  white-space: nowrap;
+  background-color: rgba(52, 199, 89, 0.16);
+  color: #1a7431;
+}
+
+/* Auto-merge and running checks: the draft pill's grey, since a merge under
+   way is a state and not a signal. position: relative anchors the tooltip. */
+.pr-neutral-pill {
+  position: relative;
+  white-space: nowrap;
+  background-color: rgba(120, 120, 128, 0.16);
 }
 
 /* The hover bubble, shared by every mark in the cluster (each carries
@@ -1042,8 +1082,15 @@ body {
 
   /* The light-mode fill sinks into the dark card; a stronger fill keeps the
      pill legible without brightening its text into a signal. */
-  .pr-draft {
+  .pr-draft,
+  .pr-neutral-pill {
     background-color: rgba(120, 120, 128, 0.32);
+  }
+
+  /* The dark-mode system green, matching the approved check. */
+  .pr-ready-pill {
+    background-color: rgba(48, 209, 88, 0.22);
+    color: #30d158;
   }
 
   /* Same lift as the draft pill, and the brighter amber (matching

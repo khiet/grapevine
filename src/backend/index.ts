@@ -50,6 +50,21 @@ export interface PullRequest {
   /** 1-based position in the repo's merge queue as GitHub reports it; null
    * when the PR is not queued. Renders the stack mark with the number. */
   merge_queue_position: number | null;
+  /** Names of the failed checks behind the "ci" reason, GitHub's order; the
+   * CI pill names the first. Empty when "ci" is not raised, and when it is
+   * raised with no check to name. */
+  failing_checks: string[];
+  /** The PR has more checks than the backend read, so failing_checks may be
+   * short: say "+ more", never a count. */
+  failing_checks_truncated: boolean;
+  /** A check that gates the merge is still running and none has failed;
+   * renders the neutral Running mark. Suppressed on drafts. */
+  checks_running: boolean;
+  /** Auto-merge is armed; renders the Auto mark. Suppressed on drafts. */
+  auto_merge: boolean;
+  /** Nothing is left but pressing merge; renders the Ready to merge pill.
+   * Backend-computed and only ever set in Mine. */
+  ready_to_merge: boolean;
   /** New activity from people. The only count that badges a row, a collapsed
    * section or the tray. */
   unread_count: number;
