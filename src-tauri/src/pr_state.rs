@@ -49,13 +49,13 @@ pub struct Snapshot {
     pub sync_error: Option<String>,
 }
 
-/// What the caller must do after a transition. Every transition changes the
-/// Snapshot, so `snapshot` is always published as `prs-updated`.
+/// What the caller must do after a transition. `snapshot` is always published
+/// as `prs-updated`.
 pub struct Effects {
     pub snapshot: Snapshot,
-    /// Read watermarks to write to disk; `None` when they did not change.
+    /// Read watermarks to write to disk; `None` when there is nothing to write.
     pub save_read: Option<unread::ReadState>,
-    /// Merged list to write to disk; `None` when it did not change.
+    /// Merged list to write to disk; `None` when there is nothing to write.
     pub save_merged: Option<merged::MergedState>,
     /// The tray count to show; `None` leaves the tray as it is.
     pub tray_count: Option<u64>,
@@ -64,6 +64,8 @@ pub struct Effects {
 #[derive(Default)]
 struct Inner {
     snapshot: Snapshot,
+    /// Both are authoritative in memory. The copies on disk exist so unread
+    /// badges and the Merged section survive restarts.
     read_state: unread::ReadState,
     merged: merged::MergedState,
 }
