@@ -978,7 +978,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         let review_requested = !is_draft && review_requested_for(node, viewer);
         let activity = collect_activity(node, viewer);
         let checks = checks_for(node);
-        let blocked_reasons = blocked_reasons_with(node, &checks);
+        let blocked_reasons = blocked_reasons_for(node, &checks);
         let ready_to_merge = ready_to_merge(node, section, &blocked_reasons, &checks);
         // The names belong to the CI pill, so they go only where it shows: a
         // draft or an unsettled mergeability suppresses both together.
@@ -1167,13 +1167,10 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 /// act-states. An exact `BEHIND` match degrades to no pill on a repo we
 /// cannot see into, rather than to a wrong one; the cost is that the behind
 /// signal is simply absent for PRs in repos the viewer cannot push to.
-fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
-    blocked_reasons_with(node, &checks_for(node))
-}
-
-/// [`blocked_reasons_for`], for a caller that has already read the node's
-/// checks. `checks` must be `checks_for(node)`.
-fn blocked_reasons_with(node: &Value, checks: &Checks) -> Vec<BlockedReason> {
+///
+/// `checks` must be `checks_for(node)`; it is a parameter only so the caller
+/// reads the checks once for everything that needs them.
+fn blocked_reasons_for(node: &Value, checks: &Checks) -> Vec<BlockedReason> {
     let field = |name: &str| node.get(name).and_then(Value::as_str);
     if node.get("isDraft").and_then(Value::as_bool) == Some(true)
         || field("mergeable") == Some("UNKNOWN")
@@ -1468,6 +1465,11 @@ mod tests {
         node
     }
 
+    /// The blocked reasons of a node, as `collect_repo_prs` derives them.
+    fn blocked_reasons(node: &Value) -> Vec<BlockedReason> {
+        blocked_reasons_for(node, &checks_for(node))
+    }
+
     fn pr_node(overrides: Value) -> Value {
         let node = json!({
             "number": 7,
@@ -1717,7 +1719,7 @@ mod tests {
 
     #[test]
     fn each_blocked_trigger_lights_the_marker_on_its_own() {
-        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
         assert_eq!(
             reasons(json!({ "mergeable": "CONFLICTING" })),
             vec![BlockedReason::Conflict]
@@ -1749,7 +1751,7 @@ mod tests {
     /// severity order still lists harder reasons first.
     #[test]
     fn unresolved_threads_flag_independently_of_other_signals() {
-        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
         let unresolved = || review_threads(&[false]);
         assert_eq!(
             reasons(json!({
@@ -1807,7 +1809,7 @@ mod tests {
 
     #[test]
     fn mergeable_in_flight_and_quiet_prs_stay_undecorated() {
-        let reasons = |overrides: Value| blocked_reasons_for(&pr_node(overrides));
+        let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
         // The pr_node fixture has no CI, mergeability, or review fields at all.
         assert_eq!(reasons(json!({})), Vec::<BlockedReason>::new());
         assert_eq!(
@@ -1857,7 +1859,7 @@ mod tests {
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(
-            blocked_reasons_for(&node),
+            blocked_reasons(&node),
             vec![
                 BlockedReason::Conflict,
                 BlockedReason::Ci,
@@ -1880,7 +1882,7 @@ mod tests {
             "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
-        assert_eq!(blocked_reasons_for(&node), Vec::new());
+        assert_eq!(blocked_reasons(&node), Vec::new());
     }
 
     /// GitHub computes `mergeable` lazily and answers `UNKNOWN` until it
@@ -1894,7 +1896,7 @@ mod tests {
             "reviewThreads": review_threads(&[false]),
             "mergeStateStatus": "BEHIND"
         }));
-        assert_eq!(blocked_reasons_for(&node), Vec::new());
+        assert_eq!(blocked_reasons(&node), Vec::new());
     }
 
     fn check_run(name: &str, conclusion: Option<&str>, required: bool) -> Value {
