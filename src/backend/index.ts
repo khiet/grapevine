@@ -105,6 +105,9 @@ export interface MergedPr {
 export interface Snapshot {
   prs: PullRequest[];
   merged: MergedPr[];
+  /** Keys (see prKey) of the snoozed PRs. Each names a PR in `prs`; the
+   * popover folds those rows away and the tray leaves them out. */
+  snoozed: string[];
   has_synced: boolean;
   /** Epoch ms of the last successful sync; null before the first one. */
   last_sync_at: number | null;
@@ -128,14 +131,15 @@ export interface SavedToken {
 export const EMPTY_SNAPSHOT: Snapshot = {
   prs: [],
   merged: [],
+  snoozed: [],
   has_synced: false,
   last_sync_at: null,
   sync_error: null,
 };
 
-/** The key the backend files unread and merged state under. The Rust side
- * builds the same string; the two must agree or mark_read and dismiss_merged
- * silently miss. */
+/** The key the backend files unread, snoozed and merged state under. The Rust
+ * side builds the same string; the two must agree or mark_read, snooze and
+ * dismiss_merged silently miss. */
 export function prKey(pr: { repo: string; number: number }): string {
   return `${pr.repo}#${pr.number}`;
 }
@@ -195,6 +199,23 @@ export const markAllRead = () => adapter.invoke<void>("mark_all_read");
 export const dismissMerged = (key: string) =>
   adapter.invoke<void>("dismiss_merged", { key });
 export const clearMerged = () => adapter.invoke<void>("clear_merged");
+/** Parks a Mine or Participated row until it has news or morning comes. The
+ * expiry is worked out here because the webview knows the local time zone. */
+export const snooze = (key: string) =>
+  adapter.invoke<void>("snooze", {
+    key,
+    expiresAt: nextLocalMorning(new Date()),
+  });
+export const wake = (key: string) => adapter.invoke<void>("wake", { key });
+
+/** Epoch ms of the next local 08:00 strictly after `now`: when a snooze runs
+ * out on its own. */
+export function nextLocalMorning(now: Date): number {
+  const morning = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8);
+  // Calendar arithmetic, not +24h: a DST day is not 24 hours long.
+  if (morning.getTime() <= now.getTime()) morning.setDate(morning.getDate() + 1);
+  return morning.getTime();
+}
 
 export const tokenStatus = () => adapter.invoke<TokenStatus>("token_status");
 export const saveToken = (token: string) =>

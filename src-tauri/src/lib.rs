@@ -16,6 +16,7 @@ mod keychain;
 mod merged;
 mod pr_state;
 mod settings;
+mod snooze;
 mod store;
 mod sync;
 mod turns;
@@ -44,6 +45,9 @@ fn toggle_popover(app: &tauri::AppHandle) {
     if recently_auto_hidden {
         return;
     }
+    // Before the window shows, so a row whose snooze ran out overnight is
+    // awake the moment the popover opens, whatever the sync loop is waiting on.
+    sync::wake_expired_snoozes(app);
     let _ = window.move_window(Position::TrayBottomCenter);
     let _ = window.show();
     let _ = window.set_focus();
@@ -71,6 +75,8 @@ pub fn run() {
             commands::mark_all_read,
             commands::dismiss_merged,
             commands::clear_merged,
+            commands::snooze,
+            commands::wake,
             commands::get_poll_interval,
             commands::set_poll_interval,
             commands::get_launch_at_login,

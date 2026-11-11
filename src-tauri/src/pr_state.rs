@@ -1,5 +1,5 @@
 //! The one owner of what the popover shows: the Snapshot, the read
-//! watermarks, the turn starts and the merged list. Everything outside this
+//! watermarks, the turn starts, the snoozes and the merged list. Everything outside this
 //! module changes them only through the transitions on [`PrState`], which
 //! hold these invariants:
 //!
@@ -9,7 +9,9 @@
 //! - Each `unread_count` and `bot_unread_count` agrees with the read
 //!   watermarks.
 //! - The tray count is the number of PRs in the Snapshot whose `turn` is
-//!   yours. Unread never feeds it.
+//!   yours and that are not snoozed. Unread never feeds it.
+//! - `snapshot.snoozed` mirrors the snoozes, which hold entries only for PRs
+//!   in the Snapshot.
 //! - Each `turn_since` agrees with the turn starts, which hold an entry for
 //!   exactly the PRs whose turn was yours at the last successful sync.
 //! - Merge detection compares a fetch against the previous Snapshot's open
@@ -33,7 +35,7 @@ use serde::Serialize;
 use crate::{
     github,
     github::{GithubError, PullRequest},
-    merged, turns, unread,
+    merged, snooze, turns, unread,
 };
 
 /// Latest sync result. A failed sync leaves the previous snapshot's list in
@@ -47,6 +49,9 @@ pub struct Snapshot {
     pub prs: Vec<PullRequest>,
     /// Merged-but-not-dismissed PRs, rendered as the Merged section.
     pub merged: Vec<merged::MergedPr>,
+    /// Keys of the snoozed PRs, sorted. Each names a PR in `prs`, which the
+    /// popover folds away at the foot of its section.
+    pub snoozed: Vec<String>,
     /// False until a sync has completed while configured; the UI uses this
     /// to tell "not set up yet" apart from "no open PRs".
     pub has_synced: bool,
@@ -67,6 +72,8 @@ pub struct Effects {
     pub save_turns: Option<turns::TurnStarts>,
     /// Merged list to write to disk; `None` when there is nothing to write.
     pub save_merged: Option<merged::MergedState>,
+    /// Snoozes to write to disk; `None` when there is nothing to write.
+    pub save_snoozes: Option<snooze::Snoozes>,
     /// The tray count to show; `None` leaves the tray as it is.
     pub tray_count: Option<u64>,
 }
@@ -74,13 +81,40 @@ pub struct Effects {
 #[derive(Default)]
 struct Inner {
     snapshot: Snapshot,
-    /// This and the two fields below are authoritative in memory. The copies
-    /// on disk exist so unread badges, waiting times and the Merged section
-    /// survive restarts.
+    /// This and the three fields below are authoritative in memory. The
+    /// copies on disk exist so unread badges, waiting times, snoozes and the
+    /// Merged section survive restarts.
     read_state: unread::ReadState,
     /// `None` until turns have been tracked at all; see [`turns::apply`].
     turn_starts: Option<turns::TurnStarts>,
     merged: merged::MergedState,
+    snoozes: snooze::Snoozes,
+}
+
+impl Inner {
+    fn tray_count(&self) -> u64 {
+        turns::yours_count(&self.snapshot.prs, &self.snoozes)
+    }
+
+    /// Restores the mirror invariant after the snoozes changed.
+    fn mirror_snoozes(&mut self) {
+        let mut keys: Vec<String> = self.snoozes.keys().cloned().collect();
+        keys.sort();
+        self.snapshot.snoozed = keys;
+    }
+
+    /// The effects of a transition that changed nothing but the snoozes.
+    fn snooze_effects(&mut self, changed: bool) -> Effects {
+        self.mirror_snoozes();
+        Effects {
+            snapshot: self.snapshot.clone(),
+            save_read: None,
+            save_turns: None,
+            save_merged: None,
+            save_snoozes: changed.then(|| self.snoozes.clone()),
+            tray_count: changed.then(|| self.tray_count()),
+        }
+    }
 }
 
 /// One lock over every piece, so a transition is atomic: no command can
@@ -99,8 +133,10 @@ impl PrState {
         read_state: unread::ReadState,
         merged: merged::MergedState,
         turn_starts: Option<turns::TurnStarts>,
+        snoozes: snooze::Snoozes,
     ) {
         let mut inner = self.inner.lock().unwrap();
+        inner.snoozes = snoozes;
         inner.snapshot.merged = merged.clone();
         inner.merged = merged;
         inner.read_state = read_state;
@@ -132,19 +168,23 @@ impl PrState {
             now_epoch_ms,
         );
         let read_changed = unread::apply(&mut prs, &mut inner.read_state);
+        let snoozes_changed = snooze::apply(&prs, &mut inner.snoozes, now_epoch_ms);
         inner.snapshot = Snapshot {
             prs,
             merged: inner.merged.clone(),
+            snoozed: Vec::new(),
             has_synced: true,
             last_sync_at: Some(now_epoch_ms),
             sync_error: None,
         };
+        inner.mirror_snoozes();
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: read_changed.then(|| inner.read_state.clone()),
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: merged_changed.then(|| inner.merged.clone()),
-            tray_count: Some(turns::yours_count(&inner.snapshot.prs)),
+            save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
+            tray_count: Some(inner.tray_count()),
         }
     }
 
@@ -159,6 +199,7 @@ impl PrState {
             save_read: None,
             save_turns: None,
             save_merged: None,
+            save_snoozes: None,
             tray_count: None,
         }
     }
@@ -166,18 +207,22 @@ impl PrState {
     /// No token or no repos: clear any list left over from previous settings,
     /// but keep the read watermarks and merged list for when a token comes
     /// back. The turn starts are forgotten: every PR has left the Snapshot,
-    /// and nothing watches the turns until syncing resumes.
+    /// and nothing watches the turns until syncing resumes. The snoozes go
+    /// with the PRs they parked.
     pub fn unconfigured(&self) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
         inner.snapshot = Snapshot::default();
         let turns_changed = turns::forget_starts(&mut inner.turn_starts);
+        let snoozes_changed = !inner.snoozes.is_empty();
+        inner.snoozes.clear();
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: None,
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
-            tray_count: Some(turns::yours_count(&inner.snapshot.prs)),
+            save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
+            tray_count: Some(inner.tray_count()),
         }
     }
 
@@ -210,8 +255,49 @@ impl PrState {
             save_read: Some(inner.read_state.clone()),
             save_turns: None,
             save_merged: None,
-            tray_count: Some(turns::yours_count(&inner.snapshot.prs)),
+            save_snoozes: None,
+            tray_count: Some(inner.tray_count()),
         }
+    }
+
+    /// Parks the matching PR until it has news or `expires_at` (epoch ms)
+    /// passes. Nothing happens for a key that is not a Mine or Participated
+    /// PR in the Snapshot. The read watermark stays where it is: snoozing is
+    /// not reading.
+    pub fn snooze(&self, key: &str, now_epoch_ms: u64, expires_at: u64) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        let inner = &mut *inner;
+        let parked = inner
+            .snapshot
+            .prs
+            .iter()
+            .find(|pr| unread::key(pr) == key && snooze::can_snooze(pr))
+            .map(|pr| snooze::entry(pr, now_epoch_ms, expires_at));
+        let changed = parked.is_some();
+        if let Some(entry) = parked {
+            inner.snoozes.insert(key.to_string(), entry);
+        }
+        inner.snooze_effects(changed)
+    }
+
+    /// Wakes the matching PR by hand.
+    pub fn wake(&self, key: &str) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        let changed = inner.snoozes.remove(key).is_some();
+        inner.snooze_effects(changed)
+    }
+
+    /// Wakes every PR whose snooze has run out by `now_epoch_ms`. Needs no
+    /// sync, so a failing or rate-limited GitHub cannot keep a row parked.
+    pub fn wake_expired(&self, now_epoch_ms: u64) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        let changed = snooze::wake_expired(&mut inner.snoozes, now_epoch_ms);
+        inner.snooze_effects(changed)
+    }
+
+    /// When the clock next has a snoozed row to wake, in epoch ms.
+    pub fn next_snooze_expiry(&self) -> Option<u64> {
+        snooze::next_expiry(&self.inner.lock().unwrap().snoozes)
     }
 
     pub fn dismiss_merged(&self, key: &str) -> Effects {
@@ -232,6 +318,7 @@ impl PrState {
             save_read: None,
             save_turns: None,
             save_merged: Some(inner.merged.clone()),
+            save_snoozes: None,
             tray_count: None,
         }
     }
@@ -674,7 +761,7 @@ mod tests {
             .expect("turn starts need saving");
 
         let after = PrState::default();
-        after.restore(saved_read, vec![], Some(saved_turns));
+        after.restore(saved_read, vec![], Some(saved_turns), HashMap::new());
         let effects = sync_one(&after, yours(pr("acme/widgets", 7, &[])), SYNC_3);
 
         assert_eq!(turn_since(&effects), Some(SYNC_2));
@@ -689,6 +776,7 @@ mod tests {
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![],
             Some(HashMap::new()),
+            HashMap::new(),
         );
 
         let effects = sync_one(&state, yours(pr("acme/widgets", 7, &[T1])), SYNC_1);
@@ -706,6 +794,7 @@ mod tests {
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![],
             None,
+            HashMap::new(),
         );
 
         let first = sync_one(&state, yours(pr("acme/widgets", 7, &[T1])), SYNC_1);
@@ -746,6 +835,272 @@ mod tests {
         let back = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_3);
         assert_eq!(turn_since(&back), None);
         assert_eq!(back.tray_count, Some(1));
+    }
+
+    const SNOOZED_AT: u64 = 1_784_205_296_000; // 2026-07-16T12:34:56Z
+    const BEFORE_SNOOZE: &str = "2026-07-16T12:00:00Z";
+    const AFTER_SNOOZE: &str = "2026-07-16T13:00:00Z";
+    const EXPIRES_AT: u64 = SNOOZED_AT + 20 * 3_600_000;
+    const KEY: &str = "acme/widgets#7";
+
+    fn requested(pr: PullRequest) -> PullRequest {
+        PullRequest {
+            review_requested: true,
+            ..yours(pr)
+        }
+    }
+
+    /// One PR synced, then snoozed at `SNOOZED_AT`.
+    fn snoozed_state(pr: PullRequest) -> PrState {
+        let state = PrState::default();
+        sync_one(&state, pr, SNOOZED_AT - 1);
+        state.snooze(KEY, SNOOZED_AT, EXPIRES_AT);
+        state
+    }
+
+    fn is_snoozed(effects: &Effects) -> bool {
+        effects.snapshot.snoozed == [KEY]
+    }
+
+    #[test]
+    fn snoozing_a_your_turn_pr_lowers_the_tray_count_by_one() {
+        let state = PrState::default();
+        let synced = state.sync_succeeded(
+            vec![
+                yours(pr("acme/widgets", 7, &[])),
+                yours(pr("acme/widgets", 8, &[])),
+            ],
+            vec![],
+            SNOOZED_AT - 1,
+        );
+        assert_eq!(synced.tray_count, Some(2));
+
+        let effects = state.snooze(KEY, SNOOZED_AT, EXPIRES_AT);
+
+        assert_eq!(effects.tray_count, Some(1));
+        assert!(is_snoozed(&effects));
+        // The row stays in the Snapshot: the popover folds it, not drops it.
+        assert_eq!(effects.snapshot.prs.len(), 2);
+        // A later sync with nothing new keeps it out of the count.
+        let next = state.sync_succeeded(
+            vec![
+                yours(pr("acme/widgets", 7, &[])),
+                yours(pr("acme/widgets", 8, &[])),
+            ],
+            vec![],
+            SNOOZED_AT + 1,
+        );
+        assert_eq!(next.tray_count, Some(1));
+    }
+
+    #[test]
+    fn a_human_comment_after_the_baseline_wakes_the_row_at_the_next_sync() {
+        let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
+
+        let effects = sync_one(
+            &state,
+            yours(pr("acme/widgets", 7, &[AFTER_SNOOZE])),
+            SNOOZED_AT + 1,
+        );
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.tray_count, Some(1));
+        assert_eq!(effects.save_snoozes, Some(HashMap::new()));
+    }
+
+    #[test]
+    fn a_bot_comment_after_the_baseline_does_not_wake_the_row() {
+        let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
+
+        let commented = PullRequest {
+            bot_activity: vec![AFTER_SNOOZE.to_string()],
+            ..yours(pr("acme/widgets", 7, &[]))
+        };
+        let effects = sync_one(&state, commented, SNOOZED_AT + 1);
+
+        assert!(is_snoozed(&effects));
+        assert_eq!(effects.tray_count, Some(0));
+        assert_eq!(effects.save_snoozes, None);
+    }
+
+    /// The comment landed before the snooze and is still unread: the row was
+    /// parked with it in view, so it is not news.
+    #[test]
+    fn unread_activity_older_than_the_baseline_does_not_wake_the_row() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), SNOOZED_AT - 2);
+        let unread = sync_one(
+            &state,
+            pr("acme/widgets", 7, &[BEFORE_SNOOZE]),
+            SNOOZED_AT - 1,
+        );
+        assert_eq!(unread_counts(&unread.snapshot), [1]);
+        state.snooze(KEY, SNOOZED_AT, EXPIRES_AT);
+
+        let effects = sync_one(
+            &state,
+            pr("acme/widgets", 7, &[BEFORE_SNOOZE]),
+            SNOOZED_AT + 1,
+        );
+
+        assert!(is_snoozed(&effects));
+        assert_eq!(unread_counts(&effects.snapshot), [1]);
+    }
+
+    #[test]
+    fn snoozing_does_not_mark_the_row_read() {
+        let state = state_with_one_unread();
+
+        let effects = state.snooze(KEY, SNOOZED_AT, EXPIRES_AT);
+
+        assert_eq!(unread_counts(&effects.snapshot), [1, 0]);
+        assert_eq!(effects.save_read, None);
+    }
+
+    #[test]
+    fn a_review_request_arriving_after_the_snooze_wakes_the_row() {
+        let state = snoozed_state(pr("acme/widgets", 7, &[]));
+
+        let effects = sync_one(
+            &state,
+            requested(pr("acme/widgets", 7, &[])),
+            SNOOZED_AT + 1,
+        );
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.tray_count, Some(1));
+    }
+
+    #[test]
+    fn a_review_request_already_outstanding_at_the_snooze_does_not_wake_the_row() {
+        let state = snoozed_state(requested(pr("acme/widgets", 7, &[])));
+
+        let effects = sync_one(
+            &state,
+            requested(pr("acme/widgets", 7, &[])),
+            SNOOZED_AT + 1,
+        );
+
+        assert!(is_snoozed(&effects));
+        assert_eq!(effects.tray_count, Some(0));
+    }
+
+    #[test]
+    fn a_re_request_after_reviewing_wakes_the_row() {
+        let state = snoozed_state(requested(pr("acme/widgets", 7, &[])));
+        // You reviewed: the request is gone, and that alone is not news.
+        let reviewed = sync_one(&state, pr("acme/widgets", 7, &[]), SNOOZED_AT + 1);
+        assert!(is_snoozed(&reviewed));
+
+        let effects = sync_one(
+            &state,
+            requested(pr("acme/widgets", 7, &[])),
+            SNOOZED_AT + 2,
+        );
+
+        assert!(effects.snapshot.snoozed.is_empty());
+    }
+
+    /// The popover opening and the sync loop's wait both run this, so no
+    /// sync has to succeed for morning to arrive.
+    #[test]
+    fn an_expiry_that_passes_with_no_sync_wakes_the_row() {
+        let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
+        state.sync_failed("GitHub rate limit reached.".into());
+        assert_eq!(state.next_snooze_expiry(), Some(EXPIRES_AT));
+
+        let early = state.wake_expired(EXPIRES_AT - 1);
+        assert!(is_snoozed(&early));
+        assert_eq!(early.save_snoozes, None);
+        assert_eq!(early.tray_count, None);
+
+        let effects = state.wake_expired(EXPIRES_AT);
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.tray_count, Some(1));
+        assert_eq!(effects.save_snoozes, Some(HashMap::new()));
+        assert_eq!(state.next_snooze_expiry(), None);
+    }
+
+    #[test]
+    fn a_sync_after_the_expiry_wakes_the_row() {
+        let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
+
+        let effects = sync_one(&state, yours(pr("acme/widgets", 7, &[])), EXPIRES_AT);
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.tray_count, Some(1));
+    }
+
+    #[test]
+    fn the_snoozed_set_survives_a_restart() {
+        let before = PrState::default();
+        sync_one(&before, yours(pr("acme/widgets", 7, &[])), SNOOZED_AT - 1);
+        let saved = before
+            .snooze(KEY, SNOOZED_AT, EXPIRES_AT)
+            .save_snoozes
+            .expect("snoozes need saving");
+
+        let after = PrState::default();
+        after.restore(HashMap::new(), vec![], None, saved);
+        let effects = sync_one(&after, yours(pr("acme/widgets", 7, &[])), SNOOZED_AT + 1);
+
+        assert!(is_snoozed(&effects));
+        assert_eq!(effects.tray_count, Some(0));
+    }
+
+    #[test]
+    fn a_snoozed_pr_that_merges_drops_its_entry_and_appears_in_merged() {
+        let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
+        let departed = state.departed(&[], &repos());
+        let merged_at = HashMap::from([(KEY.to_string(), T2.to_string())]);
+
+        let effects = state.sync_succeeded(
+            vec![],
+            merged_entries(&departed, &merged_at),
+            SNOOZED_AT + 1,
+        );
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.save_snoozes, Some(HashMap::new()));
+        assert_eq!(effects.snapshot.merged.len(), 1);
+        assert_eq!(effects.snapshot.merged[0].number, 7);
+    }
+
+    #[test]
+    fn waking_by_hand_removes_the_entry_and_restores_the_row_to_the_tray_count() {
+        let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
+
+        let effects = state.wake(KEY);
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.tray_count, Some(1));
+        assert_eq!(effects.save_snoozes, Some(HashMap::new()));
+    }
+
+    #[test]
+    fn a_row_in_all_cannot_be_snoozed() {
+        let state = PrState::default();
+        let browse_only = PullRequest {
+            section: Section::All,
+            ..pr("acme/widgets", 7, &[])
+        };
+        sync_one(&state, browse_only, SNOOZED_AT - 1);
+
+        let effects = state.snooze(KEY, SNOOZED_AT, EXPIRES_AT);
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.save_snoozes, None);
+    }
+
+    #[test]
+    fn an_unconfigured_sync_drops_the_snoozes_with_the_prs() {
+        let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
+
+        let effects = state.unconfigured();
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.save_snoozes, Some(HashMap::new()));
     }
 
     #[test]
@@ -796,6 +1151,7 @@ mod tests {
                 merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string()),
             ],
             None,
+            HashMap::new(),
         );
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])],
@@ -819,6 +1175,7 @@ mod tests {
             HashMap::new(),
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
             None,
+            HashMap::new(),
         );
 
         let effects = state.clear_merged();
@@ -835,6 +1192,7 @@ mod tests {
             HashMap::new(),
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
             None,
+            HashMap::new(),
         );
         let snapshot = state.snapshot();
         assert_eq!(snapshot.merged.len(), 1);
@@ -850,6 +1208,7 @@ mod tests {
             HashMap::new(),
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
             None,
+            HashMap::new(),
         );
 
         let hidden = state.unconfigured();
@@ -963,6 +1322,7 @@ mod tests {
                 owner_avatar_url: "https://avatars.example/acme".into(),
                 merged_at: "2026-07-11T10:00:00Z".into(),
             }],
+            snoozed: vec!["acme/widgets#7".into()],
             has_synced: true,
             last_sync_at: Some(1_784_205_296_000),
             sync_error: Some("Could not reach GitHub.".into()),
@@ -1009,6 +1369,7 @@ mod tests {
                     "owner_avatar_url": "https://avatars.example/acme",
                     "merged_at": "2026-07-11T10:00:00Z"
                 }],
+                "snoozed": ["acme/widgets#7"],
                 "has_synced": true,
                 "last_sync_at": 1_784_205_296_000u64,
                 "sync_error": "Could not reach GitHub."

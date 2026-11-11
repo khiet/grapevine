@@ -69,6 +69,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     has_synced: true,
     last_sync_at: Date.parse(at("30T15:41:00")),
     sync_error: null,
+    snoozed: [],
     prs: [
       pr("teampave/checkout-api", 1284, "Retry failed webhook deliveries with exponential backoff", "doutatsu", "30T15:31:00", { unread_count: 3, review_requested: true, turn: "yours", turn_since: since("30T12:31:00") }),
       pr("teampave/checkout-api", 1291, "Add idempotency keys to POST /payments", ME, "30T15:12:00", { ...mine, unread_count: 1, awaiting_review: true, turn: "theirs" }),

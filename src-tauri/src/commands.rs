@@ -34,6 +34,20 @@ pub fn clear_merged(app: AppHandle) -> Result<(), String> {
     sync::transition(&app, |prs| prs.clear_merged())
 }
 
+/// `expires_at` is epoch ms and comes from the webview, which knows the local
+/// time zone: the next local 08:00.
+#[tauri::command]
+pub fn snooze(app: AppHandle, key: String, expires_at: u64) -> Result<(), String> {
+    sync::transition(&app, |prs| {
+        prs.snooze(&key, sync::now_epoch_ms(), expires_at)
+    })
+}
+
+#[tauri::command]
+pub fn wake(app: AppHandle, key: String) -> Result<(), String> {
+    sync::transition(&app, |prs| prs.wake(&key))
+}
+
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
 /// Change both together.
 #[derive(Serialize)]

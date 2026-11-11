@@ -281,6 +281,55 @@ body {
   opacity: 1;
 }
 
+/* The snooze and wake control: hidden until the row is hovered, like the
+   merged row's dismiss, so a list of rows does not grow a column of moons. */
+.pr-snooze {
+  /* Anchors the tooltip. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  border: none;
+  background: none;
+  /* The row's own right padding is the gap on the left; the strip costs each
+     title only the glyph and this edge. */
+  padding: 0 10px 0 0;
+  color: #8e8e93;
+  opacity: 0;
+}
+
+.pr-row-split:hover .pr-snooze,
+.pr-snooze:focus-visible {
+  opacity: 1;
+}
+
+.pr-snooze:hover {
+  color: #0a84ff;
+}
+
+.pr-section li + li.pr-snoozed-line {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* The folded line at a section's foot: quieter than a row, since what it
+   holds was put out of the way on purpose. */
+.pr-snoozed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 11px;
+  border: none;
+  background: none;
+  color: #8e8e93;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.pr-snoozed-toggle[aria-expanded="true"] .pr-section-chevron {
+  transform: rotate(90deg);
+}
+
 .pr-section-clear {
   margin-left: auto;
   border: none;
@@ -1066,8 +1115,18 @@ body {
     border-top-color: rgba(255, 255, 255, 0.12);
   }
 
-  .pr-dismiss {
+  .pr-dismiss,
+  .pr-snooze,
+  .pr-snoozed-toggle {
     color: #7c7c80;
+  }
+
+  .pr-snooze:hover {
+    color: #0a84ff;
+  }
+
+  .pr-section li + li.pr-snoozed-line {
+    border-top-color: rgba(255, 255, 255, 0.12);
   }
 
   .pr-empty {

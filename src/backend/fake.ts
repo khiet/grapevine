@@ -49,6 +49,17 @@ export function createFakeBackend(
         merged: snapshot.merged.filter((pr) => prKey(pr) !== key),
       }),
     clear_merged: () => publish({ ...snapshot, merged: [] }),
+    // No expiry and no waking on news: the fake never syncs.
+    snooze: ({ key }) =>
+      publish({
+        ...snapshot,
+        snoozed: [...snapshot.snoozed.filter((k) => k !== key), key as string],
+      }),
+    wake: ({ key }) =>
+      publish({
+        ...snapshot,
+        snoozed: snapshot.snoozed.filter((k) => k !== key),
+      }),
   };
 
   const adapter: Adapter = {

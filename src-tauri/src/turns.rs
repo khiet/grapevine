@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     github::{PullRequest, Turn},
+    snooze::Snoozes,
     unread::{self, ReadState},
 };
 
@@ -26,9 +27,11 @@ pub fn forget_starts(starts: &mut Option<TurnStarts>) -> bool {
     changed
 }
 
-/// How many PRs wait on the viewer: the tray count.
-pub fn yours_count(prs: &[PullRequest]) -> u64 {
-    prs.iter().filter(|pr| is_yours(pr)).count() as u64
+/// How many PRs wait on the viewer and are not snoozed: the tray count.
+pub fn yours_count(prs: &[PullRequest], snoozes: &Snoozes) -> u64 {
+    prs.iter()
+        .filter(|pr| is_yours(pr) && !snoozes.contains_key(&unread::key(pr)))
+        .count() as u64
 }
 
 fn is_yours(pr: &PullRequest) -> bool {

@@ -4,11 +4,12 @@
 // result; a rule about what appears belongs here, where a test can reach it.
 // Pure: no React, no storage, no clock; the caller passes `now`.
 
-import type {
-  BlockedReason,
-  MergedPr,
-  PullRequest,
-  Snapshot,
+import {
+  prKey,
+  type BlockedReason,
+  type MergedPr,
+  type PullRequest,
+  type Snapshot,
 } from "./backend";
 
 const SECTIONS = [
@@ -52,6 +53,19 @@ export interface RowView {
    * shown in place of the updated time. Null when the turn is not the
    * viewer's or its start is unknown; the row keeps the updated time then. */
   waiting: string | null;
+  /** The row's snooze control: "offer" to park it, "wake" to bring a snoozed
+   * row back, null where rows cannot be snoozed (All). */
+  snooze: "offer" | "wake" | null;
+}
+
+/** The snoozed rows of a section, folded into one line at its foot. */
+export interface SnoozedGroupView {
+  /** The folded line, e.g. "2 snoozed". */
+  label: string;
+  rows: RowView[];
+  /** True while a filter is active: the rows are matches, so they show
+   * whether or not the line was opened by hand. */
+  forcedOpen: boolean;
 }
 
 export interface RepoGroupView {
@@ -62,7 +76,8 @@ export interface RepoGroupView {
 export type SectionBody =
   /** No rows: the section shows its empty line. */
   | { kind: "empty" }
-  | { kind: "rows"; rows: RowView[] }
+  /** `rows` is empty when every row of the section is snoozed. */
+  | { kind: "rows"; rows: RowView[]; snoozed: SnoozedGroupView | null }
   | { kind: "groups"; groups: RepoGroupView[] }
   | { kind: "merged"; rows: MergedPr[] };
 
@@ -233,7 +248,11 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
   return `waiting ${Math.floor(elapsed / DAY_MS)}d`;
 }
 
-const rowView = (pr: PullRequest, now: number): RowView => ({
+const rowView = (
+  pr: PullRequest,
+  now: number,
+  snooze: RowView["snooze"],
+): RowView => ({
   pr,
   draft: pr.is_draft,
   marks: rowMarks(pr),
@@ -241,6 +260,7 @@ const rowView = (pr: PullRequest, now: number): RowView => ({
   botNote:
     pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
   waiting: waitingLabel(pr, now),
+  snooze,
 });
 
 // Rows waiting on the viewer lead a section, then the ones asking the viewer's
@@ -258,9 +278,12 @@ function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
 }
 
-/** How many PRs wait on the viewer; the tray shows the same number. */
-export function yourTurnCount(prs: PullRequest[]): number {
-  return prs.filter((pr) => pr.turn === "yours").length;
+/** How many PRs wait on the viewer and are not snoozed; the tray shows the
+ * same number. */
+export function yourTurnCount(snapshot: Snapshot): number {
+  return snapshot.prs.filter(
+    (pr) => pr.turn === "yours" && !snapshot.snoozed.includes(prKey(pr)),
+  ).length;
 }
 
 // The fields a filter term can match: title, repo, "#number", and author.
@@ -296,7 +319,7 @@ function groupByRepo(prs: PullRequest[], now: number): RepoGroupView[] {
     .sort(([, a], [, b]) => latest(b) - latest(a))
     .map(([repo, rows]) => ({
       repo,
-      rows: rows.map((pr) => rowView(pr, now)),
+      rows: rows.map((pr) => rowView(pr, now, null)),
     }));
 }
 
@@ -332,6 +355,7 @@ export function derivePopover(
   // Filtering force-expands every section: a match hidden inside a collapsed
   // section would read as "no match".
   const isExpanded = (key: SectionKey) => filtering || !collapsed[key];
+  const snoozedKeys = new Set(snapshot.snoozed);
 
   const sections: SectionView[] = [];
   for (const { key, label } of SECTIONS) {
@@ -343,6 +367,12 @@ export function derivePopover(
        results. */
     if (rows.length === 0 && filtering) continue;
     const expanded = isExpanded(key);
+    // The backend snoozes only Mine and Participated rows, so All never
+    // folds. A snoozed row gives up its place and its claim on attention,
+    // but still counts towards the header: it has not left the section.
+    const snoozed =
+      key === "all" ? [] : rows.filter((pr) => snoozedKeys.has(prKey(pr)));
+    const awake = rows.filter((pr) => !snoozed.includes(pr));
     let body: SectionBody;
     if (rows.length === 0) body = { kind: "empty" };
     else if (key === "all") {
@@ -350,7 +380,16 @@ export function derivePopover(
     } else {
       body = {
         kind: "rows",
-        rows: byTurn(rows).map((pr) => rowView(pr, now)),
+        rows: byTurn(awake).map((pr) => rowView(pr, now, "offer")),
+        snoozed:
+          snoozed.length === 0
+            ? null
+            : {
+                label: `${snoozed.length} snoozed`,
+                rows: snoozed.map((pr) => rowView(pr, now, "wake")),
+                // A match folded out of sight would read as "no match".
+                forcedOpen: filtering,
+              },
       };
     }
     sections.push({
@@ -361,7 +400,7 @@ export function derivePopover(
       /* Rows the section hides still carry unread; without this a collapsed
          Mine looks read when it is not. Independent of the tray number, which
          counts your-turn rows, so the two can disagree. */
-      collapsedUnread: expanded ? 0 : totalUnread(rows),
+      collapsedUnread: expanded ? 0 : totalUnread(awake),
       offerClearAll: false,
       body,
     });
