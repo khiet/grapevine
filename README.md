@@ -50,7 +50,8 @@ and you should use it instead.
 Grapevine deliberately does not, and will not:
 
 - Track issues. Pull requests only.
-- Filter, label, sort, or group beyond the three built-in sections.
+- Offer saved views or custom filters. There are three sections, your turn
+  comes first, and snoozed rows are folded away.
 - Send system notifications. The badge in the menubar is the whole signal.
 - Support GitHub Enterprise or anything other than github.com.
 - Handle more than one GitHub account at a time.

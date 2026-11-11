@@ -274,7 +274,7 @@ fn merged_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{BlockedReason, Section};
+    use crate::github::{BlockedReason, Section, Turn};
     use serde_json::json;
 
     const T1: &str = "2026-07-02T00:00:00Z";
@@ -307,6 +307,7 @@ mod tests {
             checks_running: false,
             auto_merge: false,
             ready_to_merge: false,
+            turn: None,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.iter().map(|t| t.to_string()).collect(),
@@ -684,6 +685,7 @@ mod tests {
                 checks_running: true,
                 auto_merge: true,
                 ready_to_merge: true,
+                turn: Some(Turn::Yours),
                 unread_count: 3,
                 bot_unread_count: 8,
                 // Internal working data; must not leak into the payload.
@@ -731,6 +733,7 @@ mod tests {
                     "checks_running": true,
                     "auto_merge": true,
                     "ready_to_merge": true,
+                    "turn": "yours",
                     "unread_count": 3,
                     "bot_unread_count": 8
                 }],

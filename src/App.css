@@ -584,8 +584,8 @@ body {
   border-right-color: rgba(58, 58, 60, 0.96);
 }
 
-/* A grey glyph mark in the cluster (the review glasses), deliberately never a
-   signal colour: the blocked pill's orange stays reserved for blockage. The
+/* A grey glyph mark in the cluster (the review glasses), deliberately never
+   the blocked pill's orange, which stays reserved for blockage. The
    4px padding is an invisible hover hit area for the tooltip; the negative
    margin keeps the visible glyph on the text baseline. */
 .pr-glyph {
@@ -614,6 +614,22 @@ body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+
+/* Your turn: the one mark that says why a row waits on you. A pill keeps its
+   hue, which still says what kind of thing is waiting, and gains a ring in
+   its own text colour, so a blocked PR of yours stands apart from a blocked
+   PR you only follow. The review glyph has no hue of its own, so it takes
+   the accent the app uses for things to act on. */
+.pr-blocked-pill.pr-your-turn,
+.pr-ready-pill.pr-your-turn {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+/* Darker than the #0a84ff used on larger accents: a 13px stroke on the white
+   card needs the contrast. */
+.pr-glyph.pr-your-turn {
+  color: #0071e3;
 }
 
 /* The approved check, the marker cluster's one green glyph: the system green
@@ -1071,6 +1087,11 @@ body {
      brightening into a signal colour. */
   .pr-glyph {
     color: #98989d;
+  }
+
+  /* The accent as the rest of the app uses it; it reads on the dark card. */
+  .pr-glyph.pr-your-turn {
+    color: #0a84ff;
   }
 
   /* The dark-mode system green, matching .settings-ok's dark value. */
