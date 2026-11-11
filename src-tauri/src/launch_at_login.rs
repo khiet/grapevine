@@ -90,8 +90,8 @@ mod platform {
             assert!(error.contains("not supported"), "{error}");
         }
 
-        /// The settings toggle rolls back by turning the setting off again;
-        /// that must not raise a second error over the first.
+        /// Off is the state it is already in, so asking for it is not an
+        /// error.
         #[test]
         fn turning_launch_at_login_off_succeeds() {
             assert_eq!(set_enabled(false), Ok(()));
