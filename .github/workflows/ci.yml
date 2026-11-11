@@ -12,8 +12,8 @@ concurrency:
 
 jobs:
   test:
-    # macOS, not ubuntu: the Rust suite links against the macOS-only tray and
-    # Keychain code, so it cannot compile on another platform.
+    # Kept next to the Ubuntu job: the login item and Keychain code, and their
+    # tests, only compile on macOS.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -41,3 +41,82 @@ jobs:
 
       - name: Rust tests
         run: npm run test:rust
+
+  test-ubuntu:
+    # One LTS behind current, so the .deb built below links against a glibc
+    # that current Ubuntu also satisfies.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      # Keep in step with the package list in the README's Prerequisites.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev libdbus-1-dev
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Typechecks and populates ../dist, which src-tauri/build.rs expects to
+      # exist before the Rust crate will compile.
+      - name: Typecheck and build the frontend
+        run: npm run build
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Rust tests
+        run: npm run test:rust
+
+      # For manual testing only: no updater signature, and never published.
+      # The Ubuntu test machine installs this instead of compiling anything.
+      - name: Build the .deb
+        run: npm run tauri build -- --bundles deb
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: grapevine-deb-x86_64
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+  install-ubuntu:
+    # A machine that never had the compiler or the dev packages: proves the
+    # .deb declares everything it needs at run time.
+    needs: test-ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: grapevine-deb-x86_64
+
+      - name: Install the .deb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ./*.deb xvfb dbus-daemon
+
+      # Still running when the timeout fires (exit 124) means it started; any
+      # other exit is a crash on launch. A private D-Bus session and a virtual
+      # display stand in for the desktop the runner does not have.
+      - name: Start Grapevine
+        run: |
+          BIN="$(dpkg -L "$(dpkg-deb -f ./*.deb Package)" | grep -m1 '^/usr/bin/')"
+          STATUS=0
+          xvfb-run -a dbus-run-session -- timeout 20 "$BIN" || STATUS=$?
+          if [ "$STATUS" -ne 124 ]; then
+            echo "::error::$BIN exited with $STATUS instead of staying up"
+            exit 1
+          fi
