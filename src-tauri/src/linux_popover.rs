@@ -34,9 +34,7 @@ pub fn top_right(
 ) -> PhysicalPosition<i32> {
     let right_edge = work_area_position.x + work_area_size.width as i32;
     PhysicalPosition::new(
-        // Never left of the work area: on a monitor narrower than the popover
-        // the left edge, where the PR titles start, is the part to keep.
-        (right_edge - popover_width as i32 - gap).max(work_area_position.x),
+        right_edge - popover_width as i32 - gap,
         work_area_position.y + gap,
     )
 }
@@ -85,16 +83,5 @@ mod tests {
             8,
         );
         assert_eq!(position, PhysicalPosition::new(4032, 40));
-    }
-
-    #[test]
-    fn keeps_the_popover_on_a_monitor_narrower_than_it() {
-        let position = top_right(
-            PhysicalPosition::new(100, 0),
-            PhysicalSize::new(400, 800),
-            440,
-            8,
-        );
-        assert_eq!(position, PhysicalPosition::new(100, 8));
     }
 }
