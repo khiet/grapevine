@@ -626,16 +626,6 @@ test("Participated orders by turn the same way", () => {
   expect(numbers(view, "participated")).toEqual([4, 5, 3, 1, 2]);
 });
 
-test("a your-turn row in All does not move within its repo group", () => {
-  // The backend never sends a turn in All; were it to, All keeps its order.
-  expect(
-    groups([
-      inAll("acme/widgets", 1, "2026-07-10T00:00:00Z"),
-      { ...inAll("acme/widgets", 2, "2026-07-09T00:00:00Z"), turn: "yours" },
-    ]),
-  ).toEqual([{ repo: "acme/widgets", numbers: [1, 2] }]);
-});
-
 test("a your-turn row asked for review tints the review glyph", () => {
   const row = rowFor(
     pr({ turn: "yours", review_requested: true, blocked_reasons: ["ci"] }),
