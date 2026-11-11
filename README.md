@@ -110,6 +110,9 @@ npm test           # frontend
 npm run test:rust  # Rust
 ```
 
+What the suites cannot reach on Ubuntu is verified by hand with the
+[Ubuntu manual checklist](docs/ubuntu-checklist.md).
+
 ### Production build
 
 ```sh
