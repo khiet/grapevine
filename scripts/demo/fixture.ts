@@ -64,7 +64,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     prs: [
       pr("teampave/checkout-api", 1284, "Retry failed webhook deliveries with exponential backoff", "doutatsu", "30T15:31:00", { unread_count: 3, review_requested: true }),
       pr("teampave/checkout-api", 1291, "Add idempotency keys to POST /payments", ME, "30T15:12:00", { ...mine, unread_count: 1, awaiting_review: true }),
-      pr("teampave/web-app", 2317, "Add saved payment methods to the checkout form", "MarcusAl", "30T14:58:00", { unread_count: 1, blocked_reasons: ["threads"] }),
+      pr("teampave/web-app", 2317, "Add saved payment methods to the checkout form", "MarcusAl", "30T14:58:00", { unread_count: 1, team_review_requested: true, blocked_reasons: ["threads"] }),
       pr("fuseinsight/ingest", 412, "Stream podcast RSS imports instead of buffering them", "doutatsu", "30T12:10:00", { approved: true }),
       pr("teampave/web-app", 2320, "Upgrade to React 19 and drop legacy context", ME, "30T11:40:00", { ...mine, approved: true, merge_queue_position: 2 }),
       pr("khiet/design-tokens", 88, "Rename the spacing scale to t-shirt sizes", "MarcusAl", "29T17:20:00", { review_requested: true }),
