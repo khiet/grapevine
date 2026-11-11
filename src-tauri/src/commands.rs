@@ -1,7 +1,7 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
-use crate::{github, keychain, merged, settings, sync, unread};
+use crate::{github, keychain, pr_state, settings, sync};
 
 /// Settings changes should show up in the PR list right away, not after the
 /// remainder of the current poll interval.
@@ -10,67 +10,28 @@ fn request_sync(app: &AppHandle) {
 }
 
 #[tauri::command]
-pub fn get_prs(state: tauri::State<'_, sync::SyncState>) -> sync::Snapshot {
-    state.snapshot.lock().unwrap().clone()
+pub fn get_prs(state: tauri::State<'_, sync::SyncState>) -> pr_state::Snapshot {
+    state.snapshot()
 }
 
 #[tauri::command]
 pub fn mark_read(app: AppHandle, key: String) -> Result<(), String> {
-    mark(&app, Some(&key))
+    sync::transition(&app, |prs| prs.mark_read(&key))
 }
 
 #[tauri::command]
 pub fn mark_all_read(app: AppHandle) -> Result<(), String> {
-    mark(&app, None)
-}
-
-/// Moves the read watermark of the matching PR (or all PRs, for `None`) to its
-/// newest known activity, then pushes the cleared badges to the popover and the
-/// tray. Marking read is anchored to activity the app has actually seen, so
-/// anything that lands on GitHub after this sync stays unread.
-fn mark(app: &AppHandle, only: Option<&str>) -> Result<(), String> {
-    let state = app.state::<sync::SyncState>();
-    let snapshot = {
-        let mut read_state = state.read_state.lock().unwrap();
-        let mut snapshot = state.snapshot.lock().unwrap();
-        for pr in &mut snapshot.prs {
-            let key = unread::key(pr);
-            if only.is_none_or(|k| k == key) {
-                pr.unread_count = 0;
-                read_state.insert(key, unread::read_watermark(pr));
-            }
-        }
-        unread::save(app, &read_state)?;
-        snapshot.clone()
-    };
-    sync::update_tray_count(app, sync::total_unread(&snapshot.prs));
-    app.emit("prs-updated", snapshot).map_err(|e| e.to_string())
+    sync::transition(&app, |prs| prs.mark_all_read())
 }
 
 #[tauri::command]
 pub fn dismiss_merged(app: AppHandle, key: String) -> Result<(), String> {
-    edit_merged(&app, |state| state.retain(|e| merged::key(e) != key))
+    sync::transition(&app, |prs| prs.dismiss_merged(&key))
 }
 
 #[tauri::command]
 pub fn clear_merged(app: AppHandle) -> Result<(), String> {
-    edit_merged(&app, |state| state.clear())
-}
-
-/// Applies an edit to the Merged section, persists it, and pushes the new
-/// list to the popover. The tray count is untouched: merged PRs never carry
-/// unread activity.
-fn edit_merged(app: &AppHandle, edit: impl FnOnce(&mut merged::MergedState)) -> Result<(), String> {
-    let state = app.state::<sync::SyncState>();
-    let snapshot = {
-        let mut merged_state = state.merged.lock().unwrap();
-        edit(&mut merged_state);
-        merged::save(app, &merged_state)?;
-        let mut snapshot = state.snapshot.lock().unwrap();
-        snapshot.merged = merged_state.clone();
-        snapshot.clone()
-    };
-    app.emit("prs-updated", snapshot).map_err(|e| e.to_string())
+    sync::transition(&app, |prs| prs.clear_merged())
 }
 
 #[derive(Serialize)]

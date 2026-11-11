@@ -1,17 +1,14 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Mutex,
-    time::Duration,
-};
+use std::{sync::Mutex, time::Duration};
 
-use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
 use crate::{
     github,
     github::{GithubError, PullRequest, RateLimit},
-    keychain, merged, settings, unread,
+    keychain, merged,
+    pr_state::{Effects, PrState, Snapshot},
+    settings, unread,
 };
 
 /// Remaining GraphQL budget under which the loop stops syncing until the
@@ -29,33 +26,20 @@ const RATE_LIMIT_MIN_WAIT: Duration = Duration::from_secs(60);
 /// Margin past the documented reset moment, absorbing clock skew.
 const RESET_BUFFER: Duration = Duration::from_secs(5);
 
-/// Latest sync result. A failed sync leaves the previous snapshot's list in
-/// place so the popover keeps showing the last known PRs instead of
-/// blanking; only the error field changes.
-#[derive(Debug, Default, Clone, Serialize)]
-pub struct Snapshot {
-    pub prs: Vec<PullRequest>,
-    /// Merged-but-not-dismissed PRs, rendered as the Merged section.
-    pub merged: Vec<merged::MergedPr>,
-    /// False until a sync has completed while configured; the UI uses this
-    /// to tell "not set up yet" apart from "no open PRs".
-    pub has_synced: bool,
-    /// Epoch ms of the last successful sync. Survives failed syncs: it dates
-    /// the list the popover is still showing.
-    pub last_sync_at: Option<u64>,
-    /// User-facing message of the most recent failure; cleared by a success.
-    pub sync_error: Option<String>,
-}
-
 #[derive(Default)]
 pub struct SyncState {
-    pub snapshot: Mutex<Snapshot>,
-    /// Both are authoritative in memory and mirrored to disk on every change,
-    /// so unread badges and the Merged section survive restarts.
-    pub read_state: Mutex<unread::ReadState>,
-    pub merged: Mutex<merged::MergedState>,
+    pr_state: PrState,
+    /// Held from a transition until its effects are delivered; see
+    /// [`transition`].
+    delivery: Mutex<()>,
     /// Wakes the poll loop early, e.g. right after settings change.
     pub wake: Notify,
+}
+
+impl SyncState {
+    pub fn snapshot(&self) -> Snapshot {
+        self.pr_state.snapshot()
+    }
 }
 
 /// Spawns the background loop: sync now, then again after a delay picked from
@@ -63,15 +47,9 @@ pub struct SyncState {
 /// first.
 pub fn start(app: &AppHandle) {
     let app = app.clone();
-    *app.state::<SyncState>().read_state.lock().unwrap() = unread::load(&app);
-    {
-        // Seed the initial snapshot too, so the Merged section is visible
-        // before the first sync completes.
-        let loaded = merged::load(&app);
-        let state = app.state::<SyncState>();
-        state.snapshot.lock().unwrap().merged = loaded.clone();
-        *state.merged.lock().unwrap() = loaded;
-    }
+    app.state::<SyncState>()
+        .pr_state
+        .restore(unread::load(&app), merged::load(&app));
     tauri::async_runtime::spawn(async move {
         let mut consecutive_failures: u32 = 0;
         loop {
@@ -162,10 +140,6 @@ fn delay_after_failure(
     delay
 }
 
-pub fn total_unread(prs: &[PullRequest]) -> u64 {
-    prs.iter().map(|pr| pr.unread_count).sum()
-}
-
 /// The tray title for `total`. Zero yields an empty string rather than `None`:
 /// tray-icon's macOS `set_title` skips the button entirely on `None`, stranding
 /// the last count on the icon so a cleared badge never disappears.
@@ -177,10 +151,34 @@ fn tray_title(total: u64) -> String {
     }
 }
 
-pub fn update_tray_count(app: &AppHandle, total: u64) {
-    if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_title(Some(tray_title(total)));
+/// Runs one [`PrState`] transition and pays what it owes the outside world:
+/// changed state goes to disk, the tray shows the new count, and the popover
+/// gets the Snapshot. This is the only way to run a transition, and it
+/// delivers the effects before the next transition may start, so a sync and a
+/// command can never publish or save out of order.
+///
+/// A failed save does not hold back the tray or the popover, which must keep
+/// agreeing with the state in memory; the first failure is returned once
+/// everything has been attempted.
+pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> Result<(), String> {
+    let state = app.state::<SyncState>();
+    let _delivering = state.delivery.lock().unwrap();
+    let effects = apply(&state.pr_state);
+    let saved_read = effects
+        .save_read
+        .map_or(Ok(()), |read_state| unread::save(app, &read_state));
+    let saved_merged = effects
+        .save_merged
+        .map_or(Ok(()), |merged| merged::save(app, &merged));
+    if let Some(total) = effects.tray_count {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_title(Some(tray_title(total)));
+        }
     }
+    let emitted = app
+        .emit("prs-updated", effects.snapshot)
+        .map_err(|e| e.to_string());
+    saved_read.and(saved_merged).and(emitted)
 }
 
 /// What one sync attempt means for scheduling the next one.
@@ -204,71 +202,40 @@ fn now_epoch_ms() -> u64 {
 
 async fn sync_once(app: &AppHandle) -> Outcome {
     let result = fetch(app).await;
-    let state = app.state::<SyncState>();
-    let (new_snapshot, outcome) = match result {
+    let (delivered, outcome) = match result {
         Ok(Some(FetchResult {
-            mut prs,
+            prs,
             newly_merged,
             rate_limit,
-        })) => {
-            let merged = {
-                let mut merged_state = state.merged.lock().unwrap();
-                if merged::apply(&prs, newly_merged, &mut merged_state) {
-                    if let Err(e) = merged::save(app, &merged_state) {
-                        eprintln!("cannot persist merged state: {e}");
-                    }
-                }
-                merged_state.clone()
-            };
-            let mut read_state = state.read_state.lock().unwrap();
-            if unread::apply(&mut prs, &mut read_state) {
-                if let Err(e) = unread::save(app, &read_state) {
-                    eprintln!("cannot persist unread state: {e}");
-                }
-            }
-            (
-                Snapshot {
-                    prs,
-                    merged,
-                    has_synced: true,
-                    last_sync_at: Some(now_epoch_ms()),
-                    sync_error: None,
-                },
-                Outcome::Synced { rate_limit },
-            )
-        }
-        // Unconfigured: clear any list left over from previous settings,
-        // but keep the read watermarks and merged history for when a token
-        // comes back.
-        Ok(None) => (Snapshot::default(), Outcome::Unconfigured),
-        // Failure: keep the last known list and its sync time, surface only
-        // the error, and skip the tray update — a stale count beats a
-        // vanishing one.
+        })) => (
+            transition(app, |state| {
+                state.sync_succeeded(prs, newly_merged, now_epoch_ms())
+            }),
+            Outcome::Synced { rate_limit },
+        ),
+        Ok(None) => (
+            transition(app, PrState::unconfigured),
+            Outcome::Unconfigured,
+        ),
         Err(e) => {
             eprintln!("sync failed: {e}");
-            let snapshot = {
-                let mut snapshot = state.snapshot.lock().unwrap();
-                snapshot.sync_error = Some(e.to_string());
-                snapshot.clone()
-            };
-            let _ = app.emit("prs-updated", snapshot);
+            let delivered = transition(app, |state| state.sync_failed(e.to_string()));
             let (rate_limited, reset_epoch_secs) = match e {
                 GithubError::RateLimited { reset_epoch_secs } => (true, reset_epoch_secs),
                 GithubError::Other(_) => (false, None),
             };
-            return Outcome::Failed {
-                rate_limited,
-                reset_epoch_secs,
-            };
+            (
+                delivered,
+                Outcome::Failed {
+                    rate_limited,
+                    reset_epoch_secs,
+                },
+            )
         }
     };
-    let snapshot = {
-        let mut snapshot = state.snapshot.lock().unwrap();
-        *snapshot = new_snapshot;
-        snapshot.clone()
-    };
-    update_tray_count(app, total_unread(&snapshot.prs));
-    let _ = app.emit("prs-updated", snapshot);
+    if let Err(e) = delivered {
+        eprintln!("cannot deliver sync effects: {e}");
+    }
     outcome
 }
 
@@ -290,7 +257,11 @@ async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
         return Ok(None);
     }
     let fetched = github::fetch_open_prs(&token, &repos).await?;
-    let newly_merged = detect_merged(app, &token, &repos, &fetched.prs).await?;
+    let newly_merged = app
+        .state::<SyncState>()
+        .pr_state
+        .detect_merged(&token, &repos, &fetched.prs)
+        .await?;
     Ok(Some(FetchResult {
         prs: fetched.prs,
         newly_merged,
@@ -298,240 +269,11 @@ async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
     }))
 }
 
-/// Finds tracked PRs that left the open set since the previous sync and asks
-/// GitHub which of them merged. A failed status query fails the whole sync,
-/// keeping the old snapshot so the departure is re-detected next round — a
-/// network blip never silently drops a merge. Merges that happen while the app
-/// is quit are missed entirely: the previous open set lives only in memory.
-async fn detect_merged(
-    app: &AppHandle,
-    token: &str,
-    repos: &[String],
-    live_prs: &[PullRequest],
-) -> Result<Vec<merged::MergedPr>, GithubError> {
-    let departed = {
-        let state = app.state::<SyncState>();
-        let snapshot = state.snapshot.lock().unwrap();
-        departed_prs(&snapshot.prs, live_prs, repos)
-    };
-    if departed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let keys: Vec<String> = departed.iter().map(unread::key).collect();
-    let merged_at = github::fetch_merged_status(token, &keys).await?;
-    Ok(merged_entries(&departed, &merged_at))
-}
-
-/// The tracked PRs in `previous` that are gone from the newly fetched
-/// `live_prs` — the candidates for having merged.
-fn departed_prs(
-    previous: &[PullRequest],
-    live_prs: &[PullRequest],
-    repos: &[String],
-) -> Vec<PullRequest> {
-    let live: HashSet<String> = live_prs.iter().map(unread::key).collect();
-    previous
-        .iter()
-        .filter(|pr| !live.contains(&unread::key(pr)))
-        // A repo removed from the watchlist takes its PRs with it; those
-        // departed because of settings, not because they merged.
-        .filter(|pr| repos.iter().any(|r| r.eq_ignore_ascii_case(&pr.repo)))
-        .cloned()
-        .collect()
-}
-
-/// Turns GitHub's answer into section entries. A departed PR missing from
-/// `merged_at` was closed without merging, so it yields nothing and
-/// disappears from the popover silently.
-fn merged_entries(
-    departed: &[PullRequest],
-    merged_at: &HashMap<String, String>,
-) -> Vec<merged::MergedPr> {
-    departed
-        .iter()
-        .filter_map(|pr| {
-            merged_at
-                .get(&unread::key(pr))
-                .map(|t| merged::from_pr(pr, t.clone()))
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{BlockedReason, Section};
+    use crate::github::Section;
     use serde_json::json;
-
-    fn pr(repo: &str, number: u64) -> PullRequest {
-        PullRequest {
-            number,
-            title: "Fix the thing".into(),
-            url: format!("https://github.com/{repo}/pull/{number}"),
-            repo: repo.into(),
-            author: "someone".into(),
-            avatar_url: "https://avatars.example/someone".into(),
-            owner_avatar_url: "https://avatars.example/acme".into(),
-            created_at: "2026-07-01T00:00:00Z".into(),
-            updated_at: "2026-07-01T00:00:00Z".into(),
-            section: Section::All,
-            blocked_reasons: vec![],
-            is_draft: false,
-            review_requested: false,
-            awaiting_review: false,
-            approved: false,
-            merge_queue_position: None,
-            unread_count: 0,
-            activity: vec![],
-        }
-    }
-
-    #[test]
-    fn a_pr_gone_from_the_open_list_has_departed() {
-        let previous = vec![pr("acme/widgets", 7), pr("acme/widgets", 8)];
-        let live = vec![pr("acme/widgets", 8)];
-        let repos = vec!["acme/widgets".to_string()];
-        let departed = departed_prs(&previous, &live, &repos);
-        assert_eq!(departed.len(), 1);
-        assert_eq!(departed[0].number, 7);
-    }
-
-    #[test]
-    fn prs_still_open_have_not_departed() {
-        let prs = vec![pr("acme/widgets", 7)];
-        let repos = vec!["acme/widgets".to_string()];
-        assert!(departed_prs(&prs, &prs, &repos).is_empty());
-    }
-
-    /// Un-watching a repo drops its PRs from the fetch, so without this guard
-    /// removing a repo would spray its open PRs into the Merged section.
-    #[test]
-    fn prs_of_an_unwatched_repo_never_count_as_departed() {
-        let previous = vec![pr("acme/widgets", 7), pr("acme/gadgets", 1)];
-        let repos = vec!["acme/widgets".to_string()];
-        let departed = departed_prs(&previous, &[], &repos);
-        assert_eq!(departed.len(), 1);
-        assert_eq!(departed[0].repo, "acme/widgets");
-    }
-
-    /// The watchlist stores GitHub's canonical casing while a PR's repo name
-    /// comes back from the API; a case mismatch must not read as un-watched.
-    #[test]
-    fn the_watchlist_check_ignores_repo_name_casing() {
-        let previous = vec![pr("acme/widgets", 7)];
-        let repos = vec!["Acme/Widgets".to_string()];
-        assert_eq!(departed_prs(&previous, &[], &repos).len(), 1);
-    }
-
-    #[test]
-    fn departed_prs_that_merged_become_section_entries() {
-        let departed = vec![pr("acme/widgets", 7)];
-        let merged_at = HashMap::from([(
-            "acme/widgets#7".to_string(),
-            "2026-07-12T10:00:00Z".to_string(),
-        )]);
-        let entries = merged_entries(&departed, &merged_at);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].number, 7);
-        assert_eq!(entries[0].title, "Fix the thing");
-        assert_eq!(entries[0].merged_at, "2026-07-12T10:00:00Z");
-    }
-
-    /// A PR closed without merging is absent from GitHub's answer.
-    #[test]
-    fn departed_prs_that_did_not_merge_yield_no_entry() {
-        let departed = vec![pr("acme/widgets", 7)];
-        assert!(merged_entries(&departed, &HashMap::new()).is_empty());
-    }
-
-    /// The `Snapshot` interface in `src/PrList.tsx` consumes this JSON
-    /// verbatim: field names and section values are the wire contract, so a
-    /// rename or a `rename_all` attribute here silently breaks the popover.
-    #[test]
-    fn snapshot_serializes_to_the_shape_the_frontend_expects() {
-        let snapshot = Snapshot {
-            prs: vec![PullRequest {
-                number: 7,
-                title: "Fix the thing".into(),
-                url: "https://github.com/acme/widgets/pull/7".into(),
-                repo: "acme/widgets".into(),
-                author: "someone".into(),
-                avatar_url: "https://avatars.example/someone".into(),
-                owner_avatar_url: "https://avatars.example/acme".into(),
-                created_at: "2026-07-10T12:00:00Z".into(),
-                updated_at: "2026-07-11T09:30:00Z".into(),
-                section: Section::Mine,
-                blocked_reasons: vec![BlockedReason::Ci],
-                is_draft: true,
-                review_requested: false,
-                awaiting_review: false,
-                approved: true,
-                merge_queue_position: Some(2),
-                unread_count: 3,
-                // Internal working data; must not leak into the payload.
-                activity: vec!["2026-07-10T12:00:00Z".into()],
-            }],
-            merged: vec![merged::MergedPr {
-                number: 3,
-                title: "Ship the other thing".into(),
-                url: "https://github.com/acme/widgets/pull/3".into(),
-                repo: "acme/widgets".into(),
-                author: "someone".into(),
-                avatar_url: "https://avatars.example/someone".into(),
-                owner_avatar_url: "https://avatars.example/acme".into(),
-                merged_at: "2026-07-11T10:00:00Z".into(),
-            }],
-            has_synced: true,
-            last_sync_at: Some(1_784_205_296_000),
-            sync_error: Some("Could not reach GitHub.".into()),
-        };
-        assert_eq!(
-            serde_json::to_value(&snapshot).unwrap(),
-            json!({
-                "prs": [{
-                    "number": 7,
-                    "title": "Fix the thing",
-                    "url": "https://github.com/acme/widgets/pull/7",
-                    "repo": "acme/widgets",
-                    "author": "someone",
-                    "avatar_url": "https://avatars.example/someone",
-                    "owner_avatar_url": "https://avatars.example/acme",
-                    "created_at": "2026-07-10T12:00:00Z",
-                    "updated_at": "2026-07-11T09:30:00Z",
-                    "section": "mine",
-                    "blocked_reasons": ["ci"],
-                    "is_draft": true,
-                    "review_requested": false,
-                    "awaiting_review": false,
-                    "approved": true,
-                    "merge_queue_position": 2,
-                    "unread_count": 3
-                }],
-                "merged": [{
-                    "number": 3,
-                    "title": "Ship the other thing",
-                    "url": "https://github.com/acme/widgets/pull/3",
-                    "repo": "acme/widgets",
-                    "author": "someone",
-                    "avatar_url": "https://avatars.example/someone",
-                    "owner_avatar_url": "https://avatars.example/acme",
-                    "merged_at": "2026-07-11T10:00:00Z"
-                }],
-                "has_synced": true,
-                "last_sync_at": 1_784_205_296_000u64,
-                "sync_error": "Could not reach GitHub."
-            })
-        );
-    }
-
-    /// The footer reads null as "never synced" / "no error", so the fields
-    /// must serialize as null rather than being omitted.
-    #[test]
-    fn absent_sync_status_serializes_as_nulls() {
-        let value = serde_json::to_value(Snapshot::default()).unwrap();
-        assert_eq!(value["last_sync_at"], json!(null));
-        assert_eq!(value["sync_error"], json!(null));
-    }
 
     #[test]
     fn a_healthy_sync_schedules_the_plain_poll_interval() {
@@ -616,32 +358,6 @@ mod tests {
         assert_eq!(tray_title(0), "");
         assert_eq!(tray_title(1), "1");
         assert_eq!(tray_title(42), "42");
-    }
-
-    #[test]
-    fn the_tray_total_sums_unread_across_prs() {
-        let pr = |unread_count: u64| PullRequest {
-            number: 7,
-            title: "Fix the thing".into(),
-            url: "https://github.com/acme/widgets/pull/7".into(),
-            repo: "acme/widgets".into(),
-            author: "someone".into(),
-            avatar_url: String::new(),
-            owner_avatar_url: String::new(),
-            created_at: "2026-07-10T12:00:00Z".into(),
-            updated_at: "2026-07-11T09:30:00Z".into(),
-            section: Section::All,
-            blocked_reasons: vec![],
-            is_draft: false,
-            review_requested: false,
-            awaiting_review: false,
-            approved: false,
-            merge_queue_position: None,
-            unread_count,
-            activity: vec![],
-        };
-        assert_eq!(total_unread(&[]), 0);
-        assert_eq!(total_unread(&[pr(2), pr(0), pr(5)]), 7);
     }
 
     /// `PrList.tsx` filters rows with `pr.section === key`; a mismatched

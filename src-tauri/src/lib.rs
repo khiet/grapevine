@@ -14,6 +14,7 @@ mod commands;
 mod github;
 mod keychain;
 mod merged;
+mod pr_state;
 mod settings;
 mod sync;
 mod unread;
