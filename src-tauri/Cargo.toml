@@ -51,7 +51,6 @@ objc2-service-management = { version = "0.3", default-features = false, features
   "objc2-foundation",
 ] }
 
-
 [target.'cfg(target_os = "linux")'.dependencies]
 # The Secret Service (gnome-keyring on Ubuntu) over the system libdbus. This
 # feature must stay on: with no platform store enabled, keyring silently falls

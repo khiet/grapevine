@@ -12,8 +12,8 @@ concurrency:
 
 jobs:
   test:
-    # Kept next to the Ubuntu job: the login item and Keychain code, and their
-    # tests, only compile on macOS.
+    # Kept next to the Ubuntu job: the login item and Keychain paths, and
+    # their tests, are only built and run here.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -45,7 +45,7 @@ jobs:
   test-ubuntu:
     # One LTS behind current, so the .deb built below links against a glibc
     # that current Ubuntu also satisfies.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -94,10 +94,11 @@ jobs:
           if-no-files-found: error
 
   install-ubuntu:
-    # A machine that never had the compiler or the dev packages: proves the
-    # .deb declares everything it needs at run time.
+    # A bare image of current Ubuntu, with no compiler and no dev packages:
+    # proves the .deb declares everything it needs at run time.
     needs: test-ubuntu
     runs-on: ubuntu-latest
+    container: ubuntu:latest
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -105,12 +106,14 @@ jobs:
 
       - name: Install the .deb
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ./*.deb xvfb dbus-daemon
+          apt-get update
+          apt-get install -y --no-install-recommends ./*.deb xvfb xauth dbus-daemon
+        env:
+          DEBIAN_FRONTEND: noninteractive
 
       # Still running when the timeout fires (exit 124) means it started; any
       # other exit is a crash on launch. A private D-Bus session and a virtual
-      # display stand in for the desktop the runner does not have.
+      # display stand in for the desktop the container does not have.
       - name: Start Grapevine
         run: |
           BIN="$(dpkg -L "$(dpkg-deb -f ./*.deb Package)" | grep -m1 '^/usr/bin/')"

@@ -60,9 +60,9 @@ mod platform {
     }
 }
 
-/// Not implemented off macOS yet: nothing is ever registered, so the setting
+/// Not implemented on Linux yet: nothing is ever registered, so the setting
 /// reads as off and cannot be turned on.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 mod platform {
     pub fn is_enabled() -> Result<bool, String> {
         Ok(false)

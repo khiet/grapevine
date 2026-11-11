@@ -11,7 +11,7 @@ const ACCOUNT: &str = "github-pat";
 /// can find on their own system.
 #[cfg(target_os = "macos")]
 const STORE_NAME: &str = "Keychain";
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const STORE_NAME: &str = "the keyring";
 
 /// `action` reads up to the store's name, e.g. "store token in".
