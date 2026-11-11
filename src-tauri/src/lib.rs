@@ -16,6 +16,7 @@ mod keychain;
 mod merged;
 mod pr_state;
 mod settings;
+mod store;
 mod sync;
 mod unread;
 
@@ -116,6 +117,7 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            app.manage(store::Store::new(app.path().app_data_dir()?));
             sync::start(app.handle());
             Ok(())
         })

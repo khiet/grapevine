@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-use crate::{github, keychain, pr_state, settings, sync};
+use crate::{github, keychain, pr_state, settings, store::Store, sync};
 
 /// Settings changes should show up in the PR list right away, not after the
 /// remainder of the current poll interval.
@@ -46,7 +46,7 @@ pub struct TokenStatus {
 pub async fn token_status(app: AppHandle) -> Result<TokenStatus, String> {
     let has_token = keychain::load()?.is_some();
     let login = if has_token {
-        settings::load(&app)?.github_login
+        settings::load(&app.state::<Store>())?.github_login
     } else {
         None
     };
@@ -72,7 +72,7 @@ pub async fn save_token(app: AppHandle, token: String) -> Result<SavedToken, Str
     }
     let validated = github::validate_token(&token).await?;
     keychain::store(&token)?;
-    settings::update(&app, |settings| {
+    settings::update(&app.state::<Store>(), |settings| {
         settings.github_login = Some(validated.login.clone());
         Ok(())
     })?;
@@ -86,7 +86,7 @@ pub async fn save_token(app: AppHandle, token: String) -> Result<SavedToken, Str
 #[tauri::command]
 pub async fn clear_token(app: AppHandle) -> Result<(), String> {
     keychain::clear()?;
-    settings::update(&app, |settings| {
+    settings::update(&app.state::<Store>(), |settings| {
         settings.github_login = None;
         Ok(())
     })?;
@@ -96,7 +96,7 @@ pub async fn clear_token(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn list_repos(app: AppHandle) -> Result<Vec<String>, String> {
-    Ok(settings::load(&app)?.repos)
+    Ok(settings::load(&app.state::<Store>())?.repos)
 }
 
 #[tauri::command]
@@ -106,7 +106,7 @@ pub async fn add_repo(app: AppHandle, name: String) -> Result<Vec<String>, Strin
         return Err("Save a valid GitHub token first.".into());
     };
     let canonical = github::validate_repo(&token, owner, repo).await?;
-    let updated = settings::update(&app, |settings| {
+    let updated = settings::update(&app.state::<Store>(), |settings| {
         // Checked inside the lock: a concurrent duplicate add must lose here,
         // not slip past a check made against a stale read.
         if settings
@@ -125,7 +125,7 @@ pub async fn add_repo(app: AppHandle, name: String) -> Result<Vec<String>, Strin
 
 #[tauri::command]
 pub async fn remove_repo(app: AppHandle, name: String) -> Result<Vec<String>, String> {
-    let updated = settings::update(&app, |settings| {
+    let updated = settings::update(&app.state::<Store>(), |settings| {
         settings.repos.retain(|r| !r.eq_ignore_ascii_case(&name));
         Ok(())
     })?;
@@ -145,14 +145,14 @@ pub async fn list_affiliated_repos() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub async fn get_poll_interval(app: AppHandle) -> Result<u64, String> {
-    Ok(settings::load(&app)?.poll_interval_secs)
+    Ok(settings::load(&app.state::<Store>())?.poll_interval_secs)
 }
 
 /// Returns the value actually stored, which may have been clamped.
 #[tauri::command]
 pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String> {
     let secs = settings::clamp_poll_secs(secs);
-    settings::update(&app, |settings| {
+    settings::update(&app.state::<Store>(), |settings| {
         settings.poll_interval_secs = secs;
         Ok(())
     })?;

@@ -8,7 +8,8 @@ use crate::{
     github::{GithubError, PullRequest, RateLimit},
     keychain, merged,
     pr_state::{Effects, PrState, Snapshot},
-    settings, unread,
+    settings,
+    store::{self, Store},
 };
 
 /// Remaining GraphQL budget under which the loop stops syncing until the
@@ -47,9 +48,15 @@ impl SyncState {
 /// first.
 pub fn start(app: &AppHandle) {
     let app = app.clone();
-    app.state::<SyncState>()
-        .pr_state
-        .restore(unread::load(&app), merged::load(&app));
+    {
+        // Neither document fails on a corrupt file, so the defaults here only
+        // guard against that policy changing.
+        let store = app.state::<Store>();
+        app.state::<SyncState>().pr_state.restore(
+            store.load(&store::READ_STATE).unwrap_or_default(),
+            store.load(&store::MERGED).unwrap_or_default(),
+        );
+    }
     tauri::async_runtime::spawn(async move {
         let mut consecutive_failures: u32 = 0;
         loop {
@@ -84,7 +91,7 @@ pub fn start(app: &AppHandle) {
 /// Reads the poll interval fresh each round, so a settings change takes
 /// effect from the next scheduling decision without a restart.
 fn poll_interval(app: &AppHandle) -> Duration {
-    let secs = settings::load(app)
+    let secs = settings::load(&app.state::<Store>())
         .map(|s| s.poll_interval_secs)
         .unwrap_or(settings::DEFAULT_POLL_SECS);
     Duration::from_secs(secs)
@@ -164,12 +171,12 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
     let state = app.state::<SyncState>();
     let _delivering = state.delivery.lock().unwrap();
     let effects = apply(&state.pr_state);
-    let saved_read = effects
-        .save_read
-        .map_or(Ok(()), |read_state| unread::save(app, &read_state));
-    let saved_merged = effects
-        .save_merged
-        .map_or(Ok(()), |merged| merged::save(app, &merged));
+    let saved_read = effects.save_read.map_or(Ok(()), |read_state| {
+        app.state::<Store>().save(&store::READ_STATE, &read_state)
+    });
+    let saved_merged = effects.save_merged.map_or(Ok(()), |merged| {
+        app.state::<Store>().save(&store::MERGED, &merged)
+    });
     if let Some(total) = effects.tray_count {
         if let Some(tray) = app.tray_by_id("main") {
             let _ = tray.set_title(Some(tray_title(total)));
@@ -252,7 +259,9 @@ async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
     let Some(token) = keychain::load().map_err(GithubError::Other)? else {
         return Ok(None);
     };
-    let repos = settings::load(app).map_err(GithubError::Other)?.repos;
+    let repos = settings::load(&app.state::<Store>())
+        .map_err(GithubError::Other)?
+        .repos;
     if repos.is_empty() {
         return Ok(None);
     }

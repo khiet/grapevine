@@ -1,10 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs,
-    path::PathBuf,
-};
-
-use tauri::Manager;
+use std::collections::{HashMap, HashSet};
 
 use crate::github::{PullRequest, Section};
 
@@ -69,39 +63,6 @@ pub fn apply(prs: &mut [PullRequest], state: &mut ReadState) -> bool {
         }
     }
     changed
-}
-
-fn path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("cannot resolve app data dir: {e}"))?;
-    Ok(dir.join("unread.json"))
-}
-
-/// A missing or unreadable file degrades to an empty state instead of failing
-/// sync: baselining then re-marks everything read, which loses pending unread
-/// counts but never mis-flags old activity.
-pub fn load(app: &tauri::AppHandle) -> ReadState {
-    let Ok(path) = path(app) else {
-        return ReadState::default();
-    };
-    let Ok(raw) = fs::read_to_string(&path) else {
-        return ReadState::default();
-    };
-    serde_json::from_str(&raw).unwrap_or_else(|e| {
-        eprintln!("unread state file is corrupt, starting over: {e}");
-        ReadState::default()
-    })
-}
-
-pub fn save(app: &tauri::AppHandle, state: &ReadState) -> Result<(), String> {
-    let path = path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("cannot create app data dir: {e}"))?;
-    }
-    let raw = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| format!("cannot write unread state: {e}"))
 }
 
 #[cfg(test)]

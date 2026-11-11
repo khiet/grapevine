@@ -1,7 +1,8 @@
-use std::{fs, path::PathBuf, sync::Mutex};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+
+use crate::store::{self, Store};
 
 /// Bounds for the poll interval. The floor keeps a mistyped value from
 /// hammering GitHub; the ceiling keeps the app from looking dead.
@@ -40,33 +41,11 @@ pub fn clamp_poll_secs(secs: u64) -> u64 {
     secs.clamp(MIN_POLL_SECS, MAX_POLL_SECS)
 }
 
-fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("cannot resolve app data dir: {e}"))?;
-    Ok(dir.join("settings.json"))
-}
-
-pub fn load(app: &tauri::AppHandle) -> Result<Settings, String> {
-    let path = settings_path(app)?;
-    if !path.exists() {
-        return Ok(Settings::default());
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| format!("cannot read settings: {e}"))?;
-    let mut settings: Settings =
-        serde_json::from_str(&raw).map_err(|e| format!("settings file is corrupt: {e}"))?;
+/// Loads the stored settings, clamping the poll interval into its bounds.
+pub fn load(store: &Store) -> Result<Settings, String> {
+    let mut settings = store.load(&store::SETTINGS)?;
     settings.poll_interval_secs = clamp_poll_secs(settings.poll_interval_secs);
     Ok(settings)
-}
-
-pub fn save(app: &tauri::AppHandle, settings: &Settings) -> Result<(), String> {
-    let path = settings_path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("cannot create app data dir: {e}"))?;
-    }
-    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| format!("cannot write settings: {e}"))
 }
 
 /// Serializes every load-modify-save on the settings file. Tauri commands run
@@ -79,26 +58,102 @@ static UPDATE_LOCK: Mutex<()> = Mutex::new(());
 /// the saved result. An error from `mutate` aborts without writing. `mutate`
 /// must not block: the lock is held across the reload and the write.
 pub fn update(
-    app: &tauri::AppHandle,
+    store: &Store,
     mutate: impl FnOnce(&mut Settings) -> Result<(), String>,
 ) -> Result<Settings, String> {
     let _guard = UPDATE_LOCK.lock().unwrap();
-    let mut settings = load(app)?;
+    let mut settings = load(store)?;
     mutate(&mut settings)?;
-    save(app, &settings)?;
+    store.save(&store::SETTINGS, &settings)?;
     Ok(settings)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, sync::Barrier, thread};
+
     use super::*;
+    use crate::store::testing::temp_store;
+
+    fn store_with_settings_file(raw: &str) -> (tempfile::TempDir, Store) {
+        let (dir, store) = temp_store();
+        fs::write(dir.path().join("settings.json"), raw).unwrap();
+        (dir, store)
+    }
 
     /// Settings files written before the poll interval existed have no such
     /// field, and must not load as zero.
     #[test]
-    fn a_settings_file_without_a_poll_interval_gets_the_default() {
-        let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(settings.poll_interval_secs, DEFAULT_POLL_SECS);
+    fn a_settings_file_without_a_poll_interval_loads_with_the_default() {
+        let (_dir, store) = store_with_settings_file(r#"{"repos": ["acme/widgets"]}"#);
+        let settings = load(&store).unwrap();
+        assert_eq!(settings.poll_interval_secs, 180);
+        assert_eq!(settings.repos, ["acme/widgets"]);
+    }
+
+    #[test]
+    fn an_out_of_range_poll_interval_is_clamped_on_read() {
+        let (_dir, store) = store_with_settings_file(r#"{"poll_interval_secs": 5}"#);
+        assert_eq!(load(&store).unwrap().poll_interval_secs, 30);
+
+        let (_dir, store) = store_with_settings_file(r#"{"poll_interval_secs": 86400}"#);
+        assert_eq!(load(&store).unwrap().poll_interval_secs, 3600);
+    }
+
+    #[test]
+    fn an_update_is_saved_and_returned() {
+        let (_dir, store) = temp_store();
+        let updated = update(&store, |settings| {
+            settings.repos.push("acme/widgets".into());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(updated.repos, ["acme/widgets"]);
+        assert_eq!(load(&store).unwrap().repos, ["acme/widgets"]);
+    }
+
+    #[test]
+    fn a_failed_update_writes_nothing() {
+        let (_dir, store) = temp_store();
+        let result = update(&store, |settings| {
+            settings.repos.push("acme/widgets".into());
+            Err("no".into())
+        });
+        assert_eq!(result.unwrap_err(), "no");
+        assert!(load(&store).unwrap().repos.is_empty());
+    }
+
+    #[test]
+    fn an_update_of_a_corrupt_settings_file_fails_and_leaves_it_alone() {
+        let (dir, store) = store_with_settings_file("{not json");
+        assert!(update(&store, |_| Ok(())).is_err());
+        let raw = fs::read_to_string(dir.path().join("settings.json")).unwrap();
+        assert_eq!(raw, "{not json");
+    }
+
+    /// Unserialized, overlapping updates read the same base state and the
+    /// later save drops the earlier change.
+    #[test]
+    fn concurrent_updates_all_take_effect() {
+        let (_dir, store) = temp_store();
+        let start = Barrier::new(8);
+        thread::scope(|scope| {
+            for i in 0..8 {
+                let (store, start) = (&store, &start);
+                scope.spawn(move || {
+                    start.wait();
+                    update(store, |settings| {
+                        settings.repos.push(format!("acme/repo-{i}"));
+                        Ok(())
+                    })
+                    .unwrap();
+                });
+            }
+        });
+        let mut repos = load(&store).unwrap().repos;
+        repos.sort();
+        let expected: Vec<String> = (0..8).map(|i| format!("acme/repo-{i}")).collect();
+        assert_eq!(repos, expected);
     }
 
     #[test]
