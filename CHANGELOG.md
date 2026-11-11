@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.0](https://github.com/khiet/grapevine/compare/grapevine-v0.11.0...grapevine-v0.12.0) (2026-11-11)
+
+
+### Features
+
+* build and test Grapevine on Ubuntu ([#86](https://github.com/khiet/grapevine/issues/86)) ([6a55c92](https://github.com/khiet/grapevine/commit/6a55c9290a7b340fabc460b72f77b15c7fef193e)), closes [#78](https://github.com/khiet/grapevine/issues/78)
+* launch at login on Ubuntu ([#88](https://github.com/khiet/grapevine/issues/88)) ([08fe47c](https://github.com/khiet/grapevine/commit/08fe47c51ff28c07f3558c2cf5f183df2da5341a)), closes [#79](https://github.com/khiet/grapevine/issues/79)
+* open the popover from the tray menu on Ubuntu, pinned top-right ([#89](https://github.com/khiet/grapevine/issues/89)) ([3b467c8](https://github.com/khiet/grapevine/commit/3b467c89f1a353bad3a1e277f588269765bd4d8b)), closes [#80](https://github.com/khiet/grapevine/issues/80)
+* show the running Grapevine on a second launch on Ubuntu ([#90](https://github.com/khiet/grapevine/issues/90)) ([de9460f](https://github.com/khiet/grapevine/commit/de9460ff9c723b09b4e85650dab97daed7dc9cd0)), closes [#81](https://github.com/khiet/grapevine/issues/81)
+
 ## [0.11.0](https://github.com/khiet/grapevine/compare/grapevine-v0.10.0...grapevine-v0.11.0) (2026-11-11)
 
 
