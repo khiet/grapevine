@@ -210,6 +210,32 @@ mod tests {
         }
     }
 
+    /// The bot note follows the badge's rule: a browse-only PR carries
+    /// neither, and its watermark keeps level with bot activity too, so
+    /// joining it later does not surface the bots' backlog.
+    #[test]
+    fn bot_activity_accrues_only_on_prs_you_authored_or_take_part_in() {
+        let with_bot_comment = |section| PullRequest {
+            section,
+            bot_activity: vec!["2026-07-12T09:30:00Z".into()],
+            ..pr("acme/widgets", 7, &[])
+        };
+        let read_until = |watermark: &str| {
+            ReadState::from([("acme/widgets#7".to_string(), watermark.to_string())])
+        };
+
+        let mut state = read_until("2026-07-10T12:00:00Z");
+        let mut prs = vec![with_bot_comment(Section::Participated)];
+        apply(&mut prs, &mut state);
+        assert_eq!((prs[0].unread_count, prs[0].bot_unread_count), (0, 1));
+
+        let mut state = read_until("2026-07-10T12:00:00Z");
+        let mut prs = vec![with_bot_comment(Section::All)];
+        apply(&mut prs, &mut state);
+        assert_eq!(prs[0].bot_unread_count, 0);
+        assert_eq!(state["acme/widgets#7"], "2026-07-12T09:30:00Z");
+    }
+
     #[test]
     fn a_browse_only_pr_keeps_its_watermark_level_with_its_activity() {
         let mut prs = vec![browse_only(
