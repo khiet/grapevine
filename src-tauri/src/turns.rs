@@ -13,10 +13,10 @@ use crate::{
 /// tracking started, or it ran through a spell without a token or repos.
 pub type TurnStarts = HashMap<String, Option<u64>>;
 
-/// Forgets every start while keeping which turns were yours. For a spell
-/// with no syncs of unknown length: a turn found still yours afterwards may
-/// have ended and begun again unseen, so its old start can no longer be
-/// vouched for. Returns true when the state changed and needs persisting.
+/// Forgets every start while keeping which turns were yours. For a spell of
+/// unknown length without syncs: a turn found still yours afterwards may have
+/// ended and begun again unseen, so its old start cannot be vouched for.
+/// Returns true when the state changed and needs persisting.
 pub fn forget_starts(starts: &mut Option<TurnStarts>) -> bool {
     let Some(known) = starts else { return false };
     let mut changed = false;
