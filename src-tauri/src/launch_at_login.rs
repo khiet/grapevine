@@ -83,8 +83,8 @@ mod platform {
         autostart.enable(&installed_path(running))
     }
 
-    /// The autostart entry file. Its existence is the setting: there is no
-    /// second record of it to fall out of step with what the session does.
+    /// The autostart entry file. Its existence is the setting; nothing else
+    /// records it.
     struct Autostart {
         entry: PathBuf,
     }
@@ -276,8 +276,8 @@ mod platform {
             assert_eq!(autostart.is_enabled(), Ok(false));
         }
 
-        /// The session only looks in `autostart/` under the config
-        /// directory, which does not exist on a fresh account.
+        /// A fresh account may have no `autostart/` directory yet, so turning
+        /// the setting on has to create it.
         #[test]
         fn turning_launch_at_login_on_writes_the_entry_where_the_session_looks() {
             let config = tempfile::tempdir().unwrap();
@@ -344,8 +344,6 @@ mod platform {
             );
         }
 
-        /// The XDG spec calls a relative or empty value invalid and says to
-        /// ignore it.
         #[test]
         fn a_relative_or_empty_config_directory_setting_is_ignored() {
             for invalid in ["cfg", ""] {
