@@ -1,6 +1,12 @@
 :root {
   color-scheme: light dark;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* -webkit-system-font is the desktop's own UI font in both webviews: San
+     Francisco on macOS, the GNOME interface font on Ubuntu. Not system-ui:
+     WebKitGTK hands that name to fontconfig, which ignores the desktop's
+     font setting. The names after it serve the browsers that are not WebKit,
+     such as the one the demo is captured in. */
+  font-family: -webkit-system-font, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   font-size: 13px;
 }
 

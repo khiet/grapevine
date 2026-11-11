@@ -90,3 +90,49 @@ Run on the default Wayland session, starting with Grapevine not running
 7. Choose "Quit Grapevine", then start Grapevine from the app grid.
    **Expect:** it starts normally with one glyph and no popover; the earlier
    copy left nothing behind that blocks a fresh start.
+
+## Appearance
+
+Run with a token saved and at least one repository watched, so the popover has
+rows to show. Steps 2 to 9 use the default "Ubuntu Sans" interface font; check
+it with `gsettings get org.gnome.desktop.interface font-name`. Take a
+screenshot at each step marked **Screenshot** and attach it to the pull
+request.
+
+1. Run `xdg-settings get default-web-browser` and note the browser it names.
+2. Open the popover. **Expect:** all text is set in Ubuntu Sans, the same
+   typeface as the top panel's clock, not DejaVu Sans or another fallback.
+   **Screenshot.**
+3. Scroll the whole list. **Expect:** no title, repository name, timestamp or
+   "waiting" label is cut off mid-glyph or overlaps its neighbour; long ones
+   end in an ellipsis. Avatars, the red unread badge, the square owner badge
+   and the "bot" tag sit on the avatar's corners. Pills ("Draft", "CI
+   failing", "Ready to merge" and the like) and the glyphs beside them share
+   one line at the row's right edge. **Screenshot** of each screenful.
+4. Move the pointer over a row in "Mine" or "Participated". **Expect:** the
+   row tints blue and a moon appears at its right edge.
+5. Rest the pointer on an avatar, then on a glyph or a "+1" pill at a row's
+   right edge. **Expect:** each shows a dark bubble with a pointer after a
+   short delay; the bubble stays inside the popover and its text is not cut
+   off.
+6. Type in "Filter" until nothing matches. **Expect:** "No matches" is centred
+   in the popover. Press Escape. **Expect:** the field clears and the list
+   returns.
+7. Click a row. **Expect:** the pull request opens in the browser from step 1.
+8. Open Settings. **Expect:** the token field, the repository filter and
+   checkboxes, the "Refresh pull requests every" menu, the "Launch at login"
+   switch and "Check for updates" all draw completely, with their labels on
+   the same line as the control. **Screenshot** of the top and of the bottom
+   of the view.
+9. Open the "Refresh pull requests every" menu and pick another value.
+   **Expect:** the menu opens next to the control and the new value shows in
+   it.
+10. Choose "Create one on GitHub". **Expect:** GitHub's new token page opens
+    in the browser from step 1.
+11. Switch the desktop to the dark style (Settings, Appearance) and open the
+    popover, then Settings. **Expect:** both views switch to the dark palette
+    with no light-on-light or dark-on-dark text. **Screenshot** both.
+12. Run `gsettings set org.gnome.desktop.interface font-name 'DejaVu Serif 11'`,
+    quit Grapevine and start it again. **Expect:** the popover text is set in
+    the serif font, like the top panel. Run
+    `gsettings reset org.gnome.desktop.interface font-name` afterwards.
