@@ -80,7 +80,15 @@ first launch opens normally with no Gatekeeper warning.
 
 ### Prerequisites
 
-- macOS with Xcode Command Line Tools (`xcode-select --install`)
+- macOS with Xcode Command Line Tools (`xcode-select --install`), or Ubuntu
+  with these system packages:
+
+  ```sh
+  sudo apt-get install build-essential pkg-config file \
+    libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+    libxdo-dev libssl-dev libdbus-1-dev
+  ```
+
 - [mise](https://mise.jdx.dev), which installs the pinned Node and Rust
   toolchains:
 
@@ -109,6 +117,17 @@ npm run tauri build
 ```
 
 The runnable app lands in `src-tauri/target/release/bundle/macos/Grapevine.app`.
+
+On Ubuntu, build a `.deb` instead; it lands in
+`src-tauri/target/release/bundle/deb/`:
+
+```sh
+npm run tauri build -- --bundles deb
+```
+
+CI builds the same x86_64 `.deb` for every pull request and uploads it as the
+`grapevine-deb-x86_64` workflow artifact. It is for testing only: it carries no
+updater signature and is not a release.
 
 ### Releasing
 

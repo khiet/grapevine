@@ -13,6 +13,7 @@ use tauri_plugin_positioner::{Position, WindowExt};
 mod commands;
 mod github;
 mod keychain;
+mod launch_at_login;
 mod merged;
 mod pr_state;
 mod settings;
@@ -105,13 +106,14 @@ pub fn run() {
             let quit = MenuItemBuilder::with_id("quit", "Quit Grapevine").build(app)?;
             let menu = MenuBuilder::new(app).item(&quit).build()?;
 
-            TrayIconBuilder::with_id("main")
-                // A dedicated glyph, not the app icon: template icons are
-                // alpha-only, so the colored app icon would flatten into an
-                // illegible block.
-                .icon(tauri::include_image!("icons/tray.png"))
-                .icon_as_template(true)
-                .menu(&menu)
+            // A dedicated glyph, not the app icon: template icons are
+            // alpha-only, so the colored app icon would flatten into an
+            // illegible block.
+            let tray =
+                TrayIconBuilder::with_id("main").icon(tauri::include_image!("icons/tray.png"));
+            #[cfg(target_os = "macos")]
+            let tray = tray.icon_as_template(true);
+            tray.menu(&menu)
                 // Left click toggles the popover; the menu stays on right click.
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| {

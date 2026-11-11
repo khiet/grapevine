@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-use crate::{github, keychain, pr_state, settings, store::Store, sync};
+use crate::{github, keychain, launch_at_login, pr_state, settings, store::Store, sync};
 
 /// Settings changes should show up in the PR list right away, not after the
 /// remainder of the current poll interval.
@@ -174,34 +174,12 @@ pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String>
 
 #[tauri::command]
 pub fn get_launch_at_login() -> Result<bool, String> {
-    let status = unsafe { objc2_service_management::SMAppService::mainAppService().status() };
-    Ok(login_item_reports_on(status))
-}
-
-/// The settings toggle reflects the app's intent, not raw system state:
-/// RequiresApproval means registered but pending the user's consent in
-/// System Settings, so it still reports as on.
-fn login_item_reports_on(status: objc2_service_management::SMAppServiceStatus) -> bool {
-    use objc2_service_management::SMAppServiceStatus;
-    status == SMAppServiceStatus::Enabled || status == SMAppServiceStatus::RequiresApproval
+    launch_at_login::is_enabled()
 }
 
 #[tauri::command]
 pub fn set_launch_at_login(enabled: bool) -> Result<(), String> {
-    use objc2_service_management::SMAppService;
-
-    let service = unsafe { SMAppService::mainAppService() };
-    let result = if enabled {
-        unsafe { service.registerAndReturnError() }
-    } else {
-        unsafe { service.unregisterAndReturnError() }
-    };
-    result.map_err(|e| {
-        format!(
-            "Could not update the login item: {}",
-            e.localizedDescription()
-        )
-    })
+    launch_at_login::set_enabled(enabled)
 }
 
 fn parse_repo_name(input: &str) -> Result<(&str, &str), String> {
@@ -219,27 +197,7 @@ fn parse_repo_name(input: &str) -> Result<(&str, &str), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{login_item_reports_on, parse_repo_name};
-    use objc2_service_management::SMAppServiceStatus;
-
-    #[test]
-    fn an_enabled_login_item_reports_on() {
-        assert!(login_item_reports_on(SMAppServiceStatus::Enabled));
-    }
-
-    /// A fresh registration sits in RequiresApproval until the user consents
-    /// in System Settings; reporting it as off would make the toggle appear
-    /// to bounce back right after being switched on.
-    #[test]
-    fn a_login_item_awaiting_user_approval_still_reports_on() {
-        assert!(login_item_reports_on(SMAppServiceStatus::RequiresApproval));
-    }
-
-    #[test]
-    fn an_unregistered_login_item_reports_off() {
-        assert!(!login_item_reports_on(SMAppServiceStatus::NotRegistered));
-        assert!(!login_item_reports_on(SMAppServiceStatus::NotFound));
-    }
+    use super::parse_repo_name;
 
     #[test]
     fn splits_owner_and_repo() {

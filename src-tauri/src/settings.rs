@@ -15,7 +15,8 @@ fn default_poll_secs() -> u64 {
 }
 
 /// App state persisted to `settings.json` in the app data directory. The
-/// GitHub token is deliberately absent: it lives only in the macOS Keychain.
+/// GitHub token is deliberately absent: it lives only in the system credential
+/// store (see `keychain`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
