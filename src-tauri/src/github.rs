@@ -214,8 +214,8 @@ impl Transport for ReqwestTransport {
 struct Client<'a, T> {
     transport: &'a T,
     token: &'a str,
-    /// Called once a response is in hand, never ahead of the request, so a
-    /// relative `retry-after` is not counted from before GitHub sent it.
+    /// Read only after a response arrives, so a relative `retry-after` is
+    /// counted from then and not from before the request.
     now_epoch_secs: fn() -> u64,
 }
 
@@ -2023,7 +2023,8 @@ mod tests {
 
     // Fetch-level tests: each operation runs on a `Client` over canned
     // responses, so pagination, status mapping and the query itself are
-    // under test together. Only `ReqwestTransport` stays outside them.
+    // under test together. Only `ReqwestTransport` and the one-line public
+    // wrappers stay outside them.
 
     /// Stands in for GitHub: answers each request with the next canned
     /// response and records the payload it was sent. Like GitHub, it answers
@@ -2054,7 +2055,6 @@ mod tests {
             self.payloads.lock().unwrap().len()
         }
 
-        /// The query text of the `index`th request.
         fn query(&self, index: usize) -> String {
             self.payloads.lock().unwrap()[index]["query"]
                 .as_str()
@@ -2212,7 +2212,7 @@ mod tests {
         word
     }
 
-    /// Consumes a parenthesised argument list and returns its text.
+    /// Consumes an argument list starting at its `(` and returns its text.
     fn arguments(chars: &mut QueryChars) -> String {
         let mut text = String::new();
         let (mut depth, mut quoted) = (0, false);
@@ -2287,7 +2287,6 @@ mod tests {
         data
     }
 
-    /// Fetches the open PRs of the watched `repos` from the canned GitHub.
     fn fetch_open(github: &Canned, repos: &[&str]) -> Result<FetchedPrs, GithubError> {
         let repos: Vec<String> = repos.iter().map(|r| r.to_string()).collect();
         run(github.client().fetch_open_prs(&repos))
