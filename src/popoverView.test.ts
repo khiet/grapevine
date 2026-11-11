@@ -96,8 +96,6 @@ const rowFor = (only: PullRequest): RowView =>
 const numbers = (view: ListView, key: SectionKey) =>
   rows(view, key).map((row) => row.pr.number);
 
-// --- Row marks ---
-
 test("marks run approved check, review glyph, merge queue mark, blocked pills", () => {
   const row = rowFor(
     pr({
@@ -197,8 +195,6 @@ test("the merge queue tooltip states the position as an English ordinal", () => 
   expect(tip(22)).toBe("22nd in merge queue");
 });
 
-// --- Sections ---
-
 test("with no filter Mine, Participated and All are present even when empty", () => {
   const view = list(synced({ prs: [pr({ section: "participated" })] }));
   expect(view.sections.map((s) => [s.key, s.label, s.count])).toEqual([
@@ -245,8 +241,6 @@ test("sections follow the stored collapse state and can be toggled", () => {
   expect(section(view, "participated").expanded).toBe(true);
   expect(view.canToggle).toBe(true);
 });
-
-// --- Filtering ---
 
 const FILTER_FIXTURE = synced({
   prs: [
@@ -307,8 +301,6 @@ test("a whitespace-only query is no filter at all", () => {
   }
 });
 
-// --- Unread ---
-
 const UNREAD_FIXTURE = synced({
   prs: [
     pr({ number: 1, unread_count: 2 }),
@@ -336,8 +328,6 @@ test("Mark all read is offered while any PR is unread, filtered out or not", () 
   expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED).markAllRead).toBe(false);
 });
 
-// --- Clear all ---
-
 test("Clear all is offered for Merged only while it is expanded", () => {
   const snapshot = synced({ prs: [pr()], merged: [mergedPr()] });
   const expanded = list(snapshot, "", ALL_EXPANDED);
@@ -351,8 +341,6 @@ test("Clear all is offered for Merged only while it is expanded", () => {
   const filtered = list(snapshot, "ship", { ...ALL_EXPANDED, merged: true });
   expect(section(filtered, "merged").clearAll).toBe(true);
 });
-
-// --- Placeholders ---
 
 test("before the first sync with nothing to show, the setup prompt", () => {
   expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED).content).toEqual({
@@ -384,8 +372,6 @@ test("a filter that hides every row shows no matches, quoting the query", () => 
     query: "zzz",
   });
 });
-
-// --- All: grouped by repository ---
 
 const inAll = (repo: string, number: number, updated_at: string) =>
   pr({ section: "all", repo, number, updated_at });
