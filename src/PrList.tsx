@@ -124,7 +124,7 @@ export function formatLastSync(
 // who, the bottom-right square (the repo owner's avatar) says which org, and
 // the top-right red counter says how much is new. Opposite corners keep the
 // two badges from ever colliding. The bottom-left "bot" tag marks a machine
-// author. The org badge has no placeholder by design —
+// author. The org badge has no placeholder by design:
 // a missing or broken owner avatar simply shows no badge, keeping the corner
 // clean rather than grey.
 function PrAvatar({

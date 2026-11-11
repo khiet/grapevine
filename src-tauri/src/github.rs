@@ -1010,7 +1010,6 @@ fn viewer_subscribed(node: &Value) -> bool {
     node.get("viewerSubscription").and_then(Value::as_str) == Some("SUBSCRIBED")
 }
 
-/// Whether the viewer is among the PR's assignees.
 fn assigned_to(node: &Value, viewer: &str) -> bool {
     list(node, "/assignees/nodes")
         .iter()
@@ -1019,9 +1018,9 @@ fn assigned_to(node: &Value, viewer: &str) -> bool {
 
 /// Mine beats Participated: authors are subscribed to their own PRs, so order
 /// matters. A bot-authored PR assigned to the viewer is Mine too: a coding
-/// agent opens the PR under its own account and assigns whoever directed it,
-/// so the assignment is what marks the work as theirs. Assignment to a
-/// person's PR stays ordinary involvement.
+/// agent opens the PR under its own account, so `viewerDidAuthor` is false
+/// and the assignment is what marks the work as the viewer's. Assignment to
+/// a person's PR stays ordinary involvement.
 ///
 /// A pending review request is checked alongside the subscription
 /// rather than trusted to it, so muting a thread cannot hide a review the
