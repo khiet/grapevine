@@ -1145,7 +1145,8 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 
 /// Composes the row's blocked indicator from mergeability, the head commit's
 /// checks (see [`checks_for`]), the review decision, unresolved review
-/// threads, and the merge-state status, in the fixed severity order. Only negative states
+/// threads, and the merge-state status, in the fixed severity order. Only
+/// negative states
 /// light it: a mergeable, in-flight, or quiet PR yields an empty list so an
 /// undecorated row keeps meaning "nothing is stuck".
 ///
@@ -1248,10 +1249,10 @@ fn check_outcome(context: &Value) -> CheckOutcome {
 }
 
 /// Reads the head commit's checks, counting only the ones that gate the
-/// merge: the required checks, or every check when the repo marks none as
-/// required, where the rollup's "any failure fails" is all there is to go on.
-/// An optional check on a repo that has required ones never counts, failed
-/// or running.
+/// merge: the required checks, or every check when none of those read is
+/// marked required, where the rollup's "any failure fails" is all there is
+/// to go on. An optional check listed beside a required one never counts,
+/// failed or running.
 ///
 /// The individual checks are on the node only once
 /// [`Client::add_check_detail`] has put them there. Without them the rollup
@@ -1338,9 +1339,8 @@ fn is_set(node: &Value, name: &str) -> bool {
 /// A PR in the merge queue or with auto-merge armed is not ready: the merge
 /// is already under way and needs nothing from the viewer.
 ///
-/// Like `blocked_reasons_for`, this never reads `mergeStateStatus` beyond
-/// what that function does; `CLEAN` would be the obvious shortcut and is
-/// unreliable for the reasons recorded there.
+/// A `mergeStateStatus` of `CLEAN` would be the obvious shortcut. It is not
+/// read, for the reasons recorded on [`blocked_reasons_for`].
 ///
 /// `reasons` and `checks` must be the ones read off this `node`.
 fn ready_to_merge(
