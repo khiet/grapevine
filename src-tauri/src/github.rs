@@ -131,8 +131,8 @@ pub struct PullRequest {
     /// least one outstanding requested reviewer. The outgoing mirror of
     /// `review_requested` (see [`has_pending_review_request`]), set only on
     /// `Mine` PRs and never beside `review_requested`: an agent's PR in Mine
-    /// can ask the viewer for review, and then the incoming mark wins, so the
-    /// two never coexist on a row. Renders as the glasses
+    /// can ask the viewer for review, and then the incoming mark wins. Renders
+    /// as the glasses
     /// glyph with an outgoing arrow, a neutral property ("the ball is in a
     /// reviewer's court"), not a "stuck" state. GitHub drops a reviewer from
     /// `reviewRequests` once they submit, so this clears itself as reviews
@@ -1045,8 +1045,16 @@ mod tests {
     use super::*;
     use crate::pr_state::{Effects, PrState};
 
+    /// `node` with the top-level fields of `overrides` laid over it.
+    fn with(mut node: Value, overrides: Value) -> Value {
+        node.as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        node
+    }
+
     fn pr_node(overrides: Value) -> Value {
-        let mut node = json!({
+        let node = json!({
             "number": 7,
             "title": "Fix the thing",
             "url": "https://github.com/acme/widgets/pull/7",
@@ -1057,10 +1065,7 @@ mod tests {
             "viewerSubscription": "UNSUBSCRIBED",
             "reviewRequests": { "nodes": [] }
         });
-        node.as_object_mut()
-            .unwrap()
-            .extend(overrides.as_object().unwrap().clone());
-        node
+        with(node, overrides)
     }
 
     /// Wraps PR nodes in the single-page repo scaffold `collect_repo_prs`
@@ -2724,23 +2729,26 @@ mod tests {
         json!({ "createdAt": at, "author": { "__typename": kind, "login": login } })
     }
 
-    /// One sync of a single watched repo whose open PRs are `nodes`.
-    fn sync(state: &PrState, nodes: Vec<Value>) -> Effects {
+    /// One fetch of a single watched repo whose open PRs are `nodes`.
+    fn fetch_nodes(nodes: Vec<Value>) -> Vec<PullRequest> {
         let github = Canned::new(vec![ok(prs_round(
             5000,
             vec![repo_named("acme/widgets", nodes, None)],
         ))]);
-        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
-        state.sync_succeeded(prs, vec![], 0)
+        fetch_open(&github, &["acme/widgets"]).unwrap().prs
+    }
+
+    /// One sync of the same repo: the fetch, then the unread transition.
+    fn sync(state: &PrState, nodes: Vec<Value>) -> Effects {
+        state.sync_succeeded(fetch_nodes(nodes), vec![], 0)
     }
 
     /// A PR the viewer takes part in, so one that can carry unread activity.
     fn joined(overrides: Value) -> Value {
-        let mut node = pr_node(json!({ "viewerSubscription": "SUBSCRIBED" }));
-        node.as_object_mut()
-            .unwrap()
-            .extend(overrides.as_object().unwrap().clone());
-        node
+        with(
+            pr_node(json!({ "viewerSubscription": "SUBSCRIBED" })),
+            overrides,
+        )
     }
 
     /// Eight inline comments from a review bot, wrapped in the one COMMENTED
@@ -2840,19 +2848,32 @@ mod tests {
         assert_eq!((pr.unread_count, pr.bot_unread_count), (0, 0));
     }
 
+    #[test]
+    fn mark_all_read_clears_the_bot_count_of_a_pr_with_nothing_else_new() {
+        let state = PrState::default();
+        sync(&state, vec![joined(json!({}))]);
+        let with_bots = || vec![joined(json!({ "reviews": { "nodes": [bot_review()] } }))];
+        sync(&state, with_bots());
+
+        let marked = state.mark_all_read();
+
+        assert_eq!(marked.snapshot.prs[0].bot_unread_count, 0);
+        assert_eq!(
+            sync(&state, with_bots()).snapshot.prs[0].bot_unread_count,
+            0
+        );
+    }
+
     /// A PR opened by a coding agent: the author is a `Bot` account.
     fn agent_pr(overrides: Value) -> Value {
-        let mut node = pr_node(json!({
+        let node = pr_node(json!({
             "author": {
                 "__typename": "Bot",
                 "login": "copilot",
                 "avatarUrl": "https://avatars.example/copilot"
             },
         }));
-        node.as_object_mut()
-            .unwrap()
-            .extend(overrides.as_object().unwrap().clone());
-        node
+        with(node, overrides)
     }
 
     fn assignees(login: &str) -> Value {
@@ -2867,14 +2888,6 @@ mod tests {
         json!({ "nodes": nodes })
     }
 
-    fn fetch_nodes(nodes: Vec<Value>) -> Vec<PullRequest> {
-        let github = Canned::new(vec![ok(prs_round(
-            5000,
-            vec![repo_named("acme/widgets", nodes, None)],
-        ))]);
-        fetch_open(&github, &["acme/widgets"]).unwrap().prs
-    }
-
     #[test]
     fn a_bot_authored_pr_assigned_to_the_viewer_is_mine() {
         let prs = fetch_nodes(vec![
@@ -2884,7 +2897,8 @@ mod tests {
                 "viewerSubscription": "SUBSCRIBED",
                 "assignees": assignees("khiet"),
             })),
-            // Unassigned, or assigned to someone else: sectioned as before.
+            // Unassigned, or assigned to someone else: sectioned by the
+            // viewer's involvement, like a person's PR.
             agent_pr(json!({
                 "number": 2,
                 "updatedAt": "2026-07-11T04:00:00Z",

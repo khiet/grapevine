@@ -224,10 +224,16 @@ mod tests {
             ReadState::from([("acme/widgets#7".to_string(), watermark.to_string())])
         };
 
-        let mut state = read_until("2026-07-10T12:00:00Z");
-        let mut prs = vec![with_bot_comment(Section::Participated)];
-        apply(&mut prs, &mut state);
-        assert_eq!((prs[0].unread_count, prs[0].bot_unread_count), (0, 1));
+        for section in [Section::Mine, Section::Participated] {
+            let mut state = read_until("2026-07-10T12:00:00Z");
+            let mut prs = vec![with_bot_comment(section)];
+            apply(&mut prs, &mut state);
+            assert_eq!(
+                (prs[0].unread_count, prs[0].bot_unread_count),
+                (0, 1),
+                "{section:?}"
+            );
+        }
 
         let mut state = read_until("2026-07-10T12:00:00Z");
         let mut prs = vec![with_bot_comment(Section::All)];

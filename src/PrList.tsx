@@ -394,9 +394,9 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
                 author give way to truncation, the number never does. */}
             <span className="pr-number">#{pr.number}</span>
             {showRepo && <span className="pr-repo">{pr.repo}</span>}
-            {/* A neutral state pill, never a signal. */}
             {/* Plain metadata, not a badge: bots spoke, nobody is waiting. */}
             {botNote && <span className="pr-bot-note">{botNote}</span>}
+            {/* A neutral state pill, never a signal. */}
             {draft && <span className="pr-draft">Draft</span>}
             {/* The action markers cluster at the row's right edge as one group
                 instead of scattering through the metadata. A quiet row has no

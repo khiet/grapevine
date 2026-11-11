@@ -34,7 +34,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     approved: false,
     merge_queue_position: null,
     unread_count,
-    bot_unread_count: 4,
+    bot_unread_count: 0,
   };
 }
 
@@ -110,8 +110,12 @@ test("the PR key is owner/repo#number", () => {
 });
 
 test("marking a PR read clears its badge and bot note and pushes a Snapshot", async () => {
+  const withBotNote = (repo: string, unread: number): PullRequest => ({
+    ...pr(repo, 1, unread),
+    bot_unread_count: 4,
+  });
   const fake = createFakeBackend(
-    snapshot([pr("acme/api", 1, 2), pr("acme/web", 1, 3)]),
+    snapshot([withBotNote("acme/api", 2), withBotNote("acme/web", 3)]),
   );
   setAdapter(fake.adapter);
   const seen: Snapshot[] = [];
