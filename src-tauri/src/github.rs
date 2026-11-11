@@ -1398,8 +1398,8 @@ fn ready_to_merge(
 /// below is the contract:
 ///
 /// 1. A draft, or a PR in All, has no verdict.
-/// 2. A review requested from the viewer by name is theirs to give, in any
-///    section, whatever else is true of the PR: a re-request after an
+/// 2. A review requested from the viewer by name is the viewer's to give, in
+///    any section, whatever else is true of the PR: a re-request after an
 ///    approval lands here too.
 /// 3. In Mine, any blocked reason is the viewer's to clear. It outranks a
 ///    merge under way, which cannot finish while the PR is blocked.
@@ -1449,13 +1449,15 @@ fn turn_for(
     }
 }
 
-/// Whether the viewer has submitted a review on the PR. A review still being
+/// Whether the viewer has a review standing on the PR. A review still being
 /// written is `PENDING`: nobody else can see it, so it has handed nothing
-/// back to the author.
+/// back to the author. A `DISMISSED` one no longer counts either.
 fn viewer_has_reviewed(node: &Value) -> bool {
-    node.pointer("/viewerLatestReview/state")
-        .and_then(Value::as_str)
-        .is_some_and(|state| state != "PENDING")
+    matches!(
+        node.pointer("/viewerLatestReview/state")
+            .and_then(Value::as_str),
+        Some("APPROVED" | "CHANGES_REQUESTED" | "COMMENTED")
+    )
 }
 
 /// Whether the viewer appears among the PR's requested reviewers. Team
@@ -2320,7 +2322,7 @@ mod tests {
     }
 
     #[test]
-    fn a_review_requested_from_the_viewer_by_name_is_their_turn_in_any_section() {
+    fn a_review_requested_from_the_viewer_by_name_is_the_viewers_turn_in_any_section() {
         let asked = json!({ "reviewRequests": review_requests(&["khiet"]) });
         assert_eq!(turn(participated_node(asked.clone())), Some(Turn::Yours));
         // An agent's PR in Mine can ask the viewer too.
@@ -2357,17 +2359,21 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_pr_of_the_viewers_is_their_turn() {
+    fn a_blocked_pr_of_the_viewers_is_the_viewers_turn() {
         let conflict = mine_node(json!({ "mergeable": "CONFLICTING" }));
         assert_eq!(turn(conflict), Some(Turn::Yours));
         let changes = mine_node(json!({ "reviewDecision": "CHANGES_REQUESTED" }));
         assert_eq!(turn(changes), Some(Turn::Yours));
         let behind = mine_node(json!({ "mergeStateStatus": "BEHIND" }));
         assert_eq!(turn(behind), Some(Turn::Yours));
+        let failing = mine_node(json!({ "commits": ci_commits("FAILURE") }));
+        assert_eq!(turn(failing), Some(Turn::Yours));
+        let threads = mine_node(json!({ "reviewThreads": review_threads(&[false]) }));
+        assert_eq!(turn(threads), Some(Turn::Yours));
     }
 
     #[test]
-    fn a_queued_or_auto_merging_pr_of_the_viewers_is_not_their_turn() {
+    fn a_queued_or_auto_merging_pr_of_the_viewers_waits_on_others() {
         let queued = ready_node(json!({ "mergeQueueEntry": { "position": 1 } }));
         assert_eq!(turn(queued), Some(Turn::Theirs));
         let armed = ready_node(json!({
@@ -2382,7 +2388,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pr_of_the_viewers_waiting_on_a_reviewer_or_running_checks_is_not_their_turn() {
+    fn a_pr_of_the_viewers_with_a_reviewer_asked_or_checks_running_waits_on_others() {
         let asked = mine_node(json!({ "reviewRequests": review_requests(&["someone"]) }));
         assert_eq!(turn(asked), Some(Turn::Theirs));
         let running = mine_node(json!({ "commits": ci_commits("PENDING") }));
@@ -2390,7 +2396,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pr_the_viewer_reviewed_with_no_new_request_is_not_their_turn() {
+    fn a_pr_the_viewer_reviewed_with_no_new_request_waits_on_others() {
         let approved = participated_node(json!({
             "reviewDecision": "APPROVED",
             "viewerLatestReview": { "state": "APPROVED" },
@@ -2403,7 +2409,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pr_the_viewer_approved_that_asks_them_again_is_their_turn() {
+    fn a_pr_the_viewer_approved_that_asks_them_again_is_the_viewers_turn() {
         let asked_again = participated_node(json!({
             "reviewDecision": "APPROVED",
             "viewerLatestReview": { "state": "APPROVED" },
@@ -2412,13 +2418,18 @@ mod tests {
         assert_eq!(turn(asked_again), Some(Turn::Yours));
     }
 
-    /// Nobody else can see a review until it is submitted.
+    /// Nobody else can see a review until it is submitted, and a dismissed
+    /// one no longer stands.
     #[test]
-    fn a_review_the_viewer_has_not_submitted_hands_nothing_back() {
+    fn a_review_the_viewer_has_not_submitted_or_had_dismissed_hands_nothing_back() {
         let drafting = participated_node(json!({
             "viewerLatestReview": { "state": "PENDING" },
         }));
         assert_eq!(turn(drafting), None);
+        let dismissed = participated_node(json!({
+            "viewerLatestReview": { "state": "DISMISSED" },
+        }));
+        assert_eq!(turn(dismissed), None);
     }
 
     #[test]

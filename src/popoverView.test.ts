@@ -611,15 +611,15 @@ test("in Mine, your-turn rows lead, then team-requested rows, then the rest", ()
 });
 
 test("Participated orders by turn the same way", () => {
-  const theirs = { section: "participated" } as const;
+  const participated = { section: "participated" } as const;
   const view = list(
     synced({
       prs: [
-        pr({ ...theirs, number: 1, turn: "theirs" }),
-        pr({ ...theirs, number: 2 }),
-        pr({ ...theirs, number: 3, team_review_requested: true }),
-        pr({ ...theirs, number: 4, turn: "yours", review_requested: true }),
-        pr({ ...theirs, number: 5, turn: "yours", review_requested: true }),
+        pr({ ...participated, number: 1, turn: "theirs" }),
+        pr({ ...participated, number: 2 }),
+        pr({ ...participated, number: 3, team_review_requested: true }),
+        pr({ ...participated, number: 4, turn: "yours", review_requested: true }),
+        pr({ ...participated, number: 5, turn: "yours", review_requested: true }),
       ],
     }),
   );

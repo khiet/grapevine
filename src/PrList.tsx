@@ -175,6 +175,12 @@ function PrAvatar({
   );
 }
 
+// The tint on the one mark that says why a row waits on the viewer.
+const YOUR_TURN = "pr-your-turn";
+
+const pillClass = (base: string, yourTurn?: boolean) =>
+  yourTurn ? `${base} ${YOUR_TURN}` : base;
+
 // A grey glyph in the row's right-edge marker cluster: a 13px stroke icon
 // whose meaning lives in the hover tooltip and aria-label, both fed by `tip`.
 // `wide` lets it hold a direction arrow beside the glasses; `ok` turns the
@@ -317,12 +323,6 @@ function TeamGlyph() {
     </GlyphSvg>
   );
 }
-
-const pillClass = (base: string, yourTurn?: boolean) =>
-  yourTurn ? `${base} ${YOUR_TURN}` : base;
-
-// The tint on the one mark that says why a row waits on the viewer.
-const YOUR_TURN = "pr-your-turn";
 
 // One item of the marker cluster. Which marks a row has, and their order, is
 // decided by the popover view; this only draws the one it is handed.
