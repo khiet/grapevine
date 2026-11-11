@@ -82,7 +82,8 @@ export interface SavedToken {
   scope_warning: string | null;
 }
 
-/** What the backend shows before its first sync. */
+/** What the UI holds until the backend first replies; equal to the Rust
+ * `Snapshot::default()`. */
 export const EMPTY_SNAPSHOT: Snapshot = {
   prs: [],
   merged: [],
@@ -125,8 +126,8 @@ export function subscribeSnapshot(
   onSnapshot: (snapshot: Snapshot) => void,
 ): () => void {
   let active = true;
-  // A push is always newer than the get_prs reply it raced, so once one has
-  // landed the reply is dropped.
+  // A push that lands first is at least as new as the get_prs reply it raced,
+  // so the reply is dropped rather than allowed to overwrite it.
   let pushed = false;
   const stop = adapter.listen<Snapshot>(SNAPSHOT_EVENT, (snapshot) => {
     if (!active) return;
@@ -169,7 +170,7 @@ export const listAffiliatedRepos = () =>
   adapter.invoke<string[]>("list_affiliated_repos");
 
 export const getPollInterval = () => adapter.invoke<number>("get_poll_interval");
-/** Resolves to the interval the backend actually stored. */
+/** Resolves to the interval the backend stored, which it may have clamped. */
 export const setPollInterval = (secs: number) =>
   adapter.invoke<number>("set_poll_interval", { secs });
 export const getLaunchAtLogin = () => adapter.invoke<boolean>("get_launch_at_login");
