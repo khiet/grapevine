@@ -7,7 +7,7 @@ pub enum Request {
     /// A click on the tray icon or its "Open Grapevine" item.
     TrayClick,
     /// Grapevine was launched while already running. Only Linux raises this;
-    /// macOS brings the running copy forward by itself.
+    /// macOS does not start a second copy in the first place.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     SecondLaunch,
 }

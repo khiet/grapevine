@@ -109,7 +109,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     // Registered first, as the plugin requires: a second launch must hand over
     // to the running copy and exit before it builds a tray icon of its own.
-    // macOS needs none of this; it brings the running copy forward itself.
+    // macOS needs none of this; it does not start a second copy.
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         // The plugin starts answering second launches before `setup` below
