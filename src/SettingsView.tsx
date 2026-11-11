@@ -1,18 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import * as backend from "./backend";
+import type { TokenStatus } from "./backend";
 import { checkForUpdates, updateStatusLabel, useUpdateState } from "./updater";
-
-interface TokenStatus {
-  has_token: boolean;
-  login: string | null;
-}
-
-interface SavedToken {
-  login: string;
-  scope_warning: string | null;
-}
 
 // The query parameters pre-tick the scope and fill the description. This is
 // undocumented GitHub behaviour, but degrades to a plain token page if it ever
@@ -137,17 +126,17 @@ function SettingsView() {
   const updateState = useUpdateState();
 
   useEffect(() => {
-    invoke<TokenStatus>("token_status").then(setTokenStatus).catch(() => {});
-    invoke<string[]>("list_repos").then(setRepos).catch(() => {});
-    invoke<number>("get_poll_interval").then(setPollSecs).catch(() => {});
-    invoke<boolean>("get_launch_at_login").then(setLaunchAtLogin).catch(() => {});
-    getVersion().then(setAppVersion).catch(() => {});
+    backend.tokenStatus().then(setTokenStatus).catch(() => {});
+    backend.listRepos().then(setRepos).catch(() => {});
+    backend.getPollInterval().then(setPollSecs).catch(() => {});
+    backend.getLaunchAtLogin().then(setLaunchAtLogin).catch(() => {});
+    backend.appVersion().then(setAppVersion).catch(() => {});
   }, []);
 
   const loadAvailable = useCallback(async () => {
     setBrowseError("");
     try {
-      setAvailable(await invoke<string[]>("list_affiliated_repos"));
+      setAvailable(await backend.listAffiliatedRepos());
     } catch (error) {
       setBrowseError(String(error));
     }
@@ -162,7 +151,7 @@ function SettingsView() {
   async function changePollInterval(secs: number) {
     setGeneralError("");
     try {
-      setPollSecs(await invoke<number>("set_poll_interval", { secs }));
+      setPollSecs(await backend.setPollInterval(secs));
     } catch (error) {
       setGeneralError(String(error));
     }
@@ -172,7 +161,7 @@ function SettingsView() {
     setGeneralError("");
     setLaunchAtLogin(enabled);
     try {
-      await invoke("set_launch_at_login", { enabled });
+      await backend.setLaunchAtLogin(enabled);
     } catch (error) {
       setLaunchAtLogin(!enabled);
       setGeneralError(String(error));
@@ -189,7 +178,7 @@ function SettingsView() {
     // refetch must be explicit, since the new token may see different repos.
     const replacing = tokenStatus.has_token;
     try {
-      const saved = await invoke<SavedToken>("save_token", { token: tokenInput });
+      const saved = await backend.saveToken(tokenInput);
       setTokenStatus({ has_token: true, login: saved.login });
       setTokenWarning(saved.scope_warning ?? "");
       setTokenInput("");
@@ -205,7 +194,7 @@ function SettingsView() {
     setTokenError("");
     setTokenWarning("");
     try {
-      await invoke("clear_token");
+      await backend.clearToken();
       setTokenStatus({ has_token: false, login: null });
       // The browse list came from the removed token; dropping it leaves the
       // union rendering just the watched repos under the save-a-token note.
@@ -222,7 +211,7 @@ function SettingsView() {
     setRepoError("");
     const seq = ++repoSeq.current;
     try {
-      const next = await invoke<string[]>("add_repo", { name: repoInput });
+      const next = await backend.addRepo(repoInput);
       if (seq === repoSeq.current) setRepos(next);
       setRepoInput("");
     } catch (error) {
@@ -239,9 +228,9 @@ function SettingsView() {
     setRepoError("");
     const seq = ++repoSeq.current;
     try {
-      const next = await invoke<string[]>(watched ? "remove_repo" : "add_repo", {
-        name: fullName,
-      });
+      const next = await (watched
+        ? backend.removeRepo(fullName)
+        : backend.addRepo(fullName));
       if (seq === repoSeq.current) setRepos(next);
     } catch (error) {
       setRepoError(String(error));
@@ -300,7 +289,7 @@ function SettingsView() {
             <button
               type="button"
               className="settings-link"
-              onClick={() => openUrl(CREATE_TOKEN_URL).catch(() => {})}
+              onClick={() => backend.openUrl(CREATE_TOKEN_URL).catch(() => {})}
             >
               Create one on GitHub
             </button>

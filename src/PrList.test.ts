@@ -12,8 +12,8 @@ import {
   ordinal,
   parseCollapsed,
   totalUnread,
-  PullRequest,
 } from "./PrList";
+import type { PullRequest } from "./backend";
 
 // formatUpdated works in local calendar days, so fixtures are built in local
 // time; the expectations then hold in any timezone.

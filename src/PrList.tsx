@@ -1,44 +1,14 @@
 import { useState, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
-
-export interface PullRequest {
-  number: number;
-  title: string;
-  url: string;
-  repo: string;
-  author: string;
-  avatar_url: string;
-  owner_avatar_url: string;
-  created_at: string;
-  updated_at: string;
-  section: "mine" | "participated" | "all";
-  /** Why the PR is blocked, already in severity order; empty means no pill.
-   * Composed at the Rust boundary — the row only maps keys to labels. */
-  blocked_reasons: BlockedReason[];
-  /** Drafts render a neutral pill; the backend suppresses their blocked
-   * reasons and review markers. */
-  is_draft: boolean;
-  /** The viewer's review is requested and not yet acted on; renders the
-   * glasses glyph with an incoming arrow. Backend-computed, suppressed on
-   * drafts, and self-clearing once the viewer reviews. */
-  review_requested: boolean;
-  /** One of the viewer's own PRs is waiting on a reviewer; renders the glasses
-   * glyph with an outgoing arrow. The Mine-only mirror of review_requested
-   * (the two never share a row), suppressed on drafts, and self-clearing as
-   * reviewers submit. */
-  awaiting_review: boolean;
-  /** The review decision is an explicit APPROVED; renders the green check in
-   * the marker cluster. Backend-computed and suppressed on drafts, like the
-   * review markers. */
-  approved: boolean;
-  /** 1-based position in the repo's merge queue as GitHub reports it; null
-   * when the PR is not queued. Renders the stack mark with the number. */
-  merge_queue_position: number | null;
-  unread_count: number;
-}
-
-export type BlockedReason = "conflict" | "ci" | "review" | "threads" | "behind";
+import {
+  clearMerged,
+  dismissMerged,
+  markRead,
+  openUrl,
+  prKey,
+  type BlockedReason,
+  type MergedPr,
+  type PullRequest,
+} from "./backend";
 
 /* Neutral PR-property wording, deliberately not "you must act": the section
    the row sits in supplies the "is this mine to fix?" context. */
@@ -79,27 +49,6 @@ export function ordinal(n: number): string {
 // Tooltip and aria-label of the merge queue mark.
 export function mergeQueueTitle(position: number): string {
   return `${ordinal(position)} in merge queue`;
-}
-
-export interface MergedPr {
-  number: number;
-  title: string;
-  url: string;
-  repo: string;
-  author: string;
-  avatar_url: string;
-  owner_avatar_url: string;
-  merged_at: string;
-}
-
-export interface Snapshot {
-  prs: PullRequest[];
-  merged: MergedPr[];
-  has_synced: boolean;
-  /** Epoch ms of the last successful sync; null before the first one. */
-  last_sync_at: number | null;
-  /** User-facing message of the most recent failure; cleared by a success. */
-  sync_error: string | null;
 }
 
 const SECTIONS = [
@@ -437,7 +386,7 @@ function PrRow({ pr, showRepo = true }: { pr: PullRequest; showRepo?: boolean })
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
-    invoke("mark_read", { key: `${pr.repo}#${pr.number}` }).catch(() => {});
+    markRead(prKey(pr)).catch(() => {});
   };
   return (
     <li>
@@ -584,9 +533,7 @@ function MergedRow({ pr }: { pr: MergedPr }) {
         className="pr-dismiss"
         aria-label="Dismiss"
         onClick={() =>
-          invoke("dismiss_merged", { key: `${pr.repo}#${pr.number}` }).catch(
-            () => {},
-          )
+          dismissMerged(prKey(pr)).catch(() => {})
         }
       >
         ×
@@ -714,7 +661,7 @@ function PrList({
               <ul>
                 {group.map((pr) => (
                   <PrRow
-                    key={`${pr.repo}#${pr.number}`}
+                    key={prKey(pr)}
                     pr={pr}
                     showRepo={false}
                   />
@@ -726,7 +673,7 @@ function PrList({
           body = (
             <ul>
               {rows.map((pr) => (
-                <PrRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+                <PrRow key={prKey(pr)} pr={pr} />
               ))}
             </ul>
           );
@@ -760,7 +707,7 @@ function PrList({
               <button
                 type="button"
                 className="pr-section-clear"
-                onClick={() => invoke("clear_merged").catch(() => {})}
+                onClick={() => clearMerged().catch(() => {})}
               >
                 Clear all
               </button>
@@ -769,7 +716,7 @@ function PrList({
           {isExpanded("merged") && (
             <ul>
               {merged.map((pr) => (
-                <MergedRow key={`${pr.repo}#${pr.number}`} pr={pr} />
+                <MergedRow key={prKey(pr)} pr={pr} />
               ))}
             </ul>
           )}

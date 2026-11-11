@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Stage for scripts/demo/demo.mjs: a fake desktop and menubar around the real
-     popover, which runs unmodified in the iframe against a mocked backend. -->
+     popover, which runs in the iframe (popover.html) on the fake backend. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -135,7 +135,7 @@
       <h1 id="headline"></h1>
       <p id="detail"></p>
     </div>
-    <iframe id="popover" class="popover" src="/index.html" hidden></iframe>
+    <iframe id="popover" class="popover" src="/scripts/demo/popover.html" hidden></iframe>
     <svg id="cursor" class="cursor" viewBox="0 0 24 24" hidden>
       <path d="M4 2 L4 19 L8.5 14.8 L11.6 21.6 L14.4 20.4 L11.3 13.7 L17.5 13.7 Z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round" />
     </svg>

@@ -7,6 +7,9 @@ use crate::{github::PullRequest, unread};
 
 /// A PR that merged while tracked. Shown in the popover's Merged section
 /// until the user dismisses it; persisted so the section survives restarts.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MergedPr {
     pub number: u64,
