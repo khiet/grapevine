@@ -1,13 +1,17 @@
-//! The one owner of what the popover shows: the Snapshot, the read watermarks
-//! and the merged list. Everything outside this module changes them only
-//! through the transitions on [`PrState`], which hold these invariants:
+//! The one owner of what the popover shows: the Snapshot, the read
+//! watermarks, the turn starts and the merged list. Everything outside this
+//! module changes them only through the transitions on [`PrState`], which
+//! hold these invariants:
 //!
 //! - `snapshot.merged` mirrors the merged list. The one exception is the
 //!   unconfigured Snapshot, which is empty so the popover shows setup rather
 //!   than a Merged section, while the list itself is kept.
 //! - Each `unread_count` and `bot_unread_count` agrees with the read
 //!   watermarks.
-//! - The tray count is the Snapshot's total unread.
+//! - The tray count is the number of PRs in the Snapshot whose `turn` is
+//!   yours. Unread never feeds it.
+//! - Each `turn_since` agrees with the turn starts, which hold an entry for
+//!   exactly the PRs whose turn was yours at the last successful sync.
 //! - Merge detection compares a fetch against the previous Snapshot's open
 //!   PRs.
 //!
@@ -29,7 +33,7 @@ use serde::Serialize;
 use crate::{
     github,
     github::{GithubError, PullRequest},
-    merged, unread,
+    merged, turns, unread,
 };
 
 /// Latest sync result. A failed sync leaves the previous snapshot's list in
@@ -59,6 +63,8 @@ pub struct Effects {
     pub snapshot: Snapshot,
     /// Read watermarks to write to disk; `None` when there is nothing to write.
     pub save_read: Option<unread::ReadState>,
+    /// Turn starts to write to disk; `None` when there is nothing to write.
+    pub save_turns: Option<turns::TurnStarts>,
     /// Merged list to write to disk; `None` when there is nothing to write.
     pub save_merged: Option<merged::MergedState>,
     /// The tray count to show; `None` leaves the tray as it is.
@@ -68,13 +74,16 @@ pub struct Effects {
 #[derive(Default)]
 struct Inner {
     snapshot: Snapshot,
-    /// Both are authoritative in memory. The copies on disk exist so unread
-    /// badges and the Merged section survive restarts.
+    /// This and the two fields below are authoritative in memory. The copies
+    /// on disk exist so unread badges, waiting times and the Merged section
+    /// survive restarts.
     read_state: unread::ReadState,
+    /// `None` until turns have been tracked at all; see [`turns::apply`].
+    turn_starts: Option<turns::TurnStarts>,
     merged: merged::MergedState,
 }
 
-/// One lock over all three pieces, so a transition is atomic: no command can
+/// One lock over every piece, so a transition is atomic: no command can
 /// land between a sync computing unread counts and storing them.
 #[derive(Default)]
 pub struct PrState {
@@ -85,11 +94,17 @@ impl PrState {
     /// Seeds the state loaded from disk at startup. The Snapshot gets the
     /// merged list too, so the Merged section is visible before the first
     /// sync completes.
-    pub fn restore(&self, read_state: unread::ReadState, merged: merged::MergedState) {
+    pub fn restore(
+        &self,
+        read_state: unread::ReadState,
+        merged: merged::MergedState,
+        turn_starts: Option<turns::TurnStarts>,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         inner.snapshot.merged = merged.clone();
         inner.merged = merged;
         inner.read_state = read_state;
+        inner.turn_starts = turn_starts;
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -108,6 +123,14 @@ impl PrState {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
         let merged_changed = merged::apply(&prs, newly_merged, &mut inner.merged);
+        // Before the unread pass: that pass baselines first-seen PRs into the
+        // watermarks, and the turn pass tells first-seen by their absence.
+        let turns_changed = turns::apply(
+            &mut prs,
+            &mut inner.turn_starts,
+            &inner.read_state,
+            now_epoch_ms,
+        );
         let read_changed = unread::apply(&mut prs, &mut inner.read_state);
         inner.snapshot = Snapshot {
             prs,
@@ -119,8 +142,9 @@ impl PrState {
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: read_changed.then(|| inner.read_state.clone()),
+            save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: merged_changed.then(|| inner.merged.clone()),
-            tray_count: Some(total_unread(&inner.snapshot.prs)),
+            tray_count: Some(turns::yours_count(&inner.snapshot.prs)),
         }
     }
 
@@ -133,6 +157,7 @@ impl PrState {
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: None,
+            save_turns: None,
             save_merged: None,
             tray_count: None,
         }
@@ -140,15 +165,19 @@ impl PrState {
 
     /// No token or no repos: clear any list left over from previous settings,
     /// but keep the read watermarks and merged list for when a token comes
-    /// back.
+    /// back. The turn starts are forgotten: every PR has left the Snapshot,
+    /// and nothing watches the turns until syncing resumes.
     pub fn unconfigured(&self) -> Effects {
         let mut inner = self.inner.lock().unwrap();
+        let inner = &mut *inner;
         inner.snapshot = Snapshot::default();
+        let turns_changed = turns::forget_starts(&mut inner.turn_starts);
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: None,
+            save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
-            tray_count: Some(0),
+            tray_count: Some(turns::yours_count(&inner.snapshot.prs)),
         }
     }
 
@@ -163,7 +192,8 @@ impl PrState {
     /// Moves the read watermark of the matching PR (or all PRs, for `None`)
     /// to its newest activity in the Snapshot. Anchoring to activity the app
     /// has actually seen means anything that lands on GitHub afterwards stays
-    /// unread.
+    /// unread. Reading is not acting, so the turn starts and the tray count
+    /// come out as they went in.
     fn mark(&self, only: Option<&str>) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
@@ -178,8 +208,9 @@ impl PrState {
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: Some(inner.read_state.clone()),
+            save_turns: None,
             save_merged: None,
-            tray_count: Some(total_unread(&inner.snapshot.prs)),
+            tray_count: Some(turns::yours_count(&inner.snapshot.prs)),
         }
     }
 
@@ -191,7 +222,7 @@ impl PrState {
         self.edit_merged(|merged| merged.clear())
     }
 
-    /// The tray is left alone: merged PRs never carry unread activity.
+    /// The tray is left alone: a merged PR waits on nobody.
     fn edit_merged(&self, edit: impl FnOnce(&mut merged::MergedState)) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         edit(&mut inner.merged);
@@ -199,6 +230,7 @@ impl PrState {
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: None,
+            save_turns: None,
             save_merged: Some(inner.merged.clone()),
             tray_count: None,
         }
@@ -230,10 +262,6 @@ impl PrState {
         let merged_at = github::fetch_merged_status(token, &keys).await?;
         Ok(merged_entries(&departed, &merged_at))
     }
-}
-
-fn total_unread(prs: &[PullRequest]) -> u64 {
-    prs.iter().map(|pr| pr.unread_count).sum()
 }
 
 /// The tracked PRs in `previous` that are gone from the newly fetched
@@ -308,6 +336,7 @@ mod tests {
             auto_merge: false,
             ready_to_merge: false,
             turn: None,
+            turn_since: None,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.iter().map(|t| t.to_string()).collect(),
@@ -334,6 +363,14 @@ mod tests {
             NOW_MS,
         );
         state
+    }
+
+    /// The same PR, waiting on you.
+    fn yours(pr: PullRequest) -> PullRequest {
+        PullRequest {
+            turn: Some(Turn::Yours),
+            ..pr
+        }
     }
 
     fn unread_counts(snapshot: &Snapshot) -> Vec<u64> {
@@ -369,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn a_successful_sync_clears_the_error_and_counts_unread_into_the_tray() {
+    fn a_successful_sync_clears_the_error_and_keeps_unread_out_of_the_tray() {
         let state = state_with_one_unread();
         state.sync_failed("Could not reach GitHub.".into());
 
@@ -382,7 +419,54 @@ mod tests {
         assert_eq!(effects.snapshot.sync_error, None);
         assert_eq!(effects.snapshot.last_sync_at, Some(NOW_MS + 1));
         assert_eq!(unread_counts(&effects.snapshot), [1, 0]);
-        assert_eq!(effects.tray_count, Some(1));
+        assert_eq!(effects.tray_count, Some(0));
+    }
+
+    #[test]
+    fn the_tray_counts_the_prs_waiting_on_you_not_the_unread() {
+        let state = PrState::default();
+        let prs = |quiet: &[&str], busy: &[&str]| {
+            vec![
+                yours(pr("acme/widgets", 1, &[])),
+                yours(pr("acme/widgets", 2, &[])),
+                pr("acme/widgets", 3, quiet),
+                PullRequest {
+                    turn: Some(Turn::Theirs),
+                    ..pr("acme/widgets", 4, busy)
+                },
+            ]
+        };
+        state.sync_succeeded(prs(&[], &[]), vec![], NOW_MS);
+
+        let effects = state.sync_succeeded(
+            prs(&[T1, T2], &[T1, T2, "2026-07-04T00:00:00Z"]),
+            vec![],
+            NOW_MS,
+        );
+
+        assert_eq!(unread_counts(&effects.snapshot), [0, 0, 2, 3]);
+        assert_eq!(effects.tray_count, Some(2));
+    }
+
+    /// Reading is not acting: the PR still waits on you until a sync says
+    /// otherwise.
+    #[test]
+    fn marking_read_leaves_the_tray_count_unchanged() {
+        let state = PrState::default();
+        let prs = |activity: &[&str]| {
+            vec![
+                yours(pr("acme/widgets", 7, activity)),
+                pr("acme/widgets", 8, activity),
+            ]
+        };
+        state.sync_succeeded(prs(&[]), vec![], NOW_MS);
+        let synced = state.sync_succeeded(prs(&[T1]), vec![], NOW_MS);
+        assert_eq!(synced.tray_count, Some(1));
+
+        assert_eq!(state.mark_read("acme/widgets#7").tray_count, Some(1));
+        let all = state.mark_all_read();
+        assert_eq!(unread_counts(&all.snapshot), [0, 0]);
+        assert_eq!(all.tray_count, Some(1));
     }
 
     #[test]
@@ -440,7 +524,6 @@ mod tests {
         let effects = state.mark_read("acme/widgets#7");
 
         assert_eq!(unread_counts(&effects.snapshot), [0, 1]);
-        assert_eq!(effects.tray_count, Some(1));
         let saved = effects.save_read.expect("watermarks need saving");
         assert_eq!(saved["acme/widgets#7"], T1);
         // Activity that lands after the mark is unread again.
@@ -451,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_all_read_clears_every_unread_count_and_the_tray() {
+    fn mark_all_read_clears_every_unread_count() {
         let state = PrState::default();
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[]), pr("acme/widgets", 8, &[])],
@@ -466,12 +549,11 @@ mod tests {
             vec![],
             NOW_MS,
         );
-        assert_eq!(unread.tray_count, Some(3));
+        assert_eq!(unread_counts(&unread.snapshot), [1, 2]);
 
         let effects = state.mark_all_read();
 
         assert_eq!(unread_counts(&effects.snapshot), [0, 0]);
-        assert_eq!(effects.tray_count, Some(0));
         assert_eq!(unread_counts(&state.snapshot()), [0, 0]);
     }
 
@@ -489,7 +571,181 @@ mod tests {
         let effects = state.sync_succeeded(fetched, newly_merged, NOW_MS);
 
         assert_eq!(unread_counts(&effects.snapshot), [0, 0]);
-        assert_eq!(effects.tray_count, Some(0));
+    }
+
+    const SYNC_1: u64 = NOW_MS;
+    const SYNC_2: u64 = NOW_MS + 180_000;
+    const SYNC_3: u64 = NOW_MS + 360_000;
+    const SYNC_4: u64 = NOW_MS + 540_000;
+
+    fn sync_one(state: &PrState, pr: PullRequest, at: u64) -> Effects {
+        state.sync_succeeded(vec![pr], vec![], at)
+    }
+
+    fn turn_since(effects: &Effects) -> Option<u64> {
+        effects.snapshot.prs[0].turn_since
+    }
+
+    #[test]
+    fn a_turn_starts_at_the_sync_that_first_saw_it_as_yours_and_stays_there() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
+
+        let became = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
+        assert_eq!(turn_since(&became), Some(SYNC_2));
+
+        let still = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_3);
+        assert_eq!(turn_since(&still), Some(SYNC_2));
+    }
+
+    /// The start is not derived from `updated_at`, which any unrelated
+    /// comment moves.
+    #[test]
+    fn a_comment_that_moves_updated_at_does_not_move_the_turn_start() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
+        sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
+
+        let commented = PullRequest {
+            updated_at: T2.into(),
+            ..yours(pr("acme/widgets", 7, &[T2]))
+        };
+        let effects = sync_one(&state, commented, SYNC_3);
+
+        assert_eq!(effects.snapshot.prs[0].updated_at, T2);
+        assert_eq!(turn_since(&effects), Some(SYNC_2));
+    }
+
+    #[test]
+    fn a_turn_that_ends_and_comes_back_starts_at_the_later_sync() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
+        sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
+
+        let ended = sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_3);
+        assert_eq!(turn_since(&ended), None);
+        assert_eq!(ended.save_turns, Some(HashMap::new()));
+
+        let again = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_4);
+        assert_eq!(turn_since(&again), Some(SYNC_4));
+    }
+
+    /// How long it had been waiting before Grapevine saw it is unknowable, so
+    /// no start is claimed, the same way a first-seen PR is baselined as
+    /// read. It stays unknown for as long as that turn lasts.
+    #[test]
+    fn a_pr_first_seen_already_yours_has_no_turn_start() {
+        let state = PrState::default();
+
+        let first = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_1);
+        assert_eq!(turn_since(&first), None);
+        assert_eq!(first.tray_count, Some(1));
+
+        let second = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
+        assert_eq!(turn_since(&second), None);
+    }
+
+    #[test]
+    fn a_pr_that_leaves_the_snapshot_loses_its_turn_start() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
+        let waiting = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
+        assert_eq!(
+            waiting.save_turns,
+            Some(HashMap::from([(
+                "acme/widgets#7".to_string(),
+                Some(SYNC_2)
+            )]))
+        );
+
+        // It merged, or its repo left the watchlist.
+        let gone = state.sync_succeeded(vec![], vec![], SYNC_3);
+
+        assert_eq!(gone.save_turns, Some(HashMap::new()));
+    }
+
+    #[test]
+    fn turn_starts_survive_a_restart() {
+        let before = PrState::default();
+        sync_one(&before, pr("acme/widgets", 7, &[]), SYNC_1);
+        let saved_read = before.mark_all_read().save_read.unwrap();
+        let saved_turns = sync_one(&before, yours(pr("acme/widgets", 7, &[])), SYNC_2)
+            .save_turns
+            .expect("turn starts need saving");
+
+        let after = PrState::default();
+        after.restore(saved_read, vec![], Some(saved_turns));
+        let effects = sync_one(&after, yours(pr("acme/widgets", 7, &[])), SYNC_3);
+
+        assert_eq!(turn_since(&effects), Some(SYNC_2));
+    }
+
+    /// A turn that began while the app was quit is first observed at the
+    /// next sync, so that is its start.
+    #[test]
+    fn a_known_pr_that_became_yours_while_the_app_was_quit_starts_at_the_next_sync() {
+        let state = PrState::default();
+        state.restore(
+            HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
+            vec![],
+            Some(HashMap::new()),
+        );
+
+        let effects = sync_one(&state, yours(pr("acme/widgets", 7, &[T1])), SYNC_1);
+
+        assert_eq!(turn_since(&effects), Some(SYNC_1));
+    }
+
+    /// An install that has read watermarks but has never tracked turns (an
+    /// upgrade, or a lost file) knows its PRs yet has never watched a turn
+    /// begin. Claiming "now" would show every waiting row as just started.
+    #[test]
+    fn an_install_that_never_tracked_turns_claims_no_start_for_turns_under_way() {
+        let state = PrState::default();
+        state.restore(
+            HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
+            vec![],
+            None,
+        );
+
+        let first = sync_one(&state, yours(pr("acme/widgets", 7, &[T1])), SYNC_1);
+        assert_eq!(turn_since(&first), None);
+        assert_eq!(
+            first.save_turns,
+            Some(HashMap::from([("acme/widgets#7".to_string(), None)]))
+        );
+    }
+
+    #[test]
+    fn a_sync_reports_the_turn_starts_for_saving_only_when_they_changed() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
+        sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
+
+        let quiet = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_3);
+
+        assert_eq!(quiet.save_turns, None);
+    }
+
+    /// Nothing watches the turns during a spell without a token or repos, so
+    /// a turn found still yours afterwards may not be the one that was
+    /// timed. It claims neither its old start nor the sync that came back.
+    #[test]
+    fn an_unconfigured_spell_forgets_when_the_turns_started() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
+        sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
+
+        let cleared = state.unconfigured();
+        assert_eq!(
+            cleared.save_turns,
+            Some(HashMap::from([("acme/widgets#7".to_string(), None)]))
+        );
+        assert_eq!(cleared.tray_count, Some(0));
+
+        let back = sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_3);
+        assert_eq!(turn_since(&back), None);
+        assert_eq!(back.tray_count, Some(1));
     }
 
     #[test]
@@ -539,6 +795,7 @@ mod tests {
                 merged::from_pr(&pr("acme/widgets", 4, &[]), T2.to_string()),
                 merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string()),
             ],
+            None,
         );
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])],
@@ -561,6 +818,7 @@ mod tests {
         state.restore(
             HashMap::new(),
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
+            None,
         );
 
         let effects = state.clear_merged();
@@ -576,6 +834,7 @@ mod tests {
         state.restore(
             HashMap::new(),
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
+            None,
         );
         let snapshot = state.snapshot();
         assert_eq!(snapshot.merged.len(), 1);
@@ -590,6 +849,7 @@ mod tests {
         state.restore(
             HashMap::new(),
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
+            None,
         );
 
         let hidden = state.unconfigured();
@@ -686,6 +946,7 @@ mod tests {
                 auto_merge: true,
                 ready_to_merge: true,
                 turn: Some(Turn::Yours),
+                turn_since: Some(1_784_205_000_000),
                 unread_count: 3,
                 bot_unread_count: 8,
                 // Internal working data; must not leak into the payload.
@@ -734,6 +995,7 @@ mod tests {
                     "auto_merge": true,
                     "ready_to_merge": true,
                     "turn": "yours",
+                    "turn_since": 1_784_205_000_000u64,
                     "unread_count": 3,
                     "bot_unread_count": 8
                 }],
@@ -752,6 +1014,14 @@ mod tests {
                 "sync_error": "Could not reach GitHub."
             })
         );
+    }
+
+    /// The row reads null as "start unknown" and keeps the updated time, so
+    /// the field must serialize as null rather than being omitted.
+    #[test]
+    fn an_unknown_turn_start_serializes_as_null() {
+        let value = serde_json::to_value(pr("acme/widgets", 7, &[])).unwrap();
+        assert_eq!(value["turn_since"], json!(null));
     }
 
     /// The footer reads null as "never synced" / "no error", so the fields

@@ -2,7 +2,7 @@
 // collapse state: the placeholder choice, which sections exist and what they
 // hold, and each row's marks. App, PrList, SectionHeader and PrRow render the
 // result; a rule about what appears belongs here, where a test can reach it.
-// Pure: no React, no storage, no clock.
+// Pure: no React, no storage, no clock; the caller passes `now`.
 
 import type {
   BlockedReason,
@@ -48,6 +48,10 @@ export interface RowView {
   /** The muted metadata note counting new bot activity; null when there is
    * none. The quiet counterpart of the unread badge. */
   botNote: string | null;
+  /** How long the row has waited on the viewer ("waiting 3h", "waiting 2d"),
+   * shown in place of the updated time. Null when the turn is not the
+   * viewer's or its start is unknown; the row keeps the updated time then. */
+  waiting: string | null;
 }
 
 export interface RepoGroupView {
@@ -215,13 +219,28 @@ function tintYourTurn(marks: Mark[]): void {
   }
 }
 
-const rowView = (pr: PullRequest): RowView => ({
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+
+// Whole hours under a day, whole days from one day up, both rounded down: a
+// wait is never overstated. Under an hour reads "<1h" rather than "0h". The
+// backend sends a start only on a your-turn row, so the start alone decides.
+function waitingLabel(pr: PullRequest, now: number): string | null {
+  if (pr.turn_since === null) return null;
+  const elapsed = now - pr.turn_since;
+  if (elapsed < HOUR_MS) return "waiting <1h";
+  if (elapsed < DAY_MS) return `waiting ${Math.floor(elapsed / HOUR_MS)}h`;
+  return `waiting ${Math.floor(elapsed / DAY_MS)}d`;
+}
+
+const rowView = (pr: PullRequest, now: number): RowView => ({
   pr,
   draft: pr.is_draft,
   marks: rowMarks(pr),
   botAuthor: pr.author_is_bot,
   botNote:
     pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
+  waiting: waitingLabel(pr, now),
 });
 
 // Rows waiting on the viewer lead a section, then the ones asking the viewer's
@@ -233,10 +252,15 @@ function byTurn(prs: PullRequest[]): PullRequest[] {
   return [...prs].sort((a, b) => rank(a) - rank(b));
 }
 
-/** The unread total across PRs; the tray badge shows the same number. Bot
- * activity is not in it. */
-export function totalUnread(prs: PullRequest[]): number {
+/** The unread total across PRs, as badged on a collapsed section. Bot
+ * activity is not in it, and it is not the tray number: see yourTurnCount. */
+function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
+}
+
+/** How many PRs wait on the viewer; the tray shows the same number. */
+export function yourTurnCount(prs: PullRequest[]): number {
+  return prs.filter((pr) => pr.turn === "yours").length;
 }
 
 // The fields a filter term can match: title, repo, "#number", and author.
@@ -259,7 +283,7 @@ function matchesTerms(item: Filterable, terms: string[]): boolean {
 // Groups ordered by their most recently updated PR, so the repo that just moved
 // leads; within a group the incoming order is preserved. An unparseable
 // updated_at sorts as the epoch rather than throwing.
-function groupByRepo(prs: PullRequest[]): RepoGroupView[] {
+function groupByRepo(prs: PullRequest[], now: number): RepoGroupView[] {
   const groups = new Map<string, PullRequest[]>();
   for (const pr of prs) {
     const existing = groups.get(pr.repo);
@@ -270,13 +294,18 @@ function groupByRepo(prs: PullRequest[]): RepoGroupView[] {
     rows.reduce((max, pr) => Math.max(max, Date.parse(pr.updated_at) || 0), 0);
   return [...groups.entries()]
     .sort(([, a], [, b]) => latest(b) - latest(a))
-    .map(([repo, rows]) => ({ repo, rows: rows.map(rowView) }));
+    .map(([repo, rows]) => ({
+      repo,
+      rows: rows.map((pr) => rowView(pr, now)),
+    }));
 }
 
 export function derivePopover(
   snapshot: Snapshot,
   query: string,
   collapsed: Record<SectionKey, boolean>,
+  /** Epoch ms; what the waiting labels are measured against. */
+  now: number,
 ): PopoverView {
   // Counts every PR, filtered out or not: the action clears them all. A bot
   // note counts too, since the action is the one way to clear every note at
@@ -316,16 +345,22 @@ export function derivePopover(
     const expanded = isExpanded(key);
     let body: SectionBody;
     if (rows.length === 0) body = { kind: "empty" };
-    else if (key === "all") body = { kind: "groups", groups: groupByRepo(rows) };
-    else body = { kind: "rows", rows: byTurn(rows).map(rowView) };
+    else if (key === "all") {
+      body = { kind: "groups", groups: groupByRepo(rows, now) };
+    } else {
+      body = {
+        kind: "rows",
+        rows: byTurn(rows).map((pr) => rowView(pr, now)),
+      };
+    }
     sections.push({
       key,
       label,
       count: rows.length,
       expanded,
-      /* The tray badge counts these rows even when the section hides them;
-         without this a collapsed Mine makes the popover look read while the
-         tray says otherwise. */
+      /* Rows the section hides still carry unread; without this a collapsed
+         Mine looks read when it is not. Independent of the tray number, which
+         counts your-turn rows, so the two can disagree. */
       collapsedUnread: expanded ? 0 : totalUnread(rows),
       offerClearAll: false,
       body,

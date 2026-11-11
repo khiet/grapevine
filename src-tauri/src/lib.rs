@@ -18,6 +18,7 @@ mod pr_state;
 mod settings;
 mod store;
 mod sync;
+mod turns;
 mod unread;
 
 /// When the popover was last hidden because it lost focus. Clicking the tray

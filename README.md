@@ -27,8 +27,10 @@ Grapevine lives in the menubar only, with no Dock icon. Clicking the tray icon
 toggles a popover with the PR list, and clicking away dismisses it. You give it
 a GitHub token and a list of repos; it polls them every few minutes and shows
 the open PRs, split into the ones you authored, the ones you are involved in,
-and everything else. The first two badge comments and reviews you have not seen
-yet; everything else is a browse list and stays silent. Each row badges the
+and everything else. The number in the menubar is how many of the first two
+are waiting on you, and each of those rows says for how long. The first two
+also badge comments and reviews you have not seen yet; everything else is a
+browse list and stays silent. Each row badges the
 organization's avatar onto the author's, flags drafts with a pill, shows a
 green check once a PR's required approvals are in, shows a queued PR's
 position in the merge queue, and shows a pill naming what still needs
@@ -52,7 +54,7 @@ Grapevine deliberately does not, and will not:
 - Track issues. Pull requests only.
 - Offer saved views or custom filters. There are three sections, your turn
   comes first, and snoozed rows are folded away.
-- Send system notifications. The badge in the menubar is the whole signal.
+- Send system notifications. The number in the menubar is the whole signal.
 - Support GitHub Enterprise or anything other than github.com.
 - Handle more than one GitHub account at a time.
 - Run anywhere other than a Mac menubar. No iOS, no Android, no CLI.
