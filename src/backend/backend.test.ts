@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "vitest";
 import {
+  dismissMerged,
+  listRepos,
   markRead,
   prKey,
   setAdapter,
@@ -117,4 +119,35 @@ test("marking a PR read clears its badge and pushes a Snapshot", async () => {
   await markRead("acme/web#1");
 
   expect(seen[seen.length - 1].prs.map((p) => p.unread_count)).toEqual([2, 0]);
+});
+
+test("dismissing a merged PR removes only the row with that key", async () => {
+  const merged = (repo: string, number: number) => ({
+    number,
+    title: `PR ${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
+    repo,
+    author: "octocat",
+    avatar_url: "",
+    owner_avatar_url: "",
+    merged_at: "2026-09-30T09:00:00Z",
+  });
+  const fake = createFakeBackend({
+    ...snapshot([]),
+    merged: [merged("acme/api", 5), merged("acme/web", 5)],
+  });
+  setAdapter(fake.adapter);
+  const seen: Snapshot[] = [];
+  subscribeSnapshot((next) => seen.push(next));
+  await settle();
+
+  await dismissMerged("acme/api#5");
+
+  expect(seen[seen.length - 1].merged.map((pr) => pr.repo)).toEqual(["acme/web"]);
+});
+
+test("a command the fake does not implement rejects", async () => {
+  setAdapter(createFakeBackend(snapshot([])).adapter);
+
+  await expect(listRepos()).rejects.toThrow("unhandled command list_repos");
 });
