@@ -62,4 +62,12 @@ describe("merge-manifest", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("1.2.4");
   });
+
+  it("fails when a platform's signature is empty", () => {
+    const result = run(fixture("darwin.json"), fixture("linux-unsigned.json"));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("linux-x86_64-deb");
+  });
 });
