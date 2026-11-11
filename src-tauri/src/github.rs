@@ -977,8 +977,9 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         let section = section_for(node, viewer);
         let review_requested = !is_draft && review_requested_for(node, viewer);
         let activity = collect_activity(node, viewer);
-        let blocked_reasons = blocked_reasons_for(node);
         let checks = checks_for(node);
+        let blocked_reasons = blocked_reasons_with(node, &checks);
+        let ready_to_merge = ready_to_merge(node, section, &blocked_reasons, &checks);
         // The names belong to the CI pill, so they go only where it shows: a
         // draft or an unsettled mergeability suppresses both together.
         let ci_raised = blocked_reasons.contains(&BlockedReason::Ci);
@@ -1054,7 +1055,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 Vec::new()
             },
             auto_merge: !is_draft && is_set(node, "autoMergeRequest"),
-            ready_to_merge: ready_to_merge(node, section),
+            ready_to_merge,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.human,
@@ -1143,8 +1144,8 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 }
 
 /// Composes the row's blocked indicator from mergeability, the head commit's
-/// checks (see [`checks_for`]), the review decision, unresolved review threads, and the
-/// merge-state status, in the fixed severity order. Only negative states
+/// checks (see [`checks_for`]), the review decision, unresolved review
+/// threads, and the merge-state status, in the fixed severity order. Only negative states
 /// light it: a mergeable, in-flight, or quiet PR yields an empty list so an
 /// undecorated row keeps meaning "nothing is stuck".
 ///
@@ -1167,6 +1168,12 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 /// cannot see into, rather than to a wrong one; the cost is that the behind
 /// signal is simply absent for PRs in repos the viewer cannot push to.
 fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
+    blocked_reasons_with(node, &checks_for(node))
+}
+
+/// [`blocked_reasons_for`], for a caller that has already read the node's
+/// checks. `checks` must be `checks_for(node)`.
+fn blocked_reasons_with(node: &Value, checks: &Checks) -> Vec<BlockedReason> {
     let field = |name: &str| node.get(name).and_then(Value::as_str);
     if node.get("isDraft").and_then(Value::as_bool) == Some(true)
         || field("mergeable") == Some("UNKNOWN")
@@ -1177,7 +1184,7 @@ fn blocked_reasons_for(node: &Value) -> Vec<BlockedReason> {
     if field("mergeable") == Some("CONFLICTING") {
         reasons.push(BlockedReason::Conflict);
     }
-    if checks_for(node).failed {
+    if checks.failed {
         reasons.push(BlockedReason::Ci);
     }
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
@@ -1264,10 +1271,9 @@ fn checks_for(node: &Value) -> Checks {
         .filter(|c| !c.is_null())
     else {
         return Checks {
-            failing: Vec::new(),
             failed: rollup_failed,
             pending: rollup_pending,
-            truncated: false,
+            ..Checks::default()
         };
     };
 
@@ -1279,23 +1285,26 @@ fn checks_for(node: &Value) -> Checks {
     let nodes = list(contexts, "/nodes");
     let any_required = nodes.iter().any(required);
     let mut failing = Vec::new();
+    let mut failed = false;
     let mut pending = false;
     for context in nodes.iter().filter(|c| !any_required || required(c)) {
         match check_outcome(context) {
             CheckOutcome::Failed => {
+                failed = true;
                 // A `CheckRun` is named by `name`, a `StatusContext` by
-                // `context`.
+                // `context`. A failure with neither still counts; it just
+                // has nothing to put on the pill.
                 let name = ["name", "context"]
                     .iter()
                     .find_map(|field| context.get(*field).and_then(Value::as_str));
-                failing.push(name.unwrap_or_default().to_string());
+                failing.extend(name.filter(|n| !n.is_empty()).map(String::from));
             }
             CheckOutcome::Pending => pending = true,
             CheckOutcome::Passed => {}
         }
     }
     Checks {
-        failed: !failing.is_empty() || (truncated && rollup_failed),
+        failed: failed || (truncated && rollup_failed),
         pending: pending || (truncated && rollup_pending),
         failing,
         truncated,
@@ -1314,7 +1323,8 @@ fn needs_check_detail(node: &Value) -> bool {
         && matches!(state, Some("FAILURE" | "ERROR" | "PENDING" | "EXPECTED"))
 }
 
-/// Whether `node` carries a non-null `name` field.
+/// Whether `node` carries a non-null `name` field: GitHub answers null for
+/// an object field with nothing behind it, such as a PR that is not queued.
 fn is_set(node: &Value, name: &str) -> bool {
     node.get(name).is_some_and(|v| !v.is_null())
 }
@@ -1334,19 +1344,25 @@ fn is_set(node: &Value, name: &str) -> bool {
 /// Like `blocked_reasons_for`, this never reads `mergeStateStatus` beyond
 /// what that function does; `CLEAN` would be the obvious shortcut and is
 /// unreliable for the reasons recorded there.
-fn ready_to_merge(node: &Value, section: Section) -> bool {
+///
+/// `reasons` and `checks` must be the ones read off this `node`.
+fn ready_to_merge(
+    node: &Value,
+    section: Section,
+    reasons: &[BlockedReason],
+    checks: &Checks,
+) -> bool {
     let field = |name: &str| node.get(name).and_then(Value::as_str);
     let review_settled = match field("reviewDecision") {
         Some("APPROVED") => true,
         None => !has_pending_review_request(node),
         Some(_) => false,
     };
-    let checks = checks_for(node);
     section == Section::Mine
         && node.get("isDraft").and_then(Value::as_bool) != Some(true)
         && field("mergeable") == Some("MERGEABLE")
-        && blocked_reasons_for(node).is_empty()
-        && !checks.failed
+        // A failed check is among the reasons; one still running is not.
+        && reasons.is_empty()
         && !checks.pending
         && review_settled
         && !is_set(node, "mergeQueueEntry")
@@ -1956,6 +1972,18 @@ mod tests {
         ) }));
         assert_eq!(pr.blocked_reasons, vec![BlockedReason::Ci]);
         assert_eq!(pr.failing_checks, vec!["lint"]);
+    }
+
+    /// A pill reading "CI: " would name nothing; the plain label is honest.
+    #[test]
+    fn a_failed_check_without_a_name_raises_ci_and_names_nothing() {
+        let pr = row(json!({ "commits": checked_commits(
+            "FAILURE",
+            vec![json!({ "conclusion": "FAILURE", "isRequired": true })],
+            false,
+        ) }));
+        assert_eq!(pr.blocked_reasons, vec![BlockedReason::Ci]);
+        assert_eq!(pr.failing_checks, Vec::<String>::new());
     }
 
     #[test]

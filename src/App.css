@@ -469,6 +469,7 @@ body {
   font-size: 10px;
   font-weight: 600;
   line-height: 14px;
+  white-space: nowrap;
 }
 
 /* The blocked-reason pill: the shared pill shape in the blocked orange, so
@@ -482,7 +483,6 @@ body {
    +N pill's tooltip. */
 .pr-blocked-pill {
   position: relative;
-  white-space: nowrap;
   background-color: rgba(255, 159, 10, 0.16);
   color: #995200;
 }
@@ -506,7 +506,6 @@ body {
    for the same reason the blocked amber is: 10px text wants 4.5:1 on the
    tinted fill. */
 .pr-ready-pill {
-  white-space: nowrap;
   background-color: rgba(52, 199, 89, 0.16);
   color: #1a7431;
 }
@@ -515,7 +514,6 @@ body {
    way is a state and not a signal. position: relative anchors the tooltip. */
 .pr-neutral-pill {
   position: relative;
-  white-space: nowrap;
   background-color: rgba(120, 120, 128, 0.16);
 }
 

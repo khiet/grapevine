@@ -151,9 +151,9 @@ function ordinal(n: number): string {
 // one mark regardless, a request naming you first), the merge marks (queue
 // position, auto-merge, checks running), then the blocked pills. The positive
 // marks lead, so they read before whatever still stands in the way, and the
-// order runs from done, through under way, to stuck. A new signal needs a Mark kind, a line here for when and
-// where it shows, and its glyph in MarkView; no condition elsewhere has to
-// learn about it.
+// order runs from done, through under way, to stuck. A new signal needs a
+// Mark kind, a line here for when and where it shows, and its glyph in
+// MarkView; no condition elsewhere has to learn about it.
 //
 // Drafts need no special case: the backend suppresses the check, the review
 // glyphs, the merge marks other than the queue position and the blocked
