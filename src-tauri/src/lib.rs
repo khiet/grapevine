@@ -18,6 +18,7 @@ mod launch_at_login;
 #[cfg(any(target_os = "linux", test))]
 mod linux_popover;
 mod merged;
+mod popover;
 mod pr_state;
 mod settings;
 mod snooze;
@@ -32,29 +33,32 @@ mod unread;
 /// turning "click to dismiss" into a no-op.
 struct LastAutoHide(Mutex<Option<Instant>>);
 
-fn toggle_popover(app: &tauri::AppHandle) {
+fn request_popover(app: &tauri::AppHandle, request: popover::Request) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    if window.is_visible().unwrap_or(false) {
-        let _ = window.hide();
-        return;
-    }
+    let visible = window.is_visible().unwrap_or(false);
     let recently_auto_hidden = app
         .state::<LastAutoHide>()
         .0
         .lock()
         .unwrap()
         .is_some_and(|t| t.elapsed() < Duration::from_millis(300));
-    if recently_auto_hidden {
-        return;
+    match popover::decide(request, visible, recently_auto_hidden) {
+        popover::Action::Nothing => {}
+        popover::Action::Hide => {
+            let _ = window.hide();
+        }
+        popover::Action::Show => {
+            // Before the window shows, so a row whose snooze ran out
+            // overnight is awake the moment the popover opens, whatever the
+            // sync loop is waiting on.
+            sync::wake_expired_snoozes(app);
+            place_popover(&window);
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
     }
-    // Before the window shows, so a row whose snooze ran out overnight is
-    // awake the moment the popover opens, whatever the sync loop is waiting on.
-    sync::wake_expired_snoozes(app);
-    place_popover(&window);
-    let _ = window.show();
-    let _ = window.set_focus();
 }
 
 /// Under the tray icon, where the last tray event said it is.
@@ -97,7 +101,15 @@ pub fn run() {
         std::env::set_var(linux_popover::BACKEND_VAR, backend);
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Registered first, as the plugin requires: a second launch must hand over
+    // to the running copy and exit before it builds a tray icon of its own.
+    // macOS needs none of this; it brings the running copy forward itself.
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        request_popover(app, popover::Request::SecondLaunch);
+    }));
+    builder
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -171,7 +183,7 @@ pub fn run() {
                 // click. Linux ignores this and opens the menu on every click.
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "open" => toggle_popover(app),
+                    "open" => request_popover(app, popover::Request::Toggle),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -183,7 +195,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        toggle_popover(tray.app_handle());
+                        request_popover(tray.app_handle(), popover::Request::Toggle);
                     }
                 })
                 .build(app)?;
