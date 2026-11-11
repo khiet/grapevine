@@ -92,6 +92,19 @@ pub enum BlockedReason {
     Behind,
 }
 
+/// Whose move an open PR waits on, from the viewer's side: `Yours` when the
+/// next step is the viewer's, `Theirs` when it is a reviewer's, a check's or
+/// GitHub's own. A PR with no verdict carries `None` (see [`turn_for`]).
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Turn {
+    Yours,
+    Theirs,
+}
+
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
 /// Change both together.
 #[derive(Debug, Clone, Serialize)]
@@ -198,6 +211,11 @@ pub struct PullRequest {
     /// Renders as the Ready to merge pill. Same property-not-event rule as
     /// `blocked_reasons`.
     pub ready_to_merge: bool,
+    /// Whose move the PR waits on (see [`turn_for`]); `None` when there is no
+    /// verdict, always so on a draft and in All. A your-turn row leads its
+    /// section and tints its mark. Same property-not-event rule as
+    /// `blocked_reasons`: it never reaches a badge or the tray count.
+    pub turn: Option<Turn>,
     /// Human activity newer than the PR's last-read watermark; filled in by
     /// the unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -936,6 +954,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> Stri
              nodes {{ \
                number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
                isDraft mergeable mergeStateStatus reviewDecision \
+               viewerLatestReview {{ state }} \
                mergeQueueEntry {{ position }} \
                autoMergeRequest {{ enabledAt }} \
                author {{ __typename login avatarUrl }} \
@@ -980,6 +999,14 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         let checks = checks_for(node);
         let blocked_reasons = blocked_reasons_for(node, &checks);
         let ready_to_merge = ready_to_merge(node, section, &blocked_reasons, &checks);
+        let turn = turn_for(
+            node,
+            viewer,
+            section,
+            &blocked_reasons,
+            ready_to_merge,
+            &checks,
+        );
         // The names belong to the CI pill, so they go only where it shows: a
         // draft or an unsettled mergeability suppresses both together.
         let ci_raised = blocked_reasons.contains(&BlockedReason::Ci);
@@ -1056,6 +1083,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             },
             auto_merge: !is_draft && is_set(node, "autoMergeRequest"),
             ready_to_merge,
+            turn,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.human,
@@ -1364,6 +1392,70 @@ fn ready_to_merge(
         && review_settled
         && !is_set(node, "mergeQueueEntry")
         && !is_set(node, "autoMergeRequest")
+}
+
+/// Whose move the PR waits on. The first matching rule decides, so the order
+/// below is the contract:
+///
+/// 1. A draft, or a PR in All, has no verdict.
+/// 2. A review requested from the viewer by name is theirs to give, in any
+///    section, whatever else is true of the PR: a re-request after an
+///    approval lands here too.
+/// 3. In Mine, any blocked reason is the viewer's to clear. It outranks a
+///    merge under way, which cannot finish while the PR is blocked.
+/// 4. In Mine, a queued PR or one with auto-merge armed waits on GitHub.
+/// 5. In Mine, a ready PR waits on the viewer pressing merge.
+/// 6. In Mine, a PR with a reviewer still asked, or with gating checks
+///    running and none failed, waits on them.
+/// 7. In Participated, a PR the viewer has reviewed waits on its author.
+/// 8. Anything else has no verdict.
+///
+/// Rule 3 needs no guard for an `UNKNOWN` mergeability: the reasons are
+/// already empty then (see [`blocked_reasons_for`]), so the PR falls through
+/// for that one poll rather than reading as the viewer's.
+///
+/// A team request never makes a turn. It is the team's obligation, not the
+/// viewer's, and has its own mark.
+///
+/// `reasons`, `ready` and `checks` must be the ones read off this `node`.
+fn turn_for(
+    node: &Value,
+    viewer: &str,
+    section: Section,
+    reasons: &[BlockedReason],
+    ready: bool,
+    checks: &Checks,
+) -> Option<Turn> {
+    if node.get("isDraft").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    match section {
+        Section::All => None,
+        _ if review_requested_for(node, viewer) => Some(Turn::Yours),
+        Section::Mine => {
+            if !reasons.is_empty() {
+                Some(Turn::Yours)
+            } else if is_set(node, "mergeQueueEntry") || is_set(node, "autoMergeRequest") {
+                Some(Turn::Theirs)
+            } else if ready {
+                Some(Turn::Yours)
+            } else if has_pending_review_request(node) || (checks.pending && !checks.failed) {
+                Some(Turn::Theirs)
+            } else {
+                None
+            }
+        }
+        Section::Participated => viewer_has_reviewed(node).then_some(Turn::Theirs),
+    }
+}
+
+/// Whether the viewer has submitted a review on the PR. A review still being
+/// written is `PENDING`: nobody else can see it, so it has handed nothing
+/// back to the author.
+fn viewer_has_reviewed(node: &Value) -> bool {
+    node.pointer("/viewerLatestReview/state")
+        .and_then(Value::as_str)
+        .is_some_and(|state| state != "PENDING")
 }
 
 /// Whether the viewer appears among the PR's requested reviewers. Team
@@ -2207,6 +2299,189 @@ mod tests {
     #[test]
     fn a_draft_is_never_ready() {
         assert!(!row(ready_node(json!({ "isDraft": true }))).ready_to_merge);
+    }
+
+    /// The viewer's own PR, as the paged query returns one with nothing
+    /// decided yet.
+    fn mine_node(overrides: Value) -> Value {
+        with(
+            json!({ "viewerDidAuthor": true, "mergeable": "MERGEABLE" }),
+            overrides,
+        )
+    }
+
+    /// Someone else's PR the viewer is subscribed to.
+    fn participated_node(overrides: Value) -> Value {
+        with(json!({ "viewerSubscription": "SUBSCRIBED" }), overrides)
+    }
+
+    fn turn(overrides: Value) -> Option<Turn> {
+        row(overrides).turn
+    }
+
+    #[test]
+    fn a_review_requested_from_the_viewer_by_name_is_their_turn_in_any_section() {
+        let asked = json!({ "reviewRequests": review_requests(&["khiet"]) });
+        assert_eq!(turn(participated_node(asked.clone())), Some(Turn::Yours));
+        // An agent's PR in Mine can ask the viewer too.
+        assert_eq!(turn(mine_node(asked)), Some(Turn::Yours));
+    }
+
+    #[test]
+    fn a_draft_has_no_turn() {
+        let blocked = mine_node(json!({ "isDraft": true, "mergeable": "CONFLICTING" }));
+        assert_eq!(turn(blocked), None);
+    }
+
+    #[test]
+    fn a_draft_asking_the_viewer_by_name_has_no_turn() {
+        let asked = participated_node(json!({
+            "isDraft": true,
+            "reviewRequests": review_requests(&["khiet"]),
+        }));
+        assert_eq!(turn(asked), None);
+    }
+
+    #[test]
+    fn a_pr_in_all_has_no_turn() {
+        let reviewed = json!({ "viewerLatestReview": { "state": "APPROVED" } });
+        assert_eq!(row(reviewed.clone()).section, Section::All);
+        assert_eq!(turn(reviewed), None);
+    }
+
+    #[test]
+    fn a_review_requested_from_the_viewers_team_alone_leaves_all_without_a_turn() {
+        let team = json!({ "reviewRequests": { "nodes": [{ "requestedReviewer": {} }] } });
+        assert_eq!(row(team.clone()).section, Section::All);
+        assert_eq!(turn(team), None);
+    }
+
+    #[test]
+    fn a_blocked_pr_of_the_viewers_is_their_turn() {
+        let conflict = mine_node(json!({ "mergeable": "CONFLICTING" }));
+        assert_eq!(turn(conflict), Some(Turn::Yours));
+        let changes = mine_node(json!({ "reviewDecision": "CHANGES_REQUESTED" }));
+        assert_eq!(turn(changes), Some(Turn::Yours));
+        let behind = mine_node(json!({ "mergeStateStatus": "BEHIND" }));
+        assert_eq!(turn(behind), Some(Turn::Yours));
+    }
+
+    #[test]
+    fn a_queued_or_auto_merging_pr_of_the_viewers_is_not_their_turn() {
+        let queued = ready_node(json!({ "mergeQueueEntry": { "position": 1 } }));
+        assert_eq!(turn(queued), Some(Turn::Theirs));
+        let armed = ready_node(json!({
+            "autoMergeRequest": { "enabledAt": "2026-07-11T09:00:00Z" }
+        }));
+        assert_eq!(turn(armed), Some(Turn::Theirs));
+    }
+
+    #[test]
+    fn a_ready_pr_is_the_viewers_turn() {
+        assert_eq!(turn(ready_node(json!({}))), Some(Turn::Yours));
+    }
+
+    #[test]
+    fn a_pr_of_the_viewers_waiting_on_a_reviewer_or_running_checks_is_not_their_turn() {
+        let asked = mine_node(json!({ "reviewRequests": review_requests(&["someone"]) }));
+        assert_eq!(turn(asked), Some(Turn::Theirs));
+        let running = mine_node(json!({ "commits": ci_commits("PENDING") }));
+        assert_eq!(turn(running), Some(Turn::Theirs));
+    }
+
+    #[test]
+    fn a_pr_the_viewer_reviewed_with_no_new_request_is_not_their_turn() {
+        let approved = participated_node(json!({
+            "reviewDecision": "APPROVED",
+            "viewerLatestReview": { "state": "APPROVED" },
+        }));
+        assert_eq!(turn(approved), Some(Turn::Theirs));
+        let commented = participated_node(json!({
+            "viewerLatestReview": { "state": "COMMENTED" },
+        }));
+        assert_eq!(turn(commented), Some(Turn::Theirs));
+    }
+
+    #[test]
+    fn a_pr_the_viewer_approved_that_asks_them_again_is_their_turn() {
+        let asked_again = participated_node(json!({
+            "reviewDecision": "APPROVED",
+            "viewerLatestReview": { "state": "APPROVED" },
+            "reviewRequests": review_requests(&["khiet"]),
+        }));
+        assert_eq!(turn(asked_again), Some(Turn::Yours));
+    }
+
+    /// Nobody else can see a review until it is submitted.
+    #[test]
+    fn a_review_the_viewer_has_not_submitted_hands_nothing_back() {
+        let drafting = participated_node(json!({
+            "viewerLatestReview": { "state": "PENDING" },
+        }));
+        assert_eq!(turn(drafting), None);
+    }
+
+    #[test]
+    fn a_pr_with_nothing_decided_has_no_turn() {
+        // A review is required and nobody has been asked for one.
+        let unasked = mine_node(json!({ "reviewDecision": "REVIEW_REQUIRED" }));
+        assert_eq!(turn(unasked), None);
+        assert_eq!(turn(participated_node(json!({}))), None);
+    }
+
+    /// A blocked PR cannot merge, armed or queued, so it still needs the
+    /// viewer.
+    #[test]
+    fn a_blocked_pr_is_the_viewers_turn_even_with_its_merge_under_way() {
+        let failing_and_armed = mine_node(json!({
+            "commits": checked_commits(
+                "FAILURE",
+                vec![check_run("e2e", Some("FAILURE"), true)],
+                false,
+            ),
+            "autoMergeRequest": { "enabledAt": "2026-07-11T09:00:00Z" },
+        }));
+        assert_eq!(turn(failing_and_armed), Some(Turn::Yours));
+        let conflicting_and_queued = mine_node(json!({
+            "mergeable": "CONFLICTING",
+            "mergeQueueEntry": { "position": 1 },
+        }));
+        assert_eq!(turn(conflicting_and_queued), Some(Turn::Yours));
+    }
+
+    /// GitHub has not settled mergeability, so the reasons are withheld and
+    /// with them the verdict they would give.
+    #[test]
+    fn an_unknown_mergeability_withholds_the_turn_a_blocked_reason_would_give() {
+        let unsettled = mine_node(json!({
+            "mergeable": "UNKNOWN",
+            "reviewDecision": "CHANGES_REQUESTED",
+            "reviewThreads": review_threads(&[false]),
+        }));
+        assert_eq!(turn(unsettled), None);
+    }
+
+    /// The open thread makes it the viewer's, not the approval: the row is
+    /// not ready, so its blocked pill is the mark that says why.
+    #[test]
+    fn an_approved_pr_with_an_unresolved_thread_is_the_viewers_turn_as_blocked() {
+        let pr = row(ready_node(
+            json!({ "reviewThreads": review_threads(&[false]) }),
+        ));
+        assert_eq!(pr.turn, Some(Turn::Yours));
+        assert_eq!(pr.blocked_reasons, [BlockedReason::Threads]);
+        assert!(!pr.ready_to_merge);
+    }
+
+    #[test]
+    fn the_paged_query_asks_for_the_viewers_latest_review() {
+        assert!(repo_field("r0", "acme", "widgets", None).contains("viewerLatestReview { state }"));
+    }
+
+    #[test]
+    fn turn_variants_serialize_lowercase() {
+        assert_eq!(serde_json::to_value(Turn::Yours).unwrap(), json!("yours"));
+        assert_eq!(serde_json::to_value(Turn::Theirs).unwrap(), json!("theirs"));
     }
 
     /// `PrList.tsx` maps these exact strings to tooltip labels, so every

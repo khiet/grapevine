@@ -98,6 +98,7 @@ mod tests {
             checks_running: false,
             auto_merge: false,
             ready_to_merge: false,
+            turn: None,
             unread_count: 0,
             bot_unread_count: 0,
             activity: vec![],

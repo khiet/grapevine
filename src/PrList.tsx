@@ -179,19 +179,22 @@ function PrAvatar({
 // whose meaning lives in the hover tooltip and aria-label, both fed by `tip`.
 // `wide` lets it hold a direction arrow beside the glasses; `ok` turns the
 // glyph green, the cluster's one positive colour; `count` styles a number set
-// beside the glyph (the merge queue position). The draft and blocked pills
-// are not these: they carry their own styling, not a glyph.
+// beside the glyph (the merge queue position); `yourTurn` tints it as the
+// reason the row waits on the viewer. The draft and blocked pills are not
+// these: they carry their own styling, not a glyph.
 function RowMark({
   tip,
   wide,
   ok,
   count,
+  yourTurn,
   children,
 }: {
   tip: string;
   wide?: boolean;
   ok?: boolean;
   count?: boolean;
+  yourTurn?: boolean;
   children: ReactNode;
 }) {
   const className = [
@@ -199,6 +202,7 @@ function RowMark({
     ...(wide ? ["pr-glyph-wide"] : []),
     ...(ok ? ["pr-glyph-ok"] : []),
     ...(count ? ["pr-glyph-count"] : []),
+    ...(yourTurn ? [YOUR_TURN] : []),
     "pr-tip",
   ].join(" ");
   return (
@@ -314,6 +318,12 @@ function TeamGlyph() {
   );
 }
 
+const pillClass = (base: string, yourTurn?: boolean) =>
+  yourTurn ? `${base} ${YOUR_TURN}` : base;
+
+// The tint on the one mark that says why a row waits on the viewer.
+const YOUR_TURN = "pr-your-turn";
+
 // One item of the marker cluster. Which marks a row has, and their order, is
 // decided by the popover view; this only draws the one it is handed.
 function MarkView({ mark }: { mark: Mark }) {
@@ -325,12 +335,12 @@ function MarkView({ mark }: { mark: Mark }) {
           <Check />
         </RowMark>
       );
-    // Glasses with an incoming arrow: your review is requested. A grey mark
-    // like the draft pill, not a blocked signal: an invitation to act, outside
-    // the blocked pill's "something is stuck" vocabulary.
+    // Glasses with an incoming arrow: your review is requested. Not a blocked
+    // signal: an invitation to act, outside the blocked pill's "something is
+    // stuck" vocabulary. Grey unless it is why the row is your turn.
     case "review-requested":
       return (
-        <RowMark tip={mark.tip} wide>
+        <RowMark tip={mark.tip} wide yourTurn={mark.yourTurn}>
           <DirectionArrow dir="in" />
           <Glasses />
         </RowMark>
@@ -364,7 +374,11 @@ function MarkView({ mark }: { mark: Mark }) {
       );
     // The one positive pill: nothing is left but pressing merge.
     case "ready":
-      return <span className="pr-ready-pill">{mark.label}</span>;
+      return (
+        <span className={pillClass("pr-ready-pill", mark.yourTurn)}>
+          {mark.label}
+        </span>
+      );
     // Neutral pills for a merge that is under way without the viewer: grey
     // like the Draft pill, since neither is stuck nor a call to act. The
     // label is terse, so the tooltip carries the full phrase.
@@ -387,7 +401,9 @@ function MarkView({ mark }: { mark: Mark }) {
        blocked", red there says "someone spoke". */
     case "blocked":
       return mark.tip === null ? (
-        <span className="pr-blocked-pill">{mark.label}</span>
+        <span className={pillClass("pr-blocked-pill", mark.yourTurn)}>
+          {mark.label}
+        </span>
       ) : (
         <span
           className="pr-blocked-pill pr-tip"

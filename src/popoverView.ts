@@ -23,17 +23,19 @@ export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
 
 /** One item of a row's right-edge marker cluster. `tip` is the hover tooltip
  * and the accessible name; null on the primary blocked pill, which is its own
- * label, and absent on the ready pill for the same reason. */
+ * label, and absent on the ready pill for the same reason. `yourTurn` is the
+ * tint flag: set on the one mark that says why the row waits on the viewer,
+ * and absent everywhere else. */
 export type Mark =
   | { kind: "approved"; tip: string }
-  | { kind: "review-requested"; tip: string }
+  | { kind: "review-requested"; tip: string; yourTurn?: true }
   | { kind: "team-review-requested"; tip: string }
   | { kind: "awaiting-review"; tip: string }
   | { kind: "merge-queue"; position: number; tip: string }
-  | { kind: "ready"; label: string }
+  | { kind: "ready"; label: string; yourTurn?: true }
   | { kind: "auto-merge"; label: string; tip: string }
   | { kind: "checks-running"; label: string; tip: string }
-  | { kind: "blocked"; label: string; tip: string | null };
+  | { kind: "blocked"; label: string; tip: string | null; yourTurn?: true };
 
 export interface RowView {
   pr: PullRequest;
@@ -194,7 +196,23 @@ function rowMarks(pr: PullRequest): Mark[] {
     });
   }
   marks.push(...blockedMarks(pr));
+  if (pr.turn === "yours") tintYourTurn(marks);
   return marks;
+}
+
+// Flags the mark that explains a your-turn row: the review glyph when a
+// review is asked of you, else the primary blocked pill, else the ready pill.
+// That is the order the backend decides the turn in, so the tinted mark is
+// the reason the row leads. Exactly one mark is flagged; the +N pill never
+// is, since the primary pill already speaks for the blockage.
+function tintYourTurn(marks: Mark[]): void {
+  for (const kind of ["review-requested", "blocked", "ready"] as const) {
+    const mark = marks.find((candidate) => candidate.kind === kind);
+    if (mark?.kind === kind) {
+      mark.yourTurn = true;
+      return;
+    }
+  }
 }
 
 const rowView = (pr: PullRequest): RowView => ({
@@ -205,6 +223,15 @@ const rowView = (pr: PullRequest): RowView => ({
   botNote:
     pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
 });
+
+// Rows waiting on the viewer lead a section, then the ones asking the viewer's
+// team, then the rest. Array.prototype.sort is stable, so each group keeps
+// the order the backend sent.
+function byTurn(prs: PullRequest[]): PullRequest[] {
+  const rank = (pr: PullRequest) =>
+    pr.turn === "yours" ? 0 : pr.team_review_requested ? 1 : 2;
+  return [...prs].sort((a, b) => rank(a) - rank(b));
+}
 
 /** The unread total across PRs; the tray badge shows the same number. Bot
  * activity is not in it. */
@@ -290,7 +317,7 @@ export function derivePopover(
     let body: SectionBody;
     if (rows.length === 0) body = { kind: "empty" };
     else if (key === "all") body = { kind: "groups", groups: groupByRepo(rows) };
-    else body = { kind: "rows", rows: rows.map(rowView) };
+    else body = { kind: "rows", rows: byTurn(rows).map(rowView) };
     sections.push({
       key,
       label,

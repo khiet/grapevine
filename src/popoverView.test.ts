@@ -37,6 +37,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   checks_running: false,
   auto_merge: false,
   ready_to_merge: false,
+  turn: null,
   unread_count: 0,
   bot_unread_count: 0,
   ...overrides,
@@ -591,4 +592,83 @@ test("new bot activity never reaches a collapsed section's badge", () => {
 test("Mark all read is offered when the only thing new is bot activity", () => {
   const snapshot = synced({ prs: [pr({ bot_unread_count: 8 })] });
   expect(derivePopover(snapshot, "", ALL_EXPANDED).offerMarkAllRead).toBe(true);
+});
+
+test("in Mine, your-turn rows lead, then team-requested rows, then the rest", () => {
+  const view = list(
+    synced({
+      prs: [
+        pr({ number: 1 }),
+        pr({ number: 2, team_review_requested: true }),
+        pr({ number: 3, turn: "yours", blocked_reasons: ["ci"] }),
+        pr({ number: 4, turn: "theirs", awaiting_review: true }),
+        pr({ number: 5, team_review_requested: true }),
+        pr({ number: 6, turn: "yours", ready_to_merge: true }),
+      ],
+    }),
+  );
+  expect(numbers(view, "mine")).toEqual([3, 6, 2, 5, 1, 4]);
+});
+
+test("Participated orders by turn the same way", () => {
+  const theirs = { section: "participated" } as const;
+  const view = list(
+    synced({
+      prs: [
+        pr({ ...theirs, number: 1, turn: "theirs" }),
+        pr({ ...theirs, number: 2 }),
+        pr({ ...theirs, number: 3, team_review_requested: true }),
+        pr({ ...theirs, number: 4, turn: "yours", review_requested: true }),
+        pr({ ...theirs, number: 5, turn: "yours", review_requested: true }),
+      ],
+    }),
+  );
+  expect(numbers(view, "participated")).toEqual([4, 5, 3, 1, 2]);
+});
+
+test("a your-turn row in All does not move within its repo group", () => {
+  // The backend never sends a turn in All; were it to, All keeps its order.
+  expect(
+    groups([
+      inAll("acme/widgets", 1, "2026-07-10T00:00:00Z"),
+      { ...inAll("acme/widgets", 2, "2026-07-09T00:00:00Z"), turn: "yours" },
+    ]),
+  ).toEqual([{ repo: "acme/widgets", numbers: [1, 2] }]);
+});
+
+test("a your-turn row asked for review tints the review glyph", () => {
+  const row = rowFor(
+    pr({ turn: "yours", review_requested: true, blocked_reasons: ["ci"] }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "review-requested", tip: "Review requested", yourTurn: true },
+    { kind: "blocked", label: "CI failing", tip: null },
+  ]);
+});
+
+test("a blocked your-turn row tints the primary blocked pill only", () => {
+  const row = rowFor(
+    pr({ turn: "yours", approved: true, blocked_reasons: ["conflict", "threads"] }),
+  );
+  expect(row.marks).toEqual([
+    { kind: "approved", tip: "Approved" },
+    { kind: "blocked", label: "Merge conflict", tip: null, yourTurn: true },
+    { kind: "blocked", label: "+1", tip: "Unresolved threads" },
+  ]);
+});
+
+test("a ready your-turn row tints the ready pill", () => {
+  const row = rowFor(pr({ turn: "yours", approved: true, ready_to_merge: true }));
+  expect(row.marks).toEqual([
+    { kind: "approved", tip: "Approved" },
+    { kind: "ready", label: "Ready to merge", yourTurn: true },
+  ]);
+});
+
+test("a row that is not your turn carries no tint", () => {
+  const tinted = (overrides: Partial<PullRequest>) =>
+    rowFor(pr(overrides)).marks.filter((mark) => "yourTurn" in mark);
+  expect(tinted({ turn: "theirs", awaiting_review: true })).toEqual([]);
+  expect(tinted({ turn: null, blocked_reasons: ["ci"] })).toEqual([]);
+  expect(tinted({ turn: null, team_review_requested: true })).toEqual([]);
 });

@@ -65,6 +65,11 @@ export interface PullRequest {
   /** Nothing is left but pressing merge; renders the Ready to merge pill.
    * Backend-computed and only ever set in Mine. */
   ready_to_merge: boolean;
+  /** Whose move the PR waits on; null when there is no verdict, always so on
+   * a draft and in All. Backend-computed. A "yours" row leads its section and
+   * tints its mark; "theirs" renders nothing of its own. Never part of the
+   * unread count. */
+  turn: Turn | null;
   /** New activity from people. The only count that badges a row, a collapsed
    * section or the tray. */
   unread_count: number;
@@ -76,6 +81,8 @@ export interface PullRequest {
 
 /** Which popover section a PR belongs to, from the viewer's perspective. */
 export type Section = "mine" | "participated" | "all";
+
+export type Turn = "yours" | "theirs";
 
 export type BlockedReason = "conflict" | "ci" | "review" | "threads" | "behind";
 
