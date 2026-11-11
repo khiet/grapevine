@@ -49,12 +49,13 @@ impl SyncState {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     {
-        // Neither document fails on a corrupt file, so the defaults here only
+        // No document here fails on a corrupt file, so the defaults only
         // guard against that policy changing.
         let store = app.state::<Store>();
         app.state::<SyncState>().pr_state.restore(
             store.load(&store::READ_STATE).unwrap_or_default(),
             store.load(&store::MERGED).unwrap_or_default(),
+            store.load(&store::TURN_STARTS).unwrap_or_default(),
         );
     }
     tauri::async_runtime::spawn(async move {
@@ -147,7 +148,7 @@ fn delay_after_failure(
     delay
 }
 
-/// The tray title for `total`. Zero yields an empty string rather than `None`:
+/// The tray title for `total`, the number of PRs waiting on the viewer. Zero yields an empty string rather than `None`:
 /// tray-icon's macOS `set_title` skips the button entirely on `None`, stranding
 /// the last count on the icon so a cleared badge never disappears.
 fn tray_title(total: u64) -> String {
@@ -175,6 +176,9 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
     let saved_read = effects.save_read.map_or(Ok(()), |read_state| {
         store.save(&store::READ_STATE, &read_state)
     });
+    let saved_turns = effects.save_turns.map_or(Ok(()), |turn_starts| {
+        store.save(&store::TURN_STARTS, &Some(turn_starts))
+    });
     let saved_merged = effects
         .save_merged
         .map_or(Ok(()), |merged| store.save(&store::MERGED, &merged));
@@ -186,7 +190,7 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
     let emitted = app
         .emit("prs-updated", effects.snapshot)
         .map_err(|e| e.to_string());
-    saved_read.and(saved_merged).and(emitted)
+    saved_read.and(saved_turns).and(saved_merged).and(emitted)
 }
 
 /// What one sync attempt means for scheduling the next one.

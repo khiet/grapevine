@@ -38,6 +38,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   auto_merge: false,
   ready_to_merge: false,
   turn: null,
+  turn_since: null,
   unread_count: 0,
   bot_unread_count: 0,
   ...overrides,
@@ -74,13 +75,18 @@ const ALL_COLLAPSED: Record<SectionKey, boolean> = {
   merged: true,
 };
 
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const NOW = Date.parse("2026-07-12T12:00:00Z");
+
 // Narrows to the list; a placeholder where a list was expected fails here.
 function list(
   snapshot: Snapshot,
   query = "",
   collapsed = ALL_EXPANDED,
+  now = NOW,
 ): ListView {
-  const { content } = derivePopover(snapshot, query, collapsed);
+  const { content } = derivePopover(snapshot, query, collapsed, now);
   if (content.kind !== "list") throw new Error(`expected a list, got ${content.kind}`);
   return content;
 }
@@ -408,7 +414,7 @@ test("a term matches title, repo, author, or #number, case-insensitively", () =>
 test("multiple terms are AND'd across the searchable fields", () => {
   // "widgets" hits the repo, "flaky" hits the title: both must match.
   expect(numbers(list(FILTER_FIXTURE, "widgets flaky"), "mine")).toEqual([42]);
-  expect(derivePopover(FILTER_FIXTURE, "gadgets flaky", ALL_EXPANDED).content)
+  expect(derivePopover(FILTER_FIXTURE, "gadgets flaky", ALL_EXPANDED, NOW).content)
     .toEqual({ kind: "no-matches", query: "gadgets flaky" });
 });
 
@@ -441,22 +447,22 @@ test("a collapsed section reports its unread total", () => {
 });
 
 test("an expanded section reports no unread: its rows carry the badges", () => {
-  const view = list(UNREAD_FIXTURE, "", ALL_EXPANDED);
+  const view = list(UNREAD_FIXTURE, "", ALL_EXPANDED, NOW);
   expect(section(view, "mine").collapsedUnread).toBe(0);
 });
 
 test("Mark all read is offered while any PR is unread, filtered out or not", () => {
-  expect(derivePopover(UNREAD_FIXTURE, "", ALL_EXPANDED).offerMarkAllRead).toBe(true);
-  expect(derivePopover(UNREAD_FIXTURE, "zzz", ALL_EXPANDED).offerMarkAllRead).toBe(true);
+  expect(derivePopover(UNREAD_FIXTURE, "", ALL_EXPANDED, NOW).offerMarkAllRead).toBe(true);
+  expect(derivePopover(UNREAD_FIXTURE, "zzz", ALL_EXPANDED, NOW).offerMarkAllRead).toBe(true);
   expect(
-    derivePopover(synced({ prs: [pr()] }), "", ALL_EXPANDED).offerMarkAllRead,
+    derivePopover(synced({ prs: [pr()] }), "", ALL_EXPANDED, NOW).offerMarkAllRead,
   ).toBe(false);
-  expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED).offerMarkAllRead).toBe(false);
+  expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED, NOW).offerMarkAllRead).toBe(false);
 });
 
 test("Clear all is offered for Merged only while it is expanded", () => {
   const snapshot = synced({ prs: [pr()], merged: [mergedPr()] });
-  const expanded = list(snapshot, "", ALL_EXPANDED);
+  const expanded = list(snapshot, "", ALL_EXPANDED, NOW);
   expect(section(expanded, "merged").offerClearAll).toBe(true);
   expect(section(expanded, "mine").offerClearAll).toBe(false);
 
@@ -469,11 +475,11 @@ test("Clear all is offered for Merged only while it is expanded", () => {
 });
 
 test("before the first sync with nothing to show, the setup prompt", () => {
-  expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED).content).toEqual({
+  expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED, NOW).content).toEqual({
     kind: "setup",
   });
   // Setup outranks the filter: there is nothing to have matched.
-  expect(derivePopover(EMPTY_SNAPSHOT, "fix", ALL_EXPANDED).content).toEqual({
+  expect(derivePopover(EMPTY_SNAPSHOT, "fix", ALL_EXPANDED, NOW).content).toEqual({
     kind: "setup",
   });
 });
@@ -489,11 +495,11 @@ test("a synced but empty snapshot shows the empty section scaffold", () => {
 
 test("rows restored before the first sync show as a list, not the setup prompt", () => {
   const snapshot: Snapshot = { ...EMPTY_SNAPSHOT, merged: [mergedPr()] };
-  expect(derivePopover(snapshot, "", ALL_EXPANDED).content.kind).toBe("list");
+  expect(derivePopover(snapshot, "", ALL_EXPANDED, NOW).content.kind).toBe("list");
 });
 
 test("a filter that hides every row shows no matches, quoting the query", () => {
-  expect(derivePopover(FILTER_FIXTURE, "zzz", ALL_EXPANDED).content).toEqual({
+  expect(derivePopover(FILTER_FIXTURE, "zzz", ALL_EXPANDED, NOW).content).toEqual({
     kind: "no-matches",
     query: "zzz",
   });
@@ -591,7 +597,7 @@ test("new bot activity never reaches a collapsed section's badge", () => {
 // are enough to offer it.
 test("Mark all read is offered when the only thing new is bot activity", () => {
   const snapshot = synced({ prs: [pr({ bot_unread_count: 8 })] });
-  expect(derivePopover(snapshot, "", ALL_EXPANDED).offerMarkAllRead).toBe(true);
+  expect(derivePopover(snapshot, "", ALL_EXPANDED, NOW).offerMarkAllRead).toBe(true);
 });
 
 test("in Mine, your-turn rows lead, then team-requested rows, then the rest", () => {
@@ -661,4 +667,33 @@ test("a row that is not your turn carries no tint", () => {
   expect(tinted({ turn: "theirs", awaiting_review: true })).toEqual([]);
   expect(tinted({ turn: null, blocked_reasons: ["ci"] })).toEqual([]);
   expect(tinted({ turn: null, team_review_requested: true })).toEqual([]);
+});
+
+test("a your-turn row says how long it has waited: hours under a day, days from one day up", () => {
+  const waiting = (since: number) =>
+    rowFor(pr({ turn: "yours", turn_since: since })).waiting;
+  expect(waiting(NOW - 3 * HOUR)).toBe("waiting 3h");
+  expect(waiting(NOW - (DAY - 1))).toBe("waiting 23h");
+  expect(waiting(NOW - DAY)).toBe("waiting 1d");
+  expect(waiting(NOW - (2 * DAY + 5 * HOUR))).toBe("waiting 2d");
+});
+
+test("a turn that began within the hour reads as under an hour, not zero", () => {
+  const row = rowFor(pr({ turn: "yours", turn_since: NOW - 60_000 }));
+  expect(row.waiting).toBe("waiting <1h");
+});
+
+// A sync time can sit a moment ahead of the popover's clock.
+test("a turn start ahead of the clock reads as under an hour", () => {
+  const row = rowFor(pr({ turn: "yours", turn_since: NOW + 5_000 }));
+  expect(row.waiting).toBe("waiting <1h");
+});
+
+test("a your-turn row with no known start has no waiting label", () => {
+  expect(rowFor(pr({ turn: "yours", turn_since: null })).waiting).toBeNull();
+});
+
+test("a row that is not your turn has no waiting label", () => {
+  expect(rowFor(pr({ turn: "theirs" })).waiting).toBeNull();
+  expect(rowFor(pr()).waiting).toBeNull();
 });

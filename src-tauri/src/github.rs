@@ -213,9 +213,16 @@ pub struct PullRequest {
     pub ready_to_merge: bool,
     /// Whose move the PR waits on (see [`turn_for`]); `None` when there is no
     /// verdict, always so on a draft and in All. A your-turn row leads its
-    /// section and tints its mark. Same property-not-event rule as
-    /// `blocked_reasons`: it never reaches a badge or the tray count.
+    /// section, tints its mark and is what the tray counts. Same
+    /// property-not-event rule as `blocked_reasons`: it never reaches an
+    /// unread badge.
     pub turn: Option<Turn>,
+    /// Epoch ms of the sync that first saw the turn become yours; filled in
+    /// by the turn tracker after fetch, always `None` out of this module.
+    /// `None` also when the turn is not yours or its start is unknown (see
+    /// [`crate::turns::TurnStarts`]). Deliberately not derived from
+    /// `updated_at`, which any unrelated comment moves.
+    pub turn_since: Option<u64>,
     /// Human activity newer than the PR's last-read watermark; filled in by
     /// the unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -1084,6 +1091,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             auto_merge: !is_draft && is_set(node, "autoMergeRequest"),
             ready_to_merge,
             turn,
+            turn_since: None,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.human,
@@ -4045,11 +4053,10 @@ mod tests {
         let pr = &effects.snapshot.prs[0];
         assert_eq!(pr.unread_count, 3);
         assert_eq!(pr.bot_unread_count, 8);
-        assert_eq!(effects.tray_count, Some(3));
     }
 
     #[test]
-    fn a_pr_with_only_new_bot_activity_adds_nothing_to_the_tray() {
+    fn a_pr_with_only_new_bot_activity_carries_no_unread() {
         let state = PrState::default();
         sync(&state, vec![joined(json!({}))]);
 
@@ -4061,7 +4068,6 @@ mod tests {
         let pr = &effects.snapshot.prs[0];
         assert_eq!(pr.unread_count, 0);
         assert_eq!(pr.bot_unread_count, 8);
-        assert_eq!(effects.tray_count, Some(0));
     }
 
     #[test]

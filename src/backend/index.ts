@@ -67,11 +67,15 @@ export interface PullRequest {
   ready_to_merge: boolean;
   /** Whose move the PR waits on; null when there is no verdict, always so on
    * a draft and in All. Backend-computed. A "yours" row leads its section and
-   * tints its mark; "theirs" renders nothing of its own. Never part of the
-   * unread count. */
+   * tints its mark, and the tray shows how many there are; "theirs" renders
+   * nothing of its own. Never part of the unread count. */
   turn: Turn | null;
-  /** New activity from people. The only count that badges a row, a collapsed
-   * section or the tray. */
+  /** Epoch ms of the sync that first saw the turn become yours; the row shows
+   * it as "waiting 2d". Null when the turn is not yours, and when it was
+   * already yours the first time the PR was seen, so the start is unknown. */
+  turn_since: number | null;
+  /** New activity from people. The only count that badges a row or a
+   * collapsed section. It does not feed the tray. */
   unread_count: number;
   /** New activity from bots, past the same read point; renders the row's muted
    * note and never a badge. Counts the recent activity the backend fetched,

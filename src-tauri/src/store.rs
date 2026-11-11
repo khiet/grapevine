@@ -2,7 +2,7 @@ use std::{fs, marker::PhantomData, path::PathBuf};
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{merged::MergedState, settings::Settings, unread::ReadState};
+use crate::{merged::MergedState, settings::Settings, turns::TurnStarts, unread::ReadState};
 
 /// What a load does when the file exists but cannot be read or parsed. A
 /// missing file is never an error: every document loads as its default then.
@@ -39,6 +39,16 @@ pub const SETTINGS: Document<Settings> = Document {
 pub const READ_STATE: Document<ReadState> = Document {
     file: "unread.json",
     label: "unread state",
+    on_corrupt: OnCorrupt::StartEmpty,
+    holds: PhantomData,
+};
+
+/// `None` is the document never written: turns have not been tracked yet. A
+/// corrupt file starts over the same way, which shows turns under way with an
+/// unknown start rather than a wrong one.
+pub const TURN_STARTS: Document<Option<TurnStarts>> = Document {
+    file: "turns.json",
+    label: "turn starts",
     on_corrupt: OnCorrupt::StartEmpty,
     holds: PhantomData,
 };
@@ -164,6 +174,29 @@ mod tests {
         let state = ReadState::from([("acme/widgets#3".into(), "2026-07-11T10:00:00Z".into())]);
         store.save(&READ_STATE, &state).unwrap();
         assert_eq!(store.load(&READ_STATE).unwrap(), state);
+    }
+
+    #[test]
+    fn turn_starts_round_trip_known_and_unknown() {
+        let (_dir, store) = temp_store();
+        let starts = Some(TurnStarts::from([
+            ("acme/widgets#3".into(), Some(1_784_205_296_000)),
+            ("acme/widgets#4".into(), None),
+        ]));
+        store.save(&TURN_STARTS, &starts).unwrap();
+        assert_eq!(store.load(&TURN_STARTS).unwrap(), starts);
+    }
+
+    /// Empty and never-written are different states: only the second makes
+    /// the next sync treat every turn under way as of unknown start.
+    #[test]
+    fn an_empty_turn_starts_file_is_not_a_missing_one() {
+        let (dir, store) = temp_store();
+        assert_eq!(store.load(&TURN_STARTS).unwrap(), None);
+        store.save(&TURN_STARTS, &Some(TurnStarts::new())).unwrap();
+        assert_eq!(store.load(&TURN_STARTS).unwrap(), Some(TurnStarts::new()));
+        fs::write(dir.path().join("turns.json"), "{not json").unwrap();
+        assert_eq!(store.load(&TURN_STARTS).unwrap(), None);
     }
 
     #[test]

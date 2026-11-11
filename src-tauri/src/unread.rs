@@ -105,6 +105,7 @@ mod tests {
             auto_merge: false,
             ready_to_merge: false,
             turn: None,
+            turn_since: None,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.iter().map(|s| s.to_string()).collect(),
@@ -194,7 +195,7 @@ mod tests {
         assert_eq!(prs[0].unread_count, 1);
     }
 
-    /// The rule the tray badge rests on. Mine and Participated share a branch
+    /// The rule the unread badge rests on. Mine and Participated share a branch
     /// today, and every other test here uses Participated, so an edit that
     /// narrowed the badge to that section alone would pass all of them.
     #[test]

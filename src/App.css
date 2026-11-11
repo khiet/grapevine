@@ -380,6 +380,12 @@ body {
   gap: 8px;
 }
 
+/* "waiting 23h" is wider than any timestamp, so a your-turn row gives its
+   label a wider column. Both stay right-aligned to the same edge. */
+.pr-title-row.is-waiting {
+  grid-template-columns: 1fr 66px;
+}
+
 /* Three lines, not two: the timestamp column leaves the title ~290px, and a
    conventional-commit subject ("fix(scope): ...") needs the third line to
    land its tail, which is the part that identifies the PR. */

@@ -109,7 +109,7 @@ async function capture(baseUrl, dir) {
       document.getElementById("tray").classList.toggle("is-open", open);
     }, open);
 
-  await caption("1", "Click", "Pull requests, in the menubar.", "The count is new comments and reviews on PRs you wrote or joined.");
+  await caption("1", "Click", "Pull requests, in the menubar.", "The number is how many PRs are waiting on you.");
   await setOpen(false);
   await pointAt(page.locator("#tray"));
   await snap(2000);
@@ -117,7 +117,7 @@ async function capture(baseUrl, dir) {
   await hideCursor();
   await popover.waitFor();
   await snap(3400);
-  if ((await trayCount()) !== "7") throw new Error("tray should start at 7");
+  if ((await trayCount()) !== "3") throw new Error("tray should start at 3");
 
   await caption("2", "Click", "Catch up where someone spoke.", "Red badges count unread activity. Opening the PR on GitHub clears it.");
   const webhookRow = app.locator(".pr-row", { hasText: "#1284" });
@@ -125,7 +125,8 @@ async function capture(baseUrl, dir) {
   await snap(1800);
   await webhookRow.click();
   await app.locator(".pr-row", { hasText: "#1284" }).locator(".pr-unread").waitFor({ state: "detached" });
-  if ((await trayCount()) !== "4") throw new Error("tray should drop to 4");
+  // Reading is not acting: the PR still waits on you.
+  if ((await trayCount()) !== "3") throw new Error("tray should stay at 3");
   await snap(2800);
 
   await caption("3", "Click", "Your own PRs, and what blocks them.", "Approved, awaiting review, CI failing, a draft: each row says what comes next.");

@@ -419,7 +419,7 @@ function MarkView({ mark }: { mark: Mark }) {
 
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
-  const { pr, draft, marks, botAuthor, botNote } = row;
+  const { pr, draft, marks, botAuthor, botNote, waiting } = row;
   const unread = pr.unread_count > 0;
   const open = () => {
     openUrl(pr.url).catch(() => {});
@@ -441,9 +441,13 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           bot={botAuthor}
         />
         <span className="pr-text">
-          <span className="pr-title-row">
+          <span
+            className={waiting ? "pr-title-row is-waiting" : "pr-title-row"}
+          >
             <span className="pr-title">{pr.title}</span>
-            <span className="pr-updated">{formatUpdated(pr.updated_at)}</span>
+            <span className="pr-updated">
+              {waiting ?? formatUpdated(pr.updated_at)}
+            </span>
           </span>
           <span className="pr-origin">
             {/* Number first, in its own non-shrinking span, so "PR 510" is

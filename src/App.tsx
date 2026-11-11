@@ -21,11 +21,13 @@ function App() {
   const [collapsed, toggleSection] = useCollapsedSections();
 
   // Recomputed each render: what to show is a pure view over the snapshot,
-  // the filter and the collapse state.
+  // the filter, the collapse state and the time. Nothing ticks: the waiting
+  // labels are as fresh as the last render, and every sync causes one.
   const { offerMarkAllRead, content } = derivePopover(
     snapshot,
     filter,
     collapsed,
+    Date.now(),
   );
 
   useEffect(() => {
