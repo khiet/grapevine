@@ -2036,6 +2036,28 @@ mod tests {
         assert_eq!(pr.failing_checks, Vec::<String>::new());
     }
 
+    /// The names belong to the CI pill; where the pill is held back, a
+    /// check name with nothing to label would only invite a second reading.
+    #[test]
+    fn failing_check_names_are_held_back_with_the_ci_pill() {
+        let failed = || {
+            checked_commits(
+                "FAILURE",
+                vec![check_run("e2e-safari", Some("FAILURE"), true)],
+                true,
+            )
+        };
+        for held_back in [
+            json!({ "mergeable": "UNKNOWN", "commits": failed() }),
+            json!({ "isDraft": true, "commits": failed() }),
+        ] {
+            let pr = row(held_back);
+            assert_eq!(pr.blocked_reasons, Vec::new());
+            assert_eq!(pr.failing_checks, Vec::<String>::new());
+            assert!(!pr.failing_checks_truncated);
+        }
+    }
+
     #[test]
     fn a_pending_rollup_without_check_detail_reads_as_running() {
         assert!(row(json!({ "commits": ci_commits("PENDING") })).checks_running);
@@ -3474,6 +3496,45 @@ mod tests {
 
         assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Ci]);
         assert_eq!(prs[0].failing_checks, Vec::<String>::new());
+    }
+
+    /// A push can land between the page and the follow-up. The row then
+    /// describes the newer commit throughout, not the old verdict beside
+    /// the new checks.
+    #[test]
+    fn check_detail_for_a_newer_commit_replaces_the_pages_verdict() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({ "commits": ci_commits("FAILURE") }))]),
+            ok(checks_answer(
+                4999,
+                checked_commits(
+                    "SUCCESS",
+                    vec![check_run("e2e-safari", Some("SUCCESS"), true)],
+                    false,
+                ),
+            )),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].blocked_reasons, Vec::new());
+    }
+
+    /// Merged or closed between the two queries: there is nothing to add,
+    /// and the row keeps what the page said until the next sync drops it.
+    #[test]
+    fn a_pr_gone_by_the_follow_up_keeps_the_rollups_reading() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({ "commits": ci_commits("FAILURE") }))]),
+            ok(json!({
+                "rateLimit": { "remaining": 4999, "resetAt": "1970-01-01T01:00:00Z" },
+                "repository": { "pullRequest": null }
+            })),
+        ]);
+
+        let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+
+        assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Ci]);
     }
 
     /// Out of quota is not a refusal to skip past: the sync loop has to hear
