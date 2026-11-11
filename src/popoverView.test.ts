@@ -709,6 +709,8 @@ function snoozedGroup(view: ListView, key: SectionKey) {
 test("snoozed rows leave the ordered rows for a folded group at the section's foot", () => {
   const view = list(SNOOZE_FIXTURE);
   expect(numbers(view, "mine")).toEqual([3, 1]);
+  // The header still counts the snoozed row: it has not left the section.
+  expect(section(view, "mine").count).toBe(3);
   const group = snoozedGroup(view, "mine");
   expect(group.rows.map((row) => row.pr.number)).toEqual([2]);
   expect(group.label).toBe("1 snoozed");
@@ -725,10 +727,6 @@ test("a section whose every row is snoozed keeps its header count and shows only
   expect(section(view, "participated").count).toBe(1);
   expect(numbers(view, "participated")).toEqual([]);
   expect(snoozedGroup(view, "participated").label).toBe("1 snoozed");
-});
-
-test("the section header count still includes snoozed rows", () => {
-  expect(section(list(SNOOZE_FIXTURE), "mine").count).toBe(3);
 });
 
 test("a filter shows matching snoozed rows by forcing their group open", () => {

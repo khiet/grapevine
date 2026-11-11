@@ -1093,6 +1093,22 @@ mod tests {
         assert_eq!(effects.save_snoozes, None);
     }
 
+    /// You left the conversation: the row is now browse-only, where nothing
+    /// is snoozed, so it must not stay folded or keep an entry.
+    #[test]
+    fn a_snoozed_pr_that_moves_to_all_drops_its_entry() {
+        let state = snoozed_state(pr("acme/widgets", 7, &[]));
+
+        let browse_only = PullRequest {
+            section: Section::All,
+            ..pr("acme/widgets", 7, &[])
+        };
+        let effects = sync_one(&state, browse_only, SNOOZED_AT + 1);
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.save_snoozes, Some(HashMap::new()));
+    }
+
     #[test]
     fn an_unconfigured_sync_drops_the_snoozes_with_the_prs() {
         let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
