@@ -15,13 +15,11 @@ export function createFakeBackend(
   onPublish: (snapshot: Snapshot) => void = () => {},
 ): FakeBackend {
   let snapshot = initial;
-  const listeners = new Map<string, Set<(payload: never) => void>>();
+  const subscribers = new Set<(snapshot: Snapshot) => void>();
 
   const publish = (next: Snapshot) => {
     snapshot = next;
-    for (const handler of listeners.get(SNAPSHOT_EVENT) ?? []) {
-      (handler as (payload: Snapshot) => void)(snapshot);
-    }
+    for (const subscriber of subscribers) subscriber(snapshot);
     onPublish(snapshot);
   };
 
@@ -54,11 +52,12 @@ export function createFakeBackend(
       return handler(args) as T;
     },
     async listen<T>(event: string, handler: (payload: T) => void) {
-      const handlers = listeners.get(event) ?? new Set();
-      listeners.set(event, handlers);
-      handlers.add(handler as (payload: never) => void);
+      // The Snapshot push is the only event this backend emits.
+      if (event !== SNAPSHOT_EVENT) return () => {};
+      const subscriber = handler as (snapshot: Snapshot) => void;
+      subscribers.add(subscriber);
       return () => {
-        handlers.delete(handler as (payload: never) => void);
+        subscribers.delete(subscriber);
       };
     },
     async openUrl() {},

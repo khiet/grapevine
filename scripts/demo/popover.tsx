@@ -3,26 +3,22 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "../../src/App";
-import { setAdapter } from "../../src/backend";
+import { setAdapter, type Snapshot } from "../../src/backend";
 import { createFakeBackend } from "../../src/backend/fake";
 import { totalUnread } from "../../src/PrList";
 import { demoSnapshot } from "./fixture";
 
-declare global {
-  interface Window {
-    /** Login to data URI, injected by demo.mjs before this module runs. */
-    DEMO_AVATARS: Record<string, string>;
-  }
-}
-
 // The stage's tray count mirrors the unread total the way the Rust side sets
 // the tray title.
-const showTrayCount = (snapshot: { prs: Parameters<typeof totalUnread>[0] }) => {
+const showTrayCount = (snapshot: Snapshot) => {
   const count = parent.document.getElementById("tray-count");
   if (count) count.textContent = String(totalUnread(snapshot.prs) || "");
 };
 
-const snapshot = demoSnapshot(window.DEMO_AVATARS);
+// Login to data URI, injected by demo.mjs before this module runs.
+const avatars = (window as unknown as { DEMO_AVATARS: Record<string, string> })
+  .DEMO_AVATARS;
+const snapshot = demoSnapshot(avatars);
 setAdapter(createFakeBackend(snapshot, showTrayCount).adapter);
 showTrayCount(snapshot);
 

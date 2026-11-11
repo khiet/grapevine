@@ -1,6 +1,7 @@
-// Everything the UI knows about the Rust backend: the wire types, the PR key,
-// one typed function per command, and the Snapshot subscription. Components
-// import from here and never from @tauri-apps/api.
+// What the UI knows about the Rust backend's commands and events: the wire
+// types, the PR key, one typed function per command, and the Snapshot
+// subscription. Components import from here and never from @tauri-apps/api.
+// The updater plugins are the one exception; updater.ts owns those.
 //
 // The wire types are hand-written copies of the Rust structs that serialize
 // them (github.rs, merged.rs, pr_state.rs, commands.rs). A field added or
@@ -18,7 +19,7 @@ export interface PullRequest {
   owner_avatar_url: string;
   created_at: string;
   updated_at: string;
-  section: "mine" | "participated" | "all";
+  section: Section;
   /** Why the PR is blocked, already in severity order; empty means no pill.
    * Composed at the Rust boundary; the row only maps keys to labels. */
   blocked_reasons: BlockedReason[];
@@ -43,6 +44,9 @@ export interface PullRequest {
   merge_queue_position: number | null;
   unread_count: number;
 }
+
+/** Which popover section a PR belongs to, from the viewer's perspective. */
+export type Section = "mine" | "participated" | "all";
 
 export type BlockedReason = "conflict" | "ci" | "review" | "threads" | "behind";
 
@@ -129,6 +133,8 @@ export function subscribeSnapshot(
     pushed = true;
     onSnapshot(snapshot);
   });
+  // A failed registration leaves the get_prs reply as the only delivery.
+  stop.catch(() => {});
   adapter
     .invoke<Snapshot>("get_prs")
     .then((snapshot) => {
@@ -141,7 +147,7 @@ export function subscribeSnapshot(
   };
 }
 
-// The backend answers each of these four by pushing a fresh Snapshot.
+// The backend answers each of these by pushing a fresh Snapshot.
 export const markRead = (key: string) => adapter.invoke<void>("mark_read", { key });
 export const markAllRead = () => adapter.invoke<void>("mark_all_read");
 export const dismissMerged = (key: string) =>
