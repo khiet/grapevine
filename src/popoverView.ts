@@ -203,7 +203,7 @@ function rowMarks(pr: PullRequest): Mark[] {
 // Flags the mark that explains a your-turn row: the review glyph when a
 // review is asked of you, else the primary blocked pill, else the ready pill.
 // That is the order the backend decides the turn in, so the tinted mark is
-// the reason the row leads. Exactly one mark is flagged; the +N pill never
+// the reason the row leads. At most one mark is flagged; the +N pill never
 // is, since the primary pill already speaks for the blockage.
 function tintYourTurn(marks: Mark[]): void {
   for (const kind of ["review-requested", "blocked", "ready"] as const) {

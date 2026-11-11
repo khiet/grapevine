@@ -1401,8 +1401,8 @@ fn ready_to_merge(
 /// 2. A review requested from the viewer by name is the viewer's to give, in
 ///    any section, whatever else is true of the PR: a re-request after an
 ///    approval lands here too.
-/// 3. In Mine, any blocked reason is the viewer's to clear. It outranks a
-///    merge under way, which cannot finish while the PR is blocked.
+/// 3. In Mine, any blocked reason is the viewer's to clear, even with a
+///    merge under way.
 /// 4. In Mine, a queued PR or one with auto-merge armed waits on GitHub.
 /// 5. In Mine, a ready PR waits on the viewer pressing merge.
 /// 6. In Mine, a PR with a reviewer still asked, or with gating checks
@@ -2440,8 +2440,7 @@ mod tests {
         assert_eq!(turn(participated_node(json!({}))), None);
     }
 
-    /// A blocked PR cannot merge, armed or queued, so it still needs the
-    /// viewer.
+    /// A blocked reason outranks a merge under way.
     #[test]
     fn a_blocked_pr_is_the_viewers_turn_even_with_its_merge_under_way() {
         let failing_and_armed = mine_node(json!({
