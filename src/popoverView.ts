@@ -1,7 +1,8 @@
 // What the popover shows, derived from the Snapshot, the filter query and the
-// collapse state. Every display rule lives here; App, PrList, SectionHeader
-// and PrRow render the result and decide nothing themselves. Pure: no React,
-// no storage, no clock.
+// collapse state: the placeholder choice, which sections exist and what they
+// hold, and each row's marks. App, PrList, SectionHeader and PrRow render the
+// result; a rule about what appears belongs here, where a test can reach it.
+// Pure: no React, no storage, no clock.
 
 import type {
   BlockedReason,
@@ -60,7 +61,7 @@ export interface SectionView {
    * carry their own badges. */
   collapsedUnread: number;
   /** Whether the header offers Clear all. */
-  clearAll: boolean;
+  offerClearAll: boolean;
   body: SectionBody;
 }
 
@@ -81,7 +82,7 @@ export type PopoverContent =
 
 export interface PopoverView {
   /** Whether the header offers Mark all read. */
-  markAllRead: boolean;
+  offerMarkAllRead: boolean;
   content: PopoverContent;
 }
 
@@ -127,8 +128,9 @@ function ordinal(n: number): string {
 // The marker cluster in display order: the approved check, the review glyph
 // (incoming or outgoing; the backend never sends both for one row), the merge
 // queue mark, then the blocked pills. Approval leads as the one positive
-// mark, so it reads before whatever still stands in the way. A new signal is
-// added here and nowhere else.
+// mark, so it reads before whatever still stands in the way. A new signal
+// needs a Mark kind, a line here for when and where it shows, and its glyph
+// in MarkView; no condition elsewhere has to learn about it.
 //
 // Drafts need no special case: the backend suppresses the check, the review
 // glyphs and the blocked reasons on a draft, so whatever it does send shows.
@@ -205,13 +207,13 @@ export function derivePopover(
   collapsed: Record<SectionKey, boolean>,
 ): PopoverView {
   // Counts every PR, filtered out or not: the action clears them all.
-  const markAllRead = totalUnread(snapshot.prs) > 0;
+  const offerMarkAllRead = totalUnread(snapshot.prs) > 0;
 
   // Pre-setup only; once a sync has happened the section scaffold owns the
   // empty state.
   const hasAny = snapshot.prs.length > 0 || snapshot.merged.length > 0;
   if (!snapshot.has_synced && !hasAny) {
-    return { markAllRead, content: { kind: "setup" } };
+    return { offerMarkAllRead, content: { kind: "setup" } };
   }
 
   const terms = queryTerms(query);
@@ -219,7 +221,7 @@ export function derivePopover(
   const prs = snapshot.prs.filter((pr) => matchesTerms(pr, terms));
   const merged = snapshot.merged.filter((pr) => matchesTerms(pr, terms));
   if (filtering && prs.length === 0 && merged.length === 0) {
-    return { markAllRead, content: { kind: "no-matches", query } };
+    return { offerMarkAllRead, content: { kind: "no-matches", query } };
   }
 
   // Filtering force-expands every section: a match hidden inside a collapsed
@@ -249,7 +251,7 @@ export function derivePopover(
          without this a collapsed Mine makes the popover look read while the
          tray says otherwise. */
       collapsedUnread: expanded ? 0 : totalUnread(rows),
-      clearAll: false,
+      offerClearAll: false,
       body,
     });
   }
@@ -265,13 +267,13 @@ export function derivePopover(
       collapsedUnread: 0,
       /* Not while collapsed: clearing rows you cannot see invites a
          destructive misclick from the adjacent whole-row toggle. */
-      clearAll: expanded,
+      offerClearAll: expanded,
       body: { kind: "merged", rows: merged },
     });
   }
 
   return {
-    markAllRead,
+    offerMarkAllRead,
     content: { kind: "list", sections, canToggle: !filtering },
   };
 }

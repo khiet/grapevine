@@ -22,7 +22,7 @@ function App() {
 
   // Recomputed each render: what to show is a pure view over the snapshot,
   // the filter and the collapse state.
-  const { markAllRead: offerMarkAllRead, content } = derivePopover(
+  const { offerMarkAllRead, content } = derivePopover(
     snapshot,
     filter,
     collapsed,

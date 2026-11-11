@@ -320,26 +320,26 @@ test("an expanded section reports no unread: its rows carry the badges", () => {
 });
 
 test("Mark all read is offered while any PR is unread, filtered out or not", () => {
-  expect(derivePopover(UNREAD_FIXTURE, "", ALL_EXPANDED).markAllRead).toBe(true);
-  expect(derivePopover(UNREAD_FIXTURE, "zzz", ALL_EXPANDED).markAllRead).toBe(true);
+  expect(derivePopover(UNREAD_FIXTURE, "", ALL_EXPANDED).offerMarkAllRead).toBe(true);
+  expect(derivePopover(UNREAD_FIXTURE, "zzz", ALL_EXPANDED).offerMarkAllRead).toBe(true);
   expect(
-    derivePopover(synced({ prs: [pr()] }), "", ALL_EXPANDED).markAllRead,
+    derivePopover(synced({ prs: [pr()] }), "", ALL_EXPANDED).offerMarkAllRead,
   ).toBe(false);
-  expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED).markAllRead).toBe(false);
+  expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED).offerMarkAllRead).toBe(false);
 });
 
 test("Clear all is offered for Merged only while it is expanded", () => {
   const snapshot = synced({ prs: [pr()], merged: [mergedPr()] });
   const expanded = list(snapshot, "", ALL_EXPANDED);
-  expect(section(expanded, "merged").clearAll).toBe(true);
-  expect(section(expanded, "mine").clearAll).toBe(false);
+  expect(section(expanded, "merged").offerClearAll).toBe(true);
+  expect(section(expanded, "mine").offerClearAll).toBe(false);
 
   const collapsed = list(snapshot, "", { ...ALL_EXPANDED, merged: true });
-  expect(section(collapsed, "merged").clearAll).toBe(false);
+  expect(section(collapsed, "merged").offerClearAll).toBe(false);
 
   // Force-expanded by the filter, so its rows are visible again.
   const filtered = list(snapshot, "ship", { ...ALL_EXPANDED, merged: true });
-  expect(section(filtered, "merged").clearAll).toBe(true);
+  expect(section(filtered, "merged").offerClearAll).toBe(true);
 });
 
 test("before the first sync with nothing to show, the setup prompt", () => {

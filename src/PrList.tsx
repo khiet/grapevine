@@ -578,7 +578,7 @@ function PrList({
             disabled={!view.canToggle}
             unread={section.collapsedUnread}
           >
-            {section.clearAll && (
+            {section.offerClearAll && (
               <button
                 type="button"
                 className="pr-section-clear"
