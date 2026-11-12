@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   clearMerged,
   dismissMerged,
@@ -9,6 +9,7 @@ import {
   wake,
   type MergedPr,
 } from "./backend";
+import { clickFix } from "./fixConflict";
 import type {
   ListView,
   Mark,
@@ -461,17 +462,94 @@ function SnoozeControl({ row }: { row: RowView }) {
   );
 }
 
+// The wrench of the Fix with Copilot control. Generic on purpose: the control
+// asks for a repair, and is not Copilot's own button.
+function Wrench() {
+  return (
+    <GlyphSvg strokeWidth={2}>
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </GlyphSvg>
+  );
+}
+
+// How long an armed control waits for its second click before standing down.
+const FIX_CONFIRM_MS = 4000;
+
+/* The row's Fix with Copilot control, a sibling of the row button beside the
+   snooze control and revealed with it. It posts a comment under the user's
+   name, so it takes two clicks: the first turns it into Confirm, which stands
+   down when the pointer leaves the row or after a few seconds. Returns what
+   the row needs to place it: the control, the handler that stands it down,
+   and the message of a post that failed. */
+function useFixControl(row: RowView) {
+  const [armed, setArmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), FIX_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  const click = () => {
+    const next = clickFix(prKey(row.pr), armed);
+    setArmed(next.armed);
+    setError(null);
+    next.request?.then(setError);
+  };
+
+  let control: ReactNode = null;
+  if (row.fix === "offer") {
+    control = armed ? (
+      <button
+        type="button"
+        className="pr-fix is-armed"
+        aria-label="Confirm: ask Copilot to fix the conflict"
+        onClick={click}
+      >
+        Confirm
+      </button>
+    ) : (
+      <button
+        type="button"
+        className="pr-fix pr-tip"
+        data-tip="Fix with Copilot"
+        aria-label="Fix with Copilot"
+        onClick={click}
+      >
+        <Wrench />
+      </button>
+    );
+  } else if (row.fix !== null) {
+    control = (
+      <span className="pr-fix is-settled" role="status">
+        {row.fix === "posting" ? "Asking" : "Requested"}
+      </span>
+    );
+  }
+  return {
+    control,
+    standDown: () => setArmed(false),
+    // Shown only beside the offer it explains: once the row stops offering
+    // the fix, a note about a failed try has nothing left to say.
+    error: row.fix === "offer" ? error : null,
+  };
+}
+
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const { pr, draft, marks, botAuthor, botNote, waiting } = row;
   const unread = pr.unread_count > 0;
+  const fix = useFixControl(row);
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
     markRead(prKey(pr)).catch(() => {});
   };
   return (
-    <li className={row.snooze === null ? undefined : "pr-row-split"}>
+    <li
+      className={row.snooze === null ? undefined : "pr-row-split"}
+      onPointerLeave={fix.standDown}
+    >
       <button
         type="button"
         className={unread ? "pr-row is-unread" : "pr-row"}
@@ -501,6 +579,13 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
             {showRepo && <span className="pr-repo">{pr.repo}</span>}
             {/* Plain metadata, not a badge: bots spoke, nobody is waiting. */}
             {botNote && <span className="pr-bot-note">{botNote}</span>}
+            {/* Why the Copilot request did not go out. title carries the
+                full message; the line clips it. */}
+            {fix.error && (
+              <span className="pr-fix-error" role="alert" title={fix.error}>
+                {fix.error}
+              </span>
+            )}
             {/* A neutral state pill, never a signal. */}
             {draft && <span className="pr-draft">Draft</span>}
             {/* The action markers cluster at the row's right edge as one group
@@ -517,6 +602,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           </span>
         </span>
       </button>
+      {fix.control}
       <SnoozeControl row={row} />
     </li>
   );

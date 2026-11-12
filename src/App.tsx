@@ -6,6 +6,7 @@ import {
   subscribeSnapshot,
   type Snapshot,
 } from "./backend";
+import { forgetCleared, useFixRequests } from "./fixConflict";
 import { derivePopover } from "./popoverView";
 import PrList, { formatLastSync, useCollapsedSections } from "./PrList";
 import SettingsView from "./SettingsView";
@@ -24,20 +25,26 @@ function App() {
   const updateState = useUpdateState();
 
   const [collapsed, toggleSection] = useCollapsedSections();
+  const fixRequests = useFixRequests();
 
   // Recomputed each render: what to show is a pure view over the snapshot,
-  // the filter, the collapse state and the time. Nothing ticks: the waiting
-  // labels are as fresh as the last render, and every sync causes one.
+  // the filter, the collapse state, the Copilot fixes asked for and the time.
+  // Nothing ticks: the waiting labels are as fresh as the last render, and
+  // every sync causes one.
   const { offerMarkAllRead, content } = derivePopover(
     snapshot,
     filter,
     collapsed,
     Date.now(),
+    fixRequests,
   );
 
   useEffect(() => {
     startUpdateChecks();
-    return subscribeSnapshot(setSnapshot);
+    return subscribeSnapshot((next) => {
+      forgetCleared(next);
+      setSnapshot(next);
+    });
   }, []);
 
   return (

@@ -40,6 +40,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   ready_to_merge: false,
   turn: null,
   turn_since: null,
+  can_fix_conflict: false,
   unread_count: 0,
   bot_unread_count: 0,
   ...overrides,
@@ -749,6 +750,46 @@ test("rows in Mine and Participated offer snooze, snoozed rows offer wake, All o
   const { body } = section(view, "all");
   if (body.kind !== "groups") throw new Error("All is not grouped");
   expect(body.groups[0].rows[0].snooze).toBeNull();
+});
+
+const fixable = (overrides: Partial<PullRequest> = {}) =>
+  pr({ blocked_reasons: ["conflict"], can_fix_conflict: true, ...overrides });
+
+test("a row the backend calls fixable offers the Copilot fix, and no other row does", () => {
+  const view = list(
+    synced({ prs: [fixable({ number: 1 }), pr({ number: 2, blocked_reasons: ["conflict"] })] }),
+  );
+  expect(rows(view, "mine").map((row) => row.fix)).toEqual(["offer", null]);
+});
+
+test("a snoozed row offers no Copilot fix", () => {
+  const view = list(
+    synced({ prs: [fixable({ number: 1 })], snoozed: ["acme/widgets#1"] }),
+  );
+  expect(snoozedGroup(view, "mine").rows[0].fix).toBeNull();
+});
+
+test("a row whose fix is being asked for or was asked for shows that in place of the offer", () => {
+  const snapshot = synced({
+    prs: [fixable({ number: 1 }), fixable({ number: 2 }), fixable({ number: 3 })],
+  });
+  const requests = new Map([
+    ["acme/widgets#1", "posting"],
+    ["acme/widgets#2", "requested"],
+  ] as const);
+  const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, requests);
+  expect(rows(content as ListView, "mine").map((row) => row.fix)).toEqual([
+    "posting",
+    "requested",
+    "offer",
+  ]);
+});
+
+test("a request made for a row says nothing once the row stops being fixable", () => {
+  const snapshot = synced({ prs: [pr({ number: 1 })] });
+  const requests = new Map([["acme/widgets#1", "requested"]] as const);
+  const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, requests);
+  expect(rows(content as ListView, "mine")[0].fix).toBeNull();
 });
 
 test("a snoozed row's unread stays off its collapsed section's badge", () => {

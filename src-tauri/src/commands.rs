@@ -46,6 +46,25 @@ pub fn wake(app: AppHandle, key: String) -> Result<(), String> {
     sync::transition(&app, |prs| prs.wake(&key))
 }
 
+/// Asks Copilot to resolve the merge conflict on the PR filed under `key`, by
+/// commenting on it as the user. The key is all the webview supplies: the PR
+/// comes from the Snapshot, and [`github::request_conflict_fix`] holds the
+/// rule and the comment's words. `Err` is the message the row shows. Nothing
+/// is stored and no Snapshot is pushed.
+#[tauri::command]
+pub async fn fix_conflict(
+    state: tauri::State<'_, sync::SyncState>,
+    key: String,
+) -> Result<(), String> {
+    let Some(pr) = state.find(&key) else {
+        return Err("That PR is no longer in the list.".into());
+    };
+    let Some(token) = keychain::load()? else {
+        return Err("Save a valid GitHub token first.".into());
+    };
+    Ok(github::request_conflict_fix(&token, &pr).await?)
+}
+
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
 /// Change both together.
 #[derive(Serialize)]

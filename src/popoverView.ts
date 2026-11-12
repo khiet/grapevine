@@ -22,6 +22,13 @@ const SECTIONS = [
  * deliberately not collapsible. */
 export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
 
+/** Where a request for a Copilot fix stands: being posted, or posted. */
+export type FixRequest = "posting" | "requested";
+
+/** The requests made so far, by PR key. A key with no entry has had none
+ * made. Held by fixConflict.ts. */
+export type FixRequests = ReadonlyMap<string, FixRequest>;
+
 /** One item of a row's right-edge marker cluster. `tip` is the hover tooltip
  * and the accessible name; null on the primary blocked pill, which is its own
  * label, and absent on the ready pill for the same reason. `yourTurn` is the
@@ -56,6 +63,10 @@ export interface RowView {
   /** The row's snooze control: "offer" to park it, "wake" to bring a snoozed
    * row back, null where rows cannot be snoozed (All). */
   snooze: "offer" | "wake" | null;
+  /** The row's Fix with Copilot control: "offer" to ask Copilot to resolve
+   * the merge conflict, "posting" while the request is on its way,
+   * "requested" once it is made, null where the fix is not on offer. */
+  fix: "offer" | FixRequest | null;
 }
 
 /** The snoozed rows of a section, folded into one line at its foot. */
@@ -248,10 +259,23 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
   return `waiting ${Math.floor(elapsed / DAY_MS)}d`;
 }
 
+// Offered wherever the backend allows it, except on a snoozed row: that one
+// was put out of the way, and waking it is the only thing it offers. A
+// request made earlier shows in the offer's place.
+function fixControl(
+  pr: PullRequest,
+  snooze: RowView["snooze"],
+  fixRequests: FixRequests,
+): RowView["fix"] {
+  if (!pr.can_fix_conflict || snooze === "wake") return null;
+  return fixRequests.get(prKey(pr)) ?? "offer";
+}
+
 const rowView = (
   pr: PullRequest,
   now: number,
   snooze: RowView["snooze"],
+  fixRequests: FixRequests,
 ): RowView => ({
   pr,
   draft: pr.is_draft,
@@ -261,6 +285,7 @@ const rowView = (
     pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
   waiting: waitingLabel(pr, now),
   snooze,
+  fix: fixControl(pr, snooze, fixRequests),
 });
 
 // Rows waiting on the viewer lead a section, then the ones asking the viewer's
@@ -306,7 +331,11 @@ function matchesTerms(item: Filterable, terms: string[]): boolean {
 // Groups ordered by their most recently updated PR, so the repo that just moved
 // leads; within a group the incoming order is preserved. An unparseable
 // updated_at sorts as the epoch rather than throwing.
-function groupByRepo(prs: PullRequest[], now: number): RepoGroupView[] {
+function groupByRepo(
+  prs: PullRequest[],
+  now: number,
+  fixRequests: FixRequests,
+): RepoGroupView[] {
   const groups = new Map<string, PullRequest[]>();
   for (const pr of prs) {
     const existing = groups.get(pr.repo);
@@ -319,7 +348,7 @@ function groupByRepo(prs: PullRequest[], now: number): RepoGroupView[] {
     .sort(([, a], [, b]) => latest(b) - latest(a))
     .map(([repo, rows]) => ({
       repo,
-      rows: rows.map((pr) => rowView(pr, now, null)),
+      rows: rows.map((pr) => rowView(pr, now, null, fixRequests)),
     }));
 }
 
@@ -329,6 +358,8 @@ export function derivePopover(
   collapsed: Record<SectionKey, boolean>,
   /** Epoch ms; what the waiting labels are measured against. */
   now: number,
+  /** The Copilot fixes asked for so far; none when omitted. */
+  fixRequests: FixRequests = new Map(),
 ): PopoverView {
   // Counts every PR, filtered out or not: the action clears them all. A bot
   // note counts too, since the action is the one way to clear every note at
@@ -377,17 +408,17 @@ export function derivePopover(
     let body: SectionBody;
     if (rows.length === 0) body = { kind: "empty" };
     else if (key === "all") {
-      body = { kind: "groups", groups: groupByRepo(rows, now) };
+      body = { kind: "groups", groups: groupByRepo(rows, now, fixRequests) };
     } else {
       body = {
         kind: "rows",
-        rows: byTurn(awake).map((pr) => rowView(pr, now, "offer")),
+        rows: byTurn(awake).map((pr) => rowView(pr, now, "offer", fixRequests)),
         snoozed:
           snoozed.length === 0
             ? null
             : {
                 label: `${snoozed.length} snoozed`,
-                rows: snoozed.map((pr) => rowView(pr, now, "wake")),
+                rows: snoozed.map((pr) => rowView(pr, now, "wake", fixRequests)),
                 // A match folded out of sight would read as "no match".
                 forcedOpen: filtering,
               },

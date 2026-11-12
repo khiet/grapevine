@@ -47,6 +47,9 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   section until you dismiss them.
 - **Filter and snooze.** Type to filter across every repo. Snooze a PR until
   it changes.
+- **Fix a conflict with Copilot.** On one of your own PRs with a merge
+  conflict, ask Copilot to resolve it from the row. Two clicks, and only in
+  repos where Copilot's cloud agent is enabled.
 
 ## Install
 
@@ -107,7 +110,9 @@ Open the popover and go to settings.
 About token scopes:
 
 - `repo` is needed for private repos. It grants read *and write* access to
-  all of them, but Grapevine only ever reads.
+  all of them. Grapevine writes one thing, and only when you confirm it: the
+  comment that asks Copilot to resolve a merge conflict on your own PR.
+  Everything else is a read.
 - If you only watch public repos, `public_repo` is the tighter choice.
   Grapevine tells you when a saved token cannot see private repos.
 - Fine-grained tokens are not recommended. Each one covers a single user or

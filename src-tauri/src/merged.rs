@@ -100,6 +100,8 @@ mod tests {
             ready_to_merge: false,
             turn: None,
             turn_since: None,
+            can_fix_conflict: false,
+            node_id: String::new(),
             unread_count: 0,
             bot_unread_count: 0,
             activity: vec![],
