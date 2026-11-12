@@ -60,6 +60,16 @@ const TEAM_SEARCH_PAGE: usize = 100;
 /// GitHub search serves at most 1000 results for one query.
 const TEAM_SEARCH_MAX_PAGES: usize = 10;
 
+/// The login of Copilot's cloud agent, as GitHub lists it among a repo's
+/// assignable actors when the agent is enabled there.
+const COPILOT_LOGIN: &str = "copilot-swe-agent";
+/// Room for accounts whose login merely contains [`COPILOT_LOGIN`]: the
+/// actor filter is a substring search, and the bot is matched exactly after.
+const COPILOT_ACTOR_PAGE: usize = 5;
+/// The whole comment that asks Copilot for the fix. Fixed here so nothing
+/// outside this module can choose what Grapevine writes to a PR.
+const CONFLICT_FIX_COMMENT: &str = "@copilot resolve the merge conflicts on this PR.";
+
 /// Which popover section a PR belongs to, from the viewer's perspective.
 ///
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
@@ -223,6 +233,16 @@ pub struct PullRequest {
     /// [`crate::turns::TurnStarts`]). Deliberately not derived from
     /// `updated_at`, which any unrelated comment moves.
     pub turn_since: Option<u64>,
+    /// Whether the row may offer to ask Copilot to resolve the PR's merge
+    /// conflict (see [`can_fix_conflict`]). The one field that gates a write
+    /// to GitHub: [`Client::request_conflict_fix`] refuses a PR without it.
+    /// Same property-not-event rule as `blocked_reasons`.
+    pub can_fix_conflict: bool,
+    /// GitHub's global node id, which the comment mutation addresses the PR
+    /// by. Stays on this side of the wire: the frontend names a PR by its key
+    /// and never supplies what gets written to.
+    #[serde(skip)]
+    pub node_id: String,
     /// Human activity newer than the PR's last-read watermark; filled in by
     /// the unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -452,6 +472,8 @@ impl<T: Transport> Client<'_, T> {
         let mut team_search: Option<Option<String>> = (!pending.is_empty()).then_some(None);
         let mut team_search_pages = 0;
         let mut team_requested: HashSet<String> = HashSet::new();
+        // Whether the repo pages still ask if Copilot can be assigned.
+        let mut ask_copilot = true;
         let searched_repos: Vec<String> = pending
             .iter()
             .map(|(owner, name, _)| format!("{owner}/{name}"))
@@ -473,6 +495,7 @@ impl<T: Transport> Client<'_, T> {
                     owner,
                     name,
                     cursor.as_deref(),
+                    ask_copilot,
                 ));
             }
             if let Some(cursor) = &team_search {
@@ -484,13 +507,22 @@ impl<T: Transport> Client<'_, T> {
             let Some(mut data) = response.data else {
                 let error = error_from_graphql(response.errors);
                 // GitHub refuses a whole query over one field it will not
-                // serve. If the search was that field, the round is asked
-                // again without it, so a token that cannot search still
-                // syncs. A quota refusal is not about the search, and asking
-                // again would only spend more of it.
-                if team_search.is_some() && !matches!(error, GithubError::RateLimited { .. }) {
+                // serve. The round is asked again without the extras, one at
+                // a time, so a token that cannot search or cannot list a
+                // repo's actors still syncs: first the search, which is the
+                // one known to be refused, then the Copilot actors. A quota
+                // refusal is not about either, and asking again would only
+                // spend more of it.
+                if matches!(error, GithubError::RateLimited { .. }) {
+                    return Err(error);
+                }
+                if team_search.is_some() {
                     team_search = None;
                     team_requested.clear();
+                    continue;
+                }
+                if ask_copilot {
+                    ask_copilot = false;
                     continue;
                 }
                 return Err(error);
@@ -601,6 +633,36 @@ impl<T: Transport> Client<'_, T> {
             }
         }
         Ok(())
+    }
+
+    /// Asks Copilot to resolve `pr`'s merge conflict by commenting on it as
+    /// the viewer. The only write this module makes. It posts nothing for a
+    /// PR the eligibility rule turns down, so no caller can widen what
+    /// Grapevine writes to.
+    async fn request_conflict_fix(&self, pr: &PullRequest) -> Result<(), GithubError> {
+        if !pr.can_fix_conflict || pr.node_id.is_empty() {
+            return Err(GithubError::Other(
+                "Nothing here for Copilot to fix.".into(),
+            ));
+        }
+        let response = self
+            .graphql(
+                "mutation($subject: ID!, $body: String!) { \
+                   addComment(input: { subjectId: $subject, body: $body }) { subject { id } } \
+                 }",
+                json!({ "subject": pr.node_id, "body": CONFLICT_FIX_COMMENT }),
+            )
+            .await?;
+        let posted = response
+            .data
+            .as_ref()
+            .and_then(|d| d.pointer("/addComment/subject/id"))
+            .is_some_and(|id| !id.is_null());
+        if posted {
+            Ok(())
+        } else {
+            Err(error_from_graphql(response.errors))
+        }
     }
 
     async fn fetch_merged_status(
@@ -804,6 +866,12 @@ pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<FetchedPrs,
     Client::live(token).fetch_open_prs(repos).await
 }
 
+/// Asks Copilot to resolve `pr`'s merge conflict, with a comment posted as the
+/// token's user. Fails without posting when `pr` is not eligible.
+pub async fn request_conflict_fix(token: &str, pr: &PullRequest) -> Result<(), GithubError> {
+    Client::live(token).request_conflict_fix(pr).await
+}
+
 /// Reads the `rateLimit` field out of a response; `None` rather than failing
 /// the sync when it is missing or malformed.
 fn collect_rate_limit(data: &Value) -> Option<RateLimit> {
@@ -947,20 +1015,33 @@ query($owner: String!, $name: String!, $number: Int!) { \
   } \
 }";
 
-fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>) -> String {
+/// One repo's page of open PRs. `copilot` adds the question of whether
+/// Copilot's cloud agent can be assigned in the repo; it is asked on every
+/// page, since each page's rows are built from that page alone.
+fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot: bool) -> String {
     let after = after
         .map(|c| format!(", after: {}", json!(c)))
         .unwrap_or_default();
+    let copilot = if copilot {
+        format!(
+            "suggestedActors(capabilities: [CAN_BE_ASSIGNED], query: {login}, \
+                             first: {COPILOT_ACTOR_PAGE}) {{ nodes {{ __typename login }} }} ",
+            login = json!(COPILOT_LOGIN),
+        )
+    } else {
+        String::new()
+    };
     format!(
         "{alias}: repository(owner: {owner}, name: {name}) {{ \
            nameWithOwner \
            owner {{ avatarUrl }} \
+           {copilot}\
            pullRequests(states: OPEN, first: {PAGE_SIZE}{after}, \
                         orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
-               number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
-               isDraft mergeable mergeStateStatus reviewDecision \
+               id number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
+               isCrossRepository isDraft mergeable mergeStateStatus reviewDecision \
                viewerLatestReview {{ state }} \
                mergeQueueEntry {{ position }} \
                autoMergeRequest {{ enabledAt }} \
@@ -993,6 +1074,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         .pointer("/owner/avatarUrl")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let copilot_enabled = copilot_enabled(repo);
     let nodes = repo
         .pointer("/pullRequests/nodes")
         .and_then(Value::as_array);
@@ -1017,6 +1099,8 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         // The names belong to the CI pill, so they go only where it shows: a
         // draft or an unsettled mergeability suppresses both together.
         let ci_raised = blocked_reasons.contains(&BlockedReason::Ci);
+        let can_fix_conflict =
+            can_fix_conflict(node, section, is_draft, &blocked_reasons, copilot_enabled);
         out.push(PullRequest {
             number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
             title: node
@@ -1092,6 +1176,12 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             ready_to_merge,
             turn,
             turn_since: None,
+            can_fix_conflict,
+            node_id: node
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.human,
@@ -1105,6 +1195,36 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
     page.get("endCursor")
         .and_then(Value::as_str)
         .map(String::from)
+}
+
+/// Whether Copilot's cloud agent can be assigned in the repo, which is how
+/// GitHub shows that the agent is enabled there. An actor list that is
+/// missing or null (not asked for, or not readable with this token) reads as
+/// not enabled.
+fn copilot_enabled(repo: &Value) -> bool {
+    list(repo, "/suggestedActors/nodes").iter().any(|actor| {
+        actor.get("__typename").and_then(Value::as_str) == Some("Bot")
+            && actor.get("login").and_then(Value::as_str) == Some(COPILOT_LOGIN)
+    })
+}
+
+/// Whether the row may offer to ask Copilot for a conflict fix. Every clause
+/// is needed for the comment to be both the viewer's to make and able to
+/// work: Copilot pushes to the PR's own branch, which it cannot do on a
+/// fork, and only answers where its cloud agent is enabled. Mine keeps the
+/// offer to PRs whose conflict is the viewer's to clear.
+fn can_fix_conflict(
+    node: &Value,
+    section: Section,
+    is_draft: bool,
+    blocked_reasons: &[BlockedReason],
+    copilot_enabled: bool,
+) -> bool {
+    section == Section::Mine
+        && !is_draft
+        && blocked_reasons.contains(&BlockedReason::Conflict)
+        && node.get("isCrossRepository").and_then(Value::as_bool) == Some(false)
+        && copilot_enabled
 }
 
 /// A PR's unread-eligible activity as ascending timestamps, split by who
@@ -2493,7 +2613,8 @@ mod tests {
 
     #[test]
     fn the_paged_query_asks_for_the_viewers_latest_review() {
-        assert!(repo_field("r0", "acme", "widgets", None).contains("viewerLatestReview { state }"));
+        assert!(repo_field("r0", "acme", "widgets", None, true)
+            .contains("viewerLatestReview { state }"));
     }
 
     #[test]
@@ -2823,10 +2944,10 @@ mod tests {
 
     #[test]
     fn repo_field_quotes_arguments_and_resumes_from_a_cursor() {
-        let field = repo_field("r0", "acme", "widgets", Some("abc"));
+        let field = repo_field("r0", "acme", "widgets", Some("abc"), true);
         assert!(field.contains(r#"repository(owner: "acme", name: "widgets")"#));
         assert!(field.contains(r#"after: "abc""#));
-        assert!(!repo_field("r0", "acme", "widgets", None).contains("after:"));
+        assert!(!repo_field("r0", "acme", "widgets", None, true).contains("after:"));
     }
 
     /// `ownerAffiliations` defaults to [OWNER, COLLABORATOR]; if the query
@@ -3223,12 +3344,16 @@ mod tests {
     type QueryChars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
 
     /// Reads the selection out of the GraphQL subset this module writes:
-    /// one anonymous `query`, aliases, arguments, and inline fragments, whose
+    /// one anonymous `query` or `mutation`, aliases, arguments, and inline fragments, whose
     /// fields count as the enclosing field's own.
     fn parse_query(query: &str) -> Asked {
         let mut chars = query.chars().peekable();
         skip_space(&mut chars);
-        assert_eq!(word(&mut chars), "query", "not a query: {query}");
+        let operation = word(&mut chars);
+        assert!(
+            operation == "query" || operation == "mutation",
+            "not an operation: {query}"
+        );
         skip_space(&mut chars);
         if chars.peek() == Some(&'(') {
             arguments(&mut chars);
@@ -4586,6 +4711,179 @@ mod tests {
         assert_eq!(rows(&fetched), vec![("acme/widgets", 7)]);
         assert!(!fetched.prs[0].team_review_requested);
         assert_eq!(github.request_count(), 1);
+    }
+
+    // Fix with Copilot: the eligibility the sync reads onto a row, and the
+    // one comment the app writes.
+
+    fn copilot_actors() -> Value {
+        json!({ "nodes": [{ "__typename": "Bot", "login": "copilot-swe-agent" }] })
+    }
+
+    /// A PR of the viewer's with a merge conflict, on a branch of the repo
+    /// itself.
+    fn conflicted(overrides: Value) -> Value {
+        with(
+            pr_node(json!({
+                "id": "PR_kwDOconflict7",
+                "viewerDidAuthor": true,
+                "mergeable": "CONFLICTING",
+                "isCrossRepository": false,
+            })),
+            overrides,
+        )
+    }
+
+    /// One fetch of a single watched repo that answers `actors` for its
+    /// assignable Copilot actors.
+    fn fetch_with_actors(actors: Value, nodes: Vec<Value>) -> Vec<PullRequest> {
+        let mut repo = repo_named("acme/widgets", nodes, None);
+        repo["suggestedActors"] = actors;
+        let github = Canned::new(vec![ok(prs_round(5000, vec![repo]))]);
+        fetch_open(&github, &["acme/widgets"]).unwrap().prs
+    }
+
+    fn can_fix(actors: Value, overrides: Value) -> bool {
+        fetch_with_actors(actors, vec![conflicted(overrides)])[0].can_fix_conflict
+    }
+
+    #[test]
+    fn a_conflicting_pr_of_the_viewers_in_a_repo_with_copilot_can_ask_for_the_fix() {
+        assert!(can_fix(copilot_actors(), json!({})));
+    }
+
+    #[test]
+    fn the_fix_is_not_offered_when_any_one_condition_fails() {
+        let participated = json!({ "viewerDidAuthor": false, "viewerSubscription": "SUBSCRIBED" });
+        assert!(!can_fix(copilot_actors(), participated));
+        assert!(!can_fix(copilot_actors(), json!({ "isDraft": true })));
+        assert!(!can_fix(
+            copilot_actors(),
+            json!({ "mergeable": "MERGEABLE" })
+        ));
+        assert!(!can_fix(
+            copilot_actors(),
+            json!({ "isCrossRepository": true })
+        ));
+        assert!(!can_fix(json!({ "nodes": [] }), json!({})));
+    }
+
+    /// The actor filter is a substring search, so it can return accounts that
+    /// are not the agent.
+    #[test]
+    fn only_the_copilot_bot_itself_counts_as_copilot() {
+        let lookalikes = json!({ "nodes": [
+            { "__typename": "User", "login": "copilot-swe-agent" },
+            { "__typename": "Bot", "login": "copilot-swe-agent-fan" },
+        ] });
+        assert!(!can_fix(lookalikes, json!({})));
+    }
+
+    /// GitHub answers a field it will not serve with null beside the rest of
+    /// the data.
+    #[test]
+    fn a_repo_whose_actors_cannot_be_read_syncs_with_the_fix_withheld() {
+        let prs = fetch_with_actors(Value::Null, vec![conflicted(json!({}))]);
+
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].blocked_reasons, vec![BlockedReason::Conflict]);
+        assert!(!prs[0].can_fix_conflict);
+    }
+
+    /// The other way GitHub declines: the whole query, with no data. Search
+    /// is given up first, then the actors, and the PRs still arrive.
+    #[test]
+    fn a_query_refused_over_the_actors_is_asked_again_without_them() {
+        let refused = || {
+            answer(
+                200,
+                &[],
+                json!({
+                    "data": null,
+                    "errors": [{ "type": "FORBIDDEN", "message": "No actors for you." }]
+                }),
+            )
+        };
+        let mut repo = repo_named("acme/widgets", vec![conflicted(json!({}))], None);
+        repo["suggestedActors"] = copilot_actors();
+        let github = Canned::new(vec![refused(), refused(), ok(prs_round(5000, vec![repo]))]);
+
+        let fetched = fetch_open(&github, &["acme/widgets"]).unwrap();
+
+        assert_eq!(rows(&fetched), vec![("acme/widgets", 7)]);
+        assert!(!fetched.prs[0].can_fix_conflict);
+        assert!(github.query(1).contains("suggestedActors("));
+        assert!(!github.query(1).contains("search("));
+        assert!(!github.query(2).contains("suggestedActors("));
+    }
+
+    fn fixable() -> PullRequest {
+        fetch_with_actors(copilot_actors(), vec![conflicted(json!({}))]).remove(0)
+    }
+
+    #[test]
+    fn asking_for_the_fix_posts_one_comment_on_the_pr_with_the_fixed_body() {
+        let github = Canned::new(vec![ok(json!({
+            "addComment": { "subject": { "id": "PR_kwDOconflict7" } }
+        }))]);
+
+        run(github.client().request_conflict_fix(&fixable())).unwrap();
+
+        assert_eq!(github.request_count(), 1);
+        assert!(github.query(0).starts_with("mutation"));
+        assert!(github
+            .query(0)
+            .contains("addComment(input: { subjectId: $subject, body: $body })"));
+        assert_eq!(
+            github.variables(0),
+            json!({
+                "subject": "PR_kwDOconflict7",
+                "body": "@copilot resolve the merge conflicts on this PR."
+            })
+        );
+    }
+
+    #[test]
+    fn a_pr_that_is_not_eligible_is_refused_and_nothing_is_posted() {
+        let github = Canned::new(vec![]);
+        let quiet = fetch_with_actors(
+            copilot_actors(),
+            vec![conflicted(json!({ "mergeable": "MERGEABLE" }))],
+        )
+        .remove(0);
+
+        let refused = run(github.client().request_conflict_fix(&quiet));
+
+        assert_eq!(
+            refused,
+            Err(GithubError::Other(
+                "Nothing here for Copilot to fix.".into()
+            ))
+        );
+        assert_eq!(github.request_count(), 0);
+    }
+
+    /// A mutation GitHub turns down answers with a null payload and the
+    /// reason beside it.
+    #[test]
+    fn a_comment_github_turns_down_fails_with_githubs_message() {
+        let github = Canned::new(vec![answer(
+            200,
+            &[],
+            json!({
+                "data": { "addComment": null },
+                "errors": [{ "type": "FORBIDDEN", "message": "Resource not accessible." }]
+            }),
+        )]);
+
+        let failed = run(github.client().request_conflict_fix(&fixable()));
+
+        assert_eq!(
+            failed,
+            Err(GithubError::Other(
+                "GitHub error: Resource not accessible.".into()
+            ))
+        );
     }
 
     #[test]

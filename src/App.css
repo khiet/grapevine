@@ -316,12 +316,74 @@ body {
 /* Scoped to rows with the control: a merged row is also split but keeps its
    date on hover. */
 .pr-row-split:has(.pr-snooze):hover .pr-updated,
-.pr-row-split:has(.pr-snooze:focus-visible) .pr-updated {
+.pr-row-split:has(.pr-snooze:focus-visible) .pr-updated,
+.pr-row-split:has(.pr-fix:focus-visible) .pr-updated {
   visibility: hidden;
 }
 
 .pr-snooze:hover {
   color: #0a84ff;
+}
+
+/* The Fix with Copilot control: the snooze control's neighbour, in the same
+   timestamp slot and revealed with it. `right` clears the snooze control
+   (7px offset + 21px wide) with a 6px gap, so neither is hit for the other.
+   Once armed or settled it is a word in a pill, wider than the slot, and
+   grows leftward over the end of the title; the opaque fill keeps it
+   readable there. */
+.pr-fix {
+  position: absolute;
+  top: 9px;
+  right: 34px;
+  height: calc(13px * 1.35);
+  display: flex;
+  align-items: center;
+  border: none;
+  background: none;
+  padding: 0 4px;
+  color: #8e8e93;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.pr-row-split:hover .pr-fix,
+.pr-fix:focus-visible {
+  opacity: 1;
+}
+
+.pr-fix:hover {
+  color: #0a84ff;
+}
+
+.pr-fix.is-armed,
+.pr-fix.is-settled {
+  padding: 0 7px;
+  border-radius: 9px;
+}
+
+.pr-fix.is-armed,
+.pr-fix.is-armed:hover {
+  background-color: #0a84ff;
+  color: #fff;
+}
+
+.pr-fix.is-settled {
+  background-color: #e5e5ea;
+  color: #6e6e73;
+}
+
+/* A Copilot request that did not go out, in the sync error's orange. Clips
+   like the bot note beside it. */
+.pr-fix-error {
+  /* Gives way before the blocked pill beside it does, after the repo. */
+  flex-shrink: 4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c76b00;
 }
 
 .pr-section li + li.pr-snoozed-line {
@@ -1135,8 +1197,14 @@ body {
 
   .pr-dismiss,
   .pr-snooze,
+  .pr-fix,
   .pr-snoozed-toggle {
     color: #7c7c80;
+  }
+
+  .pr-fix.is-settled {
+    background-color: #3a3a3c;
+    color: #aeaeb2;
   }
 
   .pr-section li + li.pr-snoozed-line {
@@ -1276,7 +1344,8 @@ body {
     color: #7c7c80;
   }
 
-  .sync-error {
+  .sync-error,
+  .pr-fix-error {
     color: #ffb340;
   }
 

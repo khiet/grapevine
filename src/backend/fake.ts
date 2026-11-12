@@ -60,6 +60,12 @@ export function createFakeBackend(
         ...snapshot,
         snoozed: snapshot.snoozed.filter((k) => k !== key),
       }),
+    // Refuses what the backend would; a fixable PR is taken as asked, and
+    // nothing changes, since the fake has no Copilot to clear the conflict.
+    fix_conflict: ({ key }) => {
+      const pr = snapshot.prs.find((candidate) => prKey(candidate) === key);
+      if (!pr?.can_fix_conflict) throw "Nothing here for Copilot to fix.";
+    },
   };
 
   const adapter: Adapter = {

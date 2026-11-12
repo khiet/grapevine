@@ -44,6 +44,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     ready_to_merge: false,
     turn: null,
     turn_since: null,
+    can_fix_conflict: false,
     unread_count,
     bot_unread_count: 0,
   };

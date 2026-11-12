@@ -44,6 +44,11 @@ impl SyncState {
     pub fn snapshot(&self) -> Snapshot {
         self.pr_state.snapshot()
     }
+
+    /// The PR filed under `key` in the Snapshot.
+    pub fn find(&self, key: &str) -> Option<PullRequest> {
+        self.pr_state.find(key)
+    }
 }
 
 /// Spawns the background loop: sync now, then again after a delay picked from

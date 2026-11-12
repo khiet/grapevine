@@ -176,6 +176,7 @@ pub fn run() {
             commands::clear_merged,
             commands::snooze,
             commands::wake,
+            commands::fix_conflict,
             commands::get_poll_interval,
             commands::set_poll_interval,
             commands::get_launch_at_login,

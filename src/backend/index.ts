@@ -75,6 +75,11 @@ export interface PullRequest {
    * watched the turn begin (it was already yours the first time the PR was
    * seen, for one), so the start is unknown. */
   turn_since: number | null;
+  /** The row may offer to ask Copilot to resolve the merge conflict.
+   * Backend-computed: a Mine, non-draft, conflicting PR that is not from a
+   * fork, in a repo where Copilot's cloud agent is enabled. The backend
+   * checks it again before posting, so this only decides what is offered. */
+  can_fix_conflict: boolean;
   /** New activity from people. The only count that badges a row or a
    * collapsed section. It does not feed the tray. */
   unread_count: number;
@@ -207,6 +212,14 @@ export const snooze = (key: string) =>
     expiresAt: nextLocalMorning(new Date()),
   });
 export const wake = (key: string) => adapter.invoke<void>("wake", { key });
+
+/** Asks Copilot to resolve the PR's merge conflict, with a comment posted on
+ * GitHub as the user: the one command that writes there. Only the key goes
+ * over; the backend picks the PR and the words. Rejects with the message to
+ * show on the row. No Snapshot follows: the conflict clears on a later sync,
+ * once Copilot has pushed. */
+export const fixConflict = (key: string) =>
+  adapter.invoke<void>("fix_conflict", { key });
 
 /** Epoch ms of the next local 08:00 strictly after `now`: when a snooze runs
  * out on its own. */

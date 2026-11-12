@@ -147,6 +147,17 @@ impl PrState {
         self.inner.lock().unwrap().snapshot.clone()
     }
 
+    /// The PR filed under `key` in the Snapshot, as the last sync left it.
+    pub fn find(&self, key: &str) -> Option<PullRequest> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .snapshot
+            .prs
+            .iter()
+            .find(|pr| unread::key(pr) == key)
+            .cloned()
+    }
+
     /// A sync fetched `prs`, and `newly_merged` are the departed PRs GitHub
     /// confirmed as merged. Unread counts are computed against the watermarks
     /// as they are now, not as they were when the fetch started.
@@ -428,6 +439,8 @@ mod tests {
             ready_to_merge: false,
             turn: None,
             turn_since: None,
+            can_fix_conflict: false,
+            node_id: String::new(),
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.iter().map(|t| t.to_string()).collect(),
@@ -462,6 +475,15 @@ mod tests {
             turn: Some(Turn::Yours),
             ..pr
         }
+    }
+
+    #[test]
+    fn a_pr_is_found_by_its_key_only_while_it_is_in_the_snapshot() {
+        let state = state_with_one_unread();
+        assert_eq!(state.find("acme/widgets#8").map(|pr| pr.number), Some(8));
+        assert!(state.find("acme/widgets#9").is_none());
+        state.unconfigured();
+        assert!(state.find("acme/widgets#8").is_none());
     }
 
     fn unread_counts(snapshot: &Snapshot) -> Vec<u64> {
@@ -1303,6 +1325,9 @@ mod tests {
                 ready_to_merge: true,
                 turn: Some(Turn::Yours),
                 turn_since: Some(1_784_205_000_000),
+                can_fix_conflict: true,
+                // Internal: the frontend names a PR by key, never by node id.
+                node_id: "PR_kwDOAAAAAA".into(),
                 unread_count: 3,
                 bot_unread_count: 8,
                 // Internal working data; must not leak into the payload.
@@ -1353,6 +1378,7 @@ mod tests {
                     "ready_to_merge": true,
                     "turn": "yours",
                     "turn_since": 1_784_205_000_000u64,
+                    "can_fix_conflict": true,
                     "unread_count": 3,
                     "bot_unread_count": 8
                 }],
