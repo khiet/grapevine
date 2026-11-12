@@ -24,7 +24,8 @@ Current Ubuntu on x86_64 is the only supported Linux target.
 
 ### Updates
 
-Installed apps from v0.6.0 onward update themselves: Grapevine checks for new
-releases in the background and offers a one-click restart when one is ready, so
-this manual download is only needed the first time. On Ubuntu, the restart asks
-for your password, because installing a `.deb` needs administrator rights.
+Installed apps update themselves, on macOS from v0.6.0 onward: Grapevine checks
+for new releases in the background and offers a one-click restart when one is
+ready, so this manual download is only needed the first time. On Ubuntu, the
+restart asks for your password, because installing a `.deb` needs administrator
+rights.

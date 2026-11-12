@@ -24,7 +24,8 @@
 ## About
 
 Grapevine lives in the menubar only, with no Dock icon. Clicking the tray icon
-toggles a popover with the PR list, and clicking away dismisses it. You give it
+toggles a popover with the PR list, and clicking away dismisses it. On Ubuntu
+the icon opens a menu instead, and the popover opens from there. You give it
 a GitHub token and a list of repos; it polls them every few minutes and shows
 the open PRs, split into the ones you authored, the ones you are involved in,
 and everything else. The number in the menubar is how many of the first two
