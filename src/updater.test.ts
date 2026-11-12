@@ -124,6 +124,17 @@ describe("checkForUpdates", () => {
     });
   });
 
+  test("restarting a staged update relaunches into it", async () => {
+    const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
+    check.mockResolvedValue({ version: "0.6.0", downloadAndInstall });
+    const { checkForUpdates, restartToUpdate } = await import("./updater");
+    await checkForUpdates(false);
+
+    await restartToUpdate();
+
+    expect(relaunch).toHaveBeenCalledOnce();
+  });
+
   test("a staged update is not re-checked or replaced", async () => {
     const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
     check.mockResolvedValue({ version: "0.6.0", downloadAndInstall });
