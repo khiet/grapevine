@@ -19,7 +19,7 @@
   </p>
 </p>
 
-![Grapevine demo: clicking the menubar icon opens fictional pull requests with unread badges and review markers, opening a PR clears its badge, expanding Mine shows blocked and approved PRs, and typing checkout filters the list.](docs/assets/grapevine.gif)
+![Grapevine demo: the menubar icon opens a popover of fictional pull requests, and nine labels land on it one at a time: the tray number is the PRs waiting on you, your turn comes first with how long it has waited, only required checks count as failing, ready to merge, merge queue position, your team was asked to review, the filter across every repo, unread from people and never bots, and snooze until it changes. The loop rests on all nine, above macOS and Ubuntu badges.](docs/assets/grapevine.gif)
 
 ## About
 

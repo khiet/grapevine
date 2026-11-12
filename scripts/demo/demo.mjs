@@ -71,17 +71,6 @@ async function capture(baseUrl, dir) {
   await app.locator(".pr-row").first().waitFor({ state: "attached" });
 
   const frames = [];
-  async function caption(step, key, headline, detail) {
-    await page.evaluate(
-      ([step, key, headline, detail]) => {
-        document.getElementById("step").textContent = step;
-        document.getElementById("key").textContent = key;
-        document.getElementById("headline").textContent = headline;
-        document.getElementById("detail").textContent = detail;
-      },
-      [step, key, headline, detail],
-    );
-  }
   async function pointAt(locator) {
     const box = await locator.boundingBox();
     await page.evaluate(
@@ -91,7 +80,7 @@ async function capture(baseUrl, dir) {
         cursor.style.top = `${y - 1.8}px`;
         cursor.removeAttribute("hidden");
       },
-      [box.x + Math.min(box.width / 2, 60), box.y + box.height / 2],
+      [box.x + box.width / 2, box.y + box.height / 2],
     );
   }
   const hideCursor = () =>
@@ -102,61 +91,86 @@ async function capture(baseUrl, dir) {
     await page.screenshot({ path: file });
     frames.push({ file, duration });
   }
-  const popover = page.locator("#popover");
   const setOpen = (open) =>
     page.evaluate((open) => {
       document.getElementById("popover").hidden = !open;
       document.getElementById("tray").classList.toggle("is-open", open);
     }, open);
+  // Each label stays once it has landed, so the last frame carries them all.
+  async function label(target, side, text, chipY) {
+    await page.evaluate((args) => window.callout(...args), [
+      await target.boundingBox(),
+      side,
+      text,
+      chipY ?? null,
+    ]);
+  }
+  const row = (number) => app.locator("li", { hasText: number });
 
-  await caption("1", "Click", "Pull requests, in the menubar.", "The number is how many PRs are waiting on you.");
+  // Mine starts folded; it is opened off-camera so one view shows both
+  // sections and the popover never has to move.
+  await setOpen(true);
+  await app.locator(".pr-section-toggle", { hasText: "Mine" }).click();
+  await row("#415").waitFor();
+  await page.mouse.move(2, 400);
+  // Let the chevron finish its rotation before any frame is taken.
+  await page.waitForTimeout(400);
   await setOpen(false);
-  await pointAt(page.locator("#tray"));
-  await snap(2000);
+
+  const tray = page.locator("#tray");
+  await pointAt(tray);
+  await snap(900);
   await setOpen(true);
   await hideCursor();
-  await popover.waitFor();
-  await snap(3400);
-  if ((await trayCount()) !== "3") throw new Error("tray should start at 3");
-
-  await caption("2", "Click", "Catch up where someone spoke.", "Red badges count unread activity. Opening the PR on GitHub clears it.");
-  const webhookRow = app.locator(".pr-row", { hasText: "#1284" });
-  await pointAt(webhookRow);
+  if ((await trayCount()) !== "4") throw new Error("tray should show 4");
+  // The first four targets sit close together, so their chips are spread by hand.
+  await label(tray, "right", "4 PRs waiting on you", 62);
+  await snap(1700);
+  await label(row("#415").locator(".pr-updated"), "right", "Your turn first, and for how long", 112);
+  await snap(1600);
+  await label(row("#415").locator(".pr-marks"), "right", "Only required checks count", 158);
+  await snap(1500);
+  await label(row("#1295").locator(".pr-marks"), "right", "Ready to merge", 208);
+  await snap(1500);
+  await label(row("#2320").locator(".pr-glyph-count"), "right", "Merge queue position");
+  await snap(1500);
+  await label(row("#2317").locator(".pr-glyph-wide"), "right", "Your team was asked to review");
+  await snap(1500);
+  await label(app.locator(".header-search"), "left", "Filter every repo");
+  await snap(1500);
+  await label(row("#1291").locator(".pr-unread"), "left", "Unread from people, never bots");
+  await snap(1500);
+  // The snooze button only shows on a hovered row.
+  await row("#1284").hover();
+  await label(row("#1284").locator(".pr-snooze"), "right", "Snooze until it changes");
   await snap(1800);
-  await webhookRow.click();
-  await app.locator(".pr-row", { hasText: "#1284" }).locator(".pr-unread").waitFor({ state: "detached" });
-  // Reading is not acting: the PR still waits on you.
-  if ((await trayCount()) !== "3") throw new Error("tray should stay at 3");
-  await snap(2800);
+  await page.evaluate(() => document.getElementById("os").removeAttribute("hidden"));
+  // The loop rests on the full summary so every label can be read.
+  await snap(5000);
 
-  await caption("3", "Click", "Your own PRs, and what blocks them.", "Approved, awaiting review, CI failing, a draft: each row says what comes next.");
-  const mineToggle = app.locator(".pr-section-toggle", { hasText: "Mine" });
-  await pointAt(mineToggle);
-  await snap(1400);
-  await mineToggle.click();
-  await app.locator(".pr-row", { hasText: "#415" }).waitFor();
-  // #2320 is the only queued PR in the fixture, so it alone carries the mark.
-  const queued = app.locator(".pr-row", {
-    has: app.locator('[aria-label$="in merge queue"]'),
-  });
-  if ((await queued.allTextContents()).join().match(/#\d+/g)?.join() !== "#2320") {
-    throw new Error("only #2320 should show the merge queue mark");
+  // Nothing was clicked, so the count must not have moved.
+  if ((await trayCount()) !== "4") throw new Error("tray should still show 4");
+  const chips = await page.locator(".chip").evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const { left, top, right, bottom } = node.getBoundingClientRect();
+      return { text: node.textContent, left, top, right, bottom };
+    }),
+  );
+  if (chips.length !== 9) throw new Error(`want 9 labels, got ${chips.length}`);
+  const popoverBox = await page.locator("#popover").boundingBox();
+  for (const [i, a] of chips.entries()) {
+    if (a.left < 0 || a.right > 1120) throw new Error(`"${a.text}" runs off the stage`);
+    if (a.right > popoverBox.x && a.left < popoverBox.x + popoverBox.width) {
+      throw new Error(`"${a.text}" covers the popover`);
+    }
+    for (const b of chips.slice(i + 1)) {
+      if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
+        throw new Error(`"${a.text}" overlaps "${b.text}"`);
+      }
+    }
   }
-  // Let the chevron finish its rotation before the frame is taken.
-  await page.waitForTimeout(400);
-  await hideCursor();
-  await snap(4200);
-
-  await caption("4", "Type", "Filter across every repo.", "Matches title, repo, number, or author as you type.");
-  const search = app.locator(".header-search-input");
-  for (const char of "checkout") {
-    await search.press(char === " " ? "Space" : char);
-    await snap(140);
-  }
-  frames.at(-1).duration = 4200;
-  if ((await app.locator(".pr-row", { hasText: "#412" }).count()) !== 0) {
-    throw new Error("filter should hide non-matching rows");
-  }
+  const total = frames.reduce((sum, frame) => sum + frame.duration, 0);
+  if (total !== 20000) throw new Error(`loop is ${total}ms, want 20000`);
 
   await browser.close();
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);
