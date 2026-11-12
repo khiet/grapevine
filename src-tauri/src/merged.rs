@@ -45,7 +45,8 @@ pub struct Deploy {
     pub url: String,
 }
 
-/// Every state but `Deploying` is final: the entry is not asked about again.
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeployState {
@@ -53,6 +54,14 @@ pub enum DeployState {
     Deployed,
     Failed,
     Cancelled,
+}
+
+impl DeployState {
+    /// A final state is never asked about again, so a run re-run after it
+    /// was recorded goes unseen.
+    pub fn is_final(self) -> bool {
+        self != DeployState::Deploying
+    }
 }
 
 /// Merged-but-not-dismissed PRs, newest merge first.
@@ -113,7 +122,7 @@ pub fn awaiting_deploy(state: &MergedState, now_epoch_ms: u64) -> Vec<String> {
             entry
                 .deploy
                 .as_ref()
-                .is_none_or(|deploy| deploy.state == DeployState::Deploying)
+                .is_none_or(|deploy| !deploy.state.is_final())
         })
         .filter(|entry| {
             github::rfc3339_utc_to_epoch_secs(&entry.merged_at)
@@ -189,7 +198,7 @@ mod tests {
     fn deploy(state: DeployState) -> Deploy {
         Deploy {
             state,
-            completed_at: (state != DeployState::Deploying).then(|| "2026-07-12T10:09:00Z".into()),
+            completed_at: state.is_final().then(|| "2026-07-12T10:09:00Z".into()),
             url: "https://github.com/acme/widgets/actions/runs/2".into(),
         }
     }

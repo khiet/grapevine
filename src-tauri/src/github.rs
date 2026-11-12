@@ -1026,16 +1026,15 @@ fn deploy_run(suite: &Value) -> Option<Deploy> {
             _ => DeployState::Failed,
         }
     };
+    let completed_at = run
+        .get("updatedAt")
+        .and_then(Value::as_str)
+        .filter(|_| state.is_final())
+        .map(String::from);
     Some(Deploy {
-        completed_at: (state != DeployState::Deploying)
-            .then(|| {
-                run.get("updatedAt")
-                    .and_then(Value::as_str)
-                    .map(String::from)
-            })
-            .flatten(),
-        url: run.get("url").and_then(Value::as_str)?.to_string(),
         state,
+        completed_at,
+        url: run.get("url").and_then(Value::as_str)?.to_string(),
     })
 }
 
@@ -3117,7 +3116,7 @@ mod tests {
     }
 
     #[test]
-    fn merged_status_field_quotes_arguments() {
+    fn pr_field_quotes_arguments() {
         let field = pr_field("p0", "acme", "widgets", 7, "merged mergedAt");
         assert!(field.contains(r#"p0: repository(owner: "acme", name: "widgets")"#));
         assert!(field.contains("pullRequest(number: 7)"));

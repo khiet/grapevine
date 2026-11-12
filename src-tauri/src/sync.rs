@@ -324,7 +324,16 @@ async fn sync_once(app: &AppHandle) -> Outcome {
         eprintln!("cannot deliver sync effects: {e}");
     }
     if matches!(outcome, Outcome::Synced { .. }) {
-        poll_deploys(app).await;
+        if let Err(e) = poll_deploys(app).await {
+            eprintln!("deploy poll failed: {e}");
+            // The sync itself stands; only the schedule heeds the refusal.
+            if let GithubError::RateLimited { reset_epoch_secs } = e {
+                return Outcome::Failed {
+                    rate_limited: true,
+                    reset_epoch_secs,
+                };
+            }
+        }
     }
     outcome
 }
@@ -334,25 +343,23 @@ async fn sync_once(app: &AppHandle) -> Outcome {
 /// running, so this is what moves an entry on from there. A failure costs
 /// nothing but time: the entries are asked about again next sync, and the
 /// sync itself has already been delivered.
-async fn poll_deploys(app: &AppHandle) {
+async fn poll_deploys(app: &AppHandle) -> Result<(), GithubError> {
     let state = app.state::<SyncState>();
     let keys = state.pr_state.awaiting_deploy(now_epoch_ms());
     if keys.is_empty() {
-        return;
+        return Ok(());
     }
-    let Ok(Some(token)) = keychain::load() else {
-        return;
+    let Some(token) = keychain::load().map_err(GithubError::Other)? else {
+        return Ok(());
     };
-    match github::fetch_deploy_status(&token, &keys).await {
-        // Nothing found changes nothing, so there is nothing to deliver.
-        Ok(found) if found.is_empty() => {}
-        Ok(found) => {
-            if let Err(e) = transition(app, |state| state.deploys_found(found)) {
-                eprintln!("cannot deliver deploy statuses: {e}");
-            }
+    let found = github::fetch_deploy_status(&token, &keys).await?;
+    // Nothing found changes nothing, so there is nothing to deliver.
+    if !found.is_empty() {
+        if let Err(e) = transition(app, |state| state.deploys_found(found)) {
+            eprintln!("cannot deliver deploy statuses: {e}");
         }
-        Err(e) => eprintln!("deploy poll failed: {e}"),
     }
+    Ok(())
 }
 
 /// One sync's fetch: the open PRs, any tracked PRs that turned out to have
