@@ -9,6 +9,8 @@ sudo apt-get install ./grapevine_*.deb
 ```
 
 Run every step in a section in order; later steps depend on earlier ones.
+"In-app update" is the one section that installs published releases instead of
+the pull request's artifact.
 
 ## Launch at login
 
@@ -145,3 +147,39 @@ request.
     quit Grapevine and start it again. **Expect:** the popover text is set in
     the serif font, like the top panel. Run
     `gsettings reset org.gnome.desktop.interface font-name` afterwards.
+
+## In-app update
+
+Needs two published releases that each carry a `Grapevine-v<version>-amd64.deb`
+asset, called OLD and NEW below, where NEW is the latest release and OLD
+already asks for the password only on restart. The CI artifact cannot stand in
+for either: it carries no updater signature. Run with networking on.
+
+1. Quit Grapevine and install OLD from its release page:
+   `sudo apt-get install --allow-downgrades ./Grapevine-v<OLD>-amd64.deb`.
+2. Start Grapevine, open Settings and read the "Updates" card. **Expect:** it
+   says "Grapevine v<OLD>".
+3. Leave the popover hidden for two minutes without touching the machine.
+   **Expect:** no password prompt and no other dialog appears.
+4. Open the popover. **Expect:** a blue banner across the top reads "Restart
+   to update to v<NEW> (asks for your password)".
+5. Open Settings. **Expect:** the note under "Check for updates" reads
+   "v<NEW> is ready. Restart to apply it; you will be asked for your
+   password."
+6. Run `dpkg-query -W grapevine`. **Expect:** the version is still OLD; nothing
+   was installed in the background.
+7. Click the banner. **Expect:** an "Authentication Required" prompt appears,
+   and only now.
+8. Cancel the prompt, and cancel any further password prompt that follows it.
+   **Expect:** Grapevine keeps running with its glyph in the panel, the banner
+   is gone, and the note in Settings reads "Could not install the update."
+9. Run `dpkg-query -W grapevine`. **Expect:** still OLD.
+10. Click "Check for updates". **Expect:** the note moves through "Checking..."
+    and "Downloading v<NEW>..." without a prompt, and the banner from step 4
+    returns.
+11. Click the banner and enter your password. **Expect:** the glyph leaves the
+    panel and comes back by itself within a few seconds, with exactly one
+    glyph shown.
+12. Open Settings. **Expect:** the card says "Grapevine v<NEW>", there is no
+    banner, and `dpkg-query -W grapevine` prints NEW.
+13. Click "Check for updates". **Expect:** "Grapevine is up to date."

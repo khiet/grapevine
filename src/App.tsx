@@ -9,7 +9,12 @@ import {
 import { derivePopover } from "./popoverView";
 import PrList, { formatLastSync, useCollapsedSections } from "./PrList";
 import SettingsView from "./SettingsView";
-import { restartToUpdate, startUpdateChecks, useUpdateState } from "./updater";
+import {
+  restartLabel,
+  restartToUpdate,
+  startUpdateChecks,
+  useUpdateState,
+} from "./updater";
 
 function App() {
   const [view, setView] = useState<"list" | "settings">("list");
@@ -92,7 +97,7 @@ function App() {
           className="update-banner"
           onClick={() => restartToUpdate()}
         >
-          Restart to update to v{updateState.version}
+          {restartLabel(updateState)}
         </button>
       )}
       {inSettings ? (
