@@ -111,7 +111,7 @@ export interface MergedPr {
   avatar_url: string;
   owner_avatar_url: string;
   merged_at: string;
-  /** The production deploy of the merge commit; null when no deploy run has
+  /** The deploy of the merge commit; null when no deploy run has
    * been found, which is forever for a repo that has none. */
   deploy: Deploy | null;
 }

@@ -23,7 +23,7 @@ pub struct MergedPr {
     pub owner_avatar_url: String,
     /// GitHub's mergedAt (ISO-8601 UTC); orders the section newest first.
     pub merged_at: String,
-    /// The production deploy of the merge commit. `None` until a deploy run
+    /// The deploy of the merge commit. `None` until a deploy run
     /// is found, which is forever for a repo that has none, and for entries
     /// saved before this field existed.
     #[serde(default)]

@@ -340,9 +340,9 @@ async fn sync_once(app: &AppHandle) -> Outcome {
 
 /// Asks GitHub where the deploys of the merged PRs stand, after a sync that
 /// worked. A merge is snapshotted once, usually while its deploy is still
-/// running, so this is what moves an entry on from there. A failure costs
-/// nothing but time: the entries are asked about again next sync, and the
-/// sync itself has already been delivered.
+/// running, so this is what moves an entry on from there. An `Err` loses
+/// nothing: the entries are asked about again next sync, and the sync itself
+/// has already been delivered.
 async fn poll_deploys(app: &AppHandle) -> Result<(), GithubError> {
     let state = app.state::<SyncState>();
     let keys = state.pr_state.awaiting_deploy(now_epoch_ms());
