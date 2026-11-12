@@ -107,8 +107,8 @@ async function capture(baseUrl, dir) {
   }
   const row = (number) => app.locator("li", { hasText: number });
 
-  // Mine starts folded; it is opened off-camera so one view shows both
-  // sections and the popover never has to move.
+  // Mine starts folded; it is opened off-camera so every labelled row is in
+  // view without scrolling.
   await setOpen(true);
   await app.locator(".pr-section-toggle", { hasText: "Mine" }).click();
   await row("#415").waitFor();
@@ -148,7 +148,7 @@ async function capture(baseUrl, dir) {
   // The loop rests on the full summary so every label can be read.
   await snap(5000);
 
-  // Nothing was clicked, so the count must not have moved.
+  // No PR was opened or snoozed, so the count must not have moved.
   if ((await trayCount()) !== "4") throw new Error("tray should still show 4");
   const chips = await page.locator(".chip").evaluateAll((nodes) =>
     nodes.map((node) => {
