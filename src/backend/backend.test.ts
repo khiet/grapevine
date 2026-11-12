@@ -156,6 +156,7 @@ test("dismissing a merged PR removes only the row with that key", async () => {
     avatar_url: "",
     owner_avatar_url: "",
     merged_at: "2026-09-30T09:00:00Z",
+    deploy: null,
   });
   const fake = createFakeBackend({
     ...snapshot([]),

@@ -323,7 +323,43 @@ async fn sync_once(app: &AppHandle) -> Outcome {
     if let Err(e) = delivered {
         eprintln!("cannot deliver sync effects: {e}");
     }
+    if matches!(outcome, Outcome::Synced { .. }) {
+        if let Err(e) = poll_deploys(app).await {
+            eprintln!("deploy poll failed: {e}");
+            // The sync itself stands; only the schedule heeds the refusal.
+            if let GithubError::RateLimited { reset_epoch_secs } = e {
+                return Outcome::Failed {
+                    rate_limited: true,
+                    reset_epoch_secs,
+                };
+            }
+        }
+    }
     outcome
+}
+
+/// Asks GitHub where the deploys of the merged PRs stand, after a sync that
+/// worked. A merge is snapshotted once, usually while its deploy is still
+/// running, so this is what moves an entry on from there. An `Err` loses
+/// nothing: the entries are asked about again next sync, and the sync itself
+/// has already been delivered.
+async fn poll_deploys(app: &AppHandle) -> Result<(), GithubError> {
+    let state = app.state::<SyncState>();
+    let keys = state.pr_state.awaiting_deploy(now_epoch_ms());
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let Some(token) = keychain::load().map_err(GithubError::Other)? else {
+        return Ok(());
+    };
+    let found = github::fetch_deploy_status(&token, &keys).await?;
+    // Nothing found changes nothing, so there is nothing to deliver.
+    if !found.is_empty() {
+        if let Err(e) = transition(app, |state| state.deploys_found(found)) {
+            eprintln!("cannot deliver deploy statuses: {e}");
+        }
+    }
+    Ok(())
 }
 
 /// One sync's fetch: the open PRs, any tracked PRs that turned out to have

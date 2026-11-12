@@ -159,7 +159,11 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::{testing::temp_store, *};
-    use crate::{fix_requests::FixRequest, merged::MergedPr, snooze::Snooze};
+    use crate::{
+        fix_requests::FixRequest,
+        merged::{Deploy, DeployState, MergedPr},
+        snooze::Snooze,
+    };
 
     fn merged_entry() -> MergedPr {
         MergedPr {
@@ -171,6 +175,11 @@ mod tests {
             avatar_url: "https://avatars.example/someone".into(),
             owner_avatar_url: "https://avatars.example/acme".into(),
             merged_at: "2026-07-11T10:00:00Z".into(),
+            deploy: Some(Deploy {
+                state: DeployState::Failed,
+                completed_at: Some("2026-07-11T10:09:00Z".into()),
+                url: "https://github.com/acme/widgets/actions/runs/2".into(),
+            }),
         }
     }
 
@@ -322,7 +331,7 @@ mod tests {
     /// Without `#[serde(default)]` on the field the parse fails and the load
     /// silently discards the whole Merged section.
     #[test]
-    fn a_merged_file_saved_before_the_owner_avatar_field_still_loads() {
+    fn a_merged_file_saved_before_the_newer_fields_still_loads() {
         let (dir, store) = temp_store();
         let legacy = r#"[{
             "number": 3,
@@ -338,5 +347,6 @@ mod tests {
         assert_eq!(state.len(), 1);
         assert_eq!(state[0].number, 3);
         assert_eq!(state[0].owner_avatar_url, "");
+        assert_eq!(state[0].deploy, None);
     }
 }

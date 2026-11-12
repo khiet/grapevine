@@ -111,6 +111,21 @@ export interface MergedPr {
   avatar_url: string;
   owner_avatar_url: string;
   merged_at: string;
+  /** The deploy of the merge commit; null when no deploy run has
+   * been found, which is forever for a repo that has none. */
+  deploy: Deploy | null;
+}
+
+/** Every state but "deploying" is final. */
+export type DeployState = "deploying" | "deployed" | "failed" | "cancelled";
+
+export interface Deploy {
+  state: DeployState;
+  /** When the run behind `state` finished (ISO-8601 UTC); null while
+   * deploying. */
+  completed_at: string | null;
+  /** The workflow run behind `state`. */
+  url: string;
 }
 
 export interface Snapshot {

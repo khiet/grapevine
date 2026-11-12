@@ -56,6 +56,7 @@ const mergedPr = (overrides: Partial<MergedPr> = {}): MergedPr => ({
   avatar_url: "https://avatars.example/someone",
   owner_avatar_url: "https://avatars.example/acme",
   merged_at: "2026-07-11T09:30:00Z",
+  deploy: null,
   ...overrides,
 });
 
