@@ -238,6 +238,14 @@ pub struct PullRequest {
     /// to GitHub: [`Client::request_conflict_fix`] refuses a PR without it.
     /// Same property-not-event rule as `blocked_reasons`.
     pub can_fix_conflict: bool,
+    /// Copilot has been asked to resolve the conflict and the request is
+    /// still live; filled in from the fix requests after fetch, always false
+    /// out of this module. The row shows it in place of the fix control.
+    pub fix_requested: bool,
+    /// GitHub had not worked mergeability out for this poll, so the empty
+    /// `blocked_reasons` say nothing about a conflict either way.
+    #[serde(skip)]
+    pub mergeability_unknown: bool,
     /// GitHub's global node id, which the comment mutation addresses the PR
     /// by. Stays on this side of the wire: the frontend names a PR by its key
     /// and never supplies what gets written to.
@@ -1176,6 +1184,8 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             turn,
             turn_since: None,
             can_fix_conflict,
+            fix_requested: false,
+            mergeability_unknown: node.get("mergeable").and_then(Value::as_str) == Some("UNKNOWN"),
             node_id: node
                 .get("id")
                 .and_then(Value::as_str)
@@ -4764,6 +4774,19 @@ mod tests {
             json!({ "isCrossRepository": true })
         ));
         assert!(!can_fix(json!({ "nodes": [] }), json!({})));
+    }
+
+    /// A live fix request reads this to tell "no conflict" from "not known
+    /// yet": both arrive with no blocked reasons.
+    #[test]
+    fn only_an_unsettled_mergeability_is_reported_as_unknown() {
+        let unknown = |mergeable: &str| {
+            let node = conflicted(json!({ "mergeable": mergeable }));
+            fetch_with_actors(copilot_actors(), vec![node])[0].mergeability_unknown
+        };
+        assert!(unknown("UNKNOWN"));
+        assert!(!unknown("CONFLICTING"));
+        assert!(!unknown("MERGEABLE"));
     }
 
     /// The actor filter is a search, so it can return accounts that are not

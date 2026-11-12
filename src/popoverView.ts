@@ -22,12 +22,10 @@ const SECTIONS = [
  * deliberately not collapsible. */
 export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
 
-/** Where a request for a Copilot fix stands: being posted, or posted. */
-export type FixRequest = "posting" | "requested";
-
-/** The requests made so far, by PR key. A key with no entry has had none
- * made. Held by fixConflict.ts. */
-export type FixRequests = ReadonlyMap<string, FixRequest>;
+/** The keys of the PRs whose request for a Copilot fix is on its way to
+ * GitHub. Held by fixConflict.ts. A request that got there is the backend's
+ * to remember: it comes back as the PR's fix_requested. */
+export type FixesPosting = ReadonlySet<string>;
 
 /** One item of a row's right-edge marker cluster. `tip` is the hover tooltip
  * and the accessible name; null on the primary blocked pill, which is its own
@@ -43,6 +41,7 @@ export type Mark =
   | { kind: "ready"; label: string; yourTurn?: true }
   | { kind: "auto-merge"; label: string; tip: string }
   | { kind: "checks-running"; label: string; tip: string }
+  | { kind: "copilot-fixing"; label: string; tip: string }
   | { kind: "blocked"; label: string; tip: string | null; yourTurn?: true };
 
 export interface RowView {
@@ -64,9 +63,10 @@ export interface RowView {
    * row back, null where rows cannot be snoozed (All). */
   snooze: "offer" | "wake" | null;
   /** The row's Fix with Copilot control: "offer" to ask Copilot to resolve
-   * the merge conflict, "posting" while the request is on its way,
-   * "requested" once it is made, null where the fix is not on offer. */
-  fix: "offer" | FixRequest | null;
+   * the merge conflict, "posting" while the request is on its way, null
+   * where the fix is not on offer. A request that was made is a mark, not a
+   * control. */
+  fix: "offer" | "posting" | null;
 }
 
 /** The snoozed rows of a section, folded into one line at its foot. */
@@ -181,7 +181,8 @@ function ordinal(n: number): string {
 // the review glyph (incoming, incoming through a team, or outgoing; the
 // backend sends at most one for a row, and the chain below holds the slot to
 // one mark regardless, a request naming you first), the merge marks (queue
-// position, auto-merge, checks running), then the blocked pills. The positive
+// position, auto-merge, checks running), Copilot at work on the conflict, then
+// the blocked pills. The positive
 // marks lead, so they read before whatever still stands in the way, and the
 // order runs from done, through under way, to stuck. A new signal needs a
 // Mark kind, a line here for when and where it shows, and its glyph in
@@ -225,6 +226,15 @@ function rowMarks(pr: PullRequest): Mark[] {
       tip: "Checks running",
     });
   }
+  // Next to the conflict pill it answers: the PR is still conflicting, and
+  // this says who is on it.
+  if (pr.fix_requested) {
+    marks.push({
+      kind: "copilot-fixing",
+      label: "Copilot fixing",
+      tip: "Copilot was asked to resolve the conflict",
+    });
+  }
   marks.push(...blockedMarks(pr));
   if (pr.turn === "yours") tintYourTurn(marks);
   return marks;
@@ -259,23 +269,24 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
   return `waiting ${Math.floor(elapsed / DAY_MS)}d`;
 }
 
-// Offered wherever the backend allows it, except on a snoozed row: that one
-// was put out of the way, and waking it is the only thing it offers. A
-// request made earlier shows in the offer's place.
+// Offered wherever the backend allows it, except on a row whose fix was
+// already requested, and on a snoozed row: that one was put out of the way,
+// and waking it is the only thing it offers. A request on its way shows in
+// the offer's place.
 function fixControl(
   pr: PullRequest,
   snooze: RowView["snooze"],
-  fixRequests: FixRequests,
+  fixesPosting: FixesPosting,
 ): RowView["fix"] {
-  if (!pr.can_fix_conflict || snooze === "wake") return null;
-  return fixRequests.get(prKey(pr)) ?? "offer";
+  if (!pr.can_fix_conflict || pr.fix_requested || snooze === "wake") return null;
+  return fixesPosting.has(prKey(pr)) ? "posting" : "offer";
 }
 
 const rowView = (
   pr: PullRequest,
   now: number,
   snooze: RowView["snooze"],
-  fixRequests: FixRequests,
+  fixesPosting: FixesPosting,
 ): RowView => ({
   pr,
   draft: pr.is_draft,
@@ -285,7 +296,7 @@ const rowView = (
     pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
   waiting: waitingLabel(pr, now),
   snooze,
-  fix: fixControl(pr, snooze, fixRequests),
+  fix: fixControl(pr, snooze, fixesPosting),
 });
 
 // Rows waiting on the viewer lead a section, then the ones asking the viewer's
@@ -334,7 +345,7 @@ function matchesTerms(item: Filterable, terms: string[]): boolean {
 function groupByRepo(
   prs: PullRequest[],
   now: number,
-  fixRequests: FixRequests,
+  fixesPosting: FixesPosting,
 ): RepoGroupView[] {
   const groups = new Map<string, PullRequest[]>();
   for (const pr of prs) {
@@ -348,7 +359,7 @@ function groupByRepo(
     .sort(([, a], [, b]) => latest(b) - latest(a))
     .map(([repo, rows]) => ({
       repo,
-      rows: rows.map((pr) => rowView(pr, now, null, fixRequests)),
+      rows: rows.map((pr) => rowView(pr, now, null, fixesPosting)),
     }));
 }
 
@@ -358,8 +369,8 @@ export function derivePopover(
   collapsed: Record<SectionKey, boolean>,
   /** Epoch ms; what the waiting labels are measured against. */
   now: number,
-  /** The Copilot fixes asked for so far; none when omitted. */
-  fixRequests: FixRequests = new Map(),
+  /** The Copilot fixes being asked for right now; none when omitted. */
+  fixesPosting: FixesPosting = new Set(),
 ): PopoverView {
   // Counts every PR, filtered out or not: the action clears them all. A bot
   // note counts too, since the action is the one way to clear every note at
@@ -408,17 +419,17 @@ export function derivePopover(
     let body: SectionBody;
     if (rows.length === 0) body = { kind: "empty" };
     else if (key === "all") {
-      body = { kind: "groups", groups: groupByRepo(rows, now, fixRequests) };
+      body = { kind: "groups", groups: groupByRepo(rows, now, fixesPosting) };
     } else {
       body = {
         kind: "rows",
-        rows: byTurn(awake).map((pr) => rowView(pr, now, "offer", fixRequests)),
+        rows: byTurn(awake).map((pr) => rowView(pr, now, "offer", fixesPosting)),
         snoozed:
           snoozed.length === 0
             ? null
             : {
                 label: `${snoozed.length} snoozed`,
-                rows: snoozed.map((pr) => rowView(pr, now, "wake", fixRequests)),
+                rows: snoozed.map((pr) => rowView(pr, now, "wake", fixesPosting)),
                 // A match folded out of sight would read as "no match".
                 forcedOpen: filtering,
               },

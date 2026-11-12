@@ -1,5 +1,6 @@
 //! The one owner of what the popover shows: the Snapshot, the read
-//! watermarks, the turn starts, the snoozes and the merged list. Everything
+//! watermarks, the turn starts, the snoozes, the fix requests and the merged
+//! list. Everything
 //! outside this module changes them only through the transitions on
 //! [`PrState`], which hold these invariants:
 //!
@@ -13,7 +14,10 @@
 //! - `snapshot.snoozed` mirrors the snoozes, which hold entries only for PRs
 //!   in the Snapshot.
 //! - Each `turn_since` agrees with the turn starts, which hold an entry for
-//!   exactly the PRs whose turn was yours at the last successful sync.
+//!   exactly the PRs in the Snapshot whose turn is yours.
+//! - `fix_requested` is set on exactly the PRs with a fix request, which
+//!   exist only for PRs in the Snapshot. Such a PR's turn is not yours unless
+//!   a review is asked of the viewer by name.
 //! - Merge detection compares a fetch against the previous Snapshot's open
 //!   PRs.
 //!
@@ -33,8 +37,8 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    github,
-    github::{GithubError, PullRequest},
+    fix_requests, github,
+    github::{GithubError, PullRequest, Turn},
     merged, snooze, turns, unread,
 };
 
@@ -74,6 +78,8 @@ pub struct Effects {
     pub save_merged: Option<merged::MergedState>,
     /// Snoozes to write to disk; `None` when there is nothing to write.
     pub save_snoozes: Option<snooze::Snoozes>,
+    /// Fix requests to write to disk; `None` when there is nothing to write.
+    pub save_fix_requests: Option<fix_requests::FixRequests>,
     /// The tray count to show; `None` leaves the tray as it is.
     pub tray_count: Option<u64>,
 }
@@ -81,17 +87,33 @@ pub struct Effects {
 #[derive(Default)]
 struct Inner {
     snapshot: Snapshot,
-    /// This and the three fields below are authoritative in memory. The
-    /// copies on disk exist so unread badges, waiting times, snoozes and the
-    /// Merged section survive restarts.
+    /// This and the four fields below are authoritative in memory. The
+    /// copies on disk exist so unread badges, waiting times, snoozes, fix
+    /// requests and the Merged section survive restarts.
     read_state: unread::ReadState,
     /// `None` until turns have been tracked at all; see [`turns::apply`].
     turn_starts: Option<turns::TurnStarts>,
     merged: merged::MergedState,
     snoozes: snooze::Snoozes,
+    fix_requests: fix_requests::FixRequests,
+    /// What GitHub's state made of each handed-over PR in the Snapshot.
+    displaced_turns: fix_requests::DisplacedTurns,
 }
 
 impl Inner {
+    /// The effects of a transition that changed nothing.
+    fn no_effects(&self) -> Effects {
+        Effects {
+            snapshot: self.snapshot.clone(),
+            save_read: None,
+            save_turns: None,
+            save_merged: None,
+            save_snoozes: None,
+            save_fix_requests: None,
+            tray_count: None,
+        }
+    }
+
     fn tray_count(&self) -> u64 {
         turns::yours_count(&self.snapshot.prs, &self.snoozes)
     }
@@ -112,6 +134,7 @@ impl Inner {
             save_turns: None,
             save_merged: None,
             save_snoozes: changed.then(|| self.snoozes.clone()),
+            save_fix_requests: None,
             tray_count: changed.then(|| self.tray_count()),
         }
     }
@@ -134,9 +157,11 @@ impl PrState {
         merged: merged::MergedState,
         turn_starts: Option<turns::TurnStarts>,
         snoozes: snooze::Snoozes,
+        fix_requests: fix_requests::FixRequests,
     ) {
         let mut inner = self.inner.lock().unwrap();
         inner.snoozes = snoozes;
+        inner.fix_requests = fix_requests;
         inner.snapshot.merged = merged.clone();
         inner.merged = merged;
         inner.read_state = read_state;
@@ -147,15 +172,19 @@ impl PrState {
         self.inner.lock().unwrap().snapshot.clone()
     }
 
-    /// The PR filed under `key` in the Snapshot, as the last sync left it.
-    pub fn find(&self, key: &str) -> Option<PullRequest> {
+    /// The PR filed under `key`, for asking Copilot to fix its conflict.
+    /// `Err` is the message the row shows: the PR has left the Snapshot, or a
+    /// fix was already requested and is still live, and a second comment must
+    /// not go out.
+    pub fn fix_target(&self, key: &str) -> Result<PullRequest, String> {
         let inner = self.inner.lock().unwrap();
-        inner
-            .snapshot
-            .prs
-            .iter()
-            .find(|pr| unread::key(pr) == key)
-            .cloned()
+        let Some(pr) = inner.snapshot.prs.iter().find(|pr| unread::key(pr) == key) else {
+            return Err("That PR is no longer in the list.".into());
+        };
+        if pr.fix_requested {
+            return Err("Copilot has already been asked to fix this.".into());
+        }
+        Ok(pr.clone())
     }
 
     /// A sync fetched `prs`, and `newly_merged` are the departed PRs GitHub
@@ -170,6 +199,12 @@ impl PrState {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
         let merged_changed = merged::apply(&prs, newly_merged, &mut inner.merged);
+        let fixes_changed = fix_requests::apply(
+            &mut prs,
+            &mut inner.fix_requests,
+            &mut inner.displaced_turns,
+            now_epoch_ms,
+        );
         // Before the unread pass: that pass baselines first-seen PRs into the
         // watermarks, and the turn pass tells first-seen by their absence.
         let turns_changed = turns::apply(
@@ -195,6 +230,7 @@ impl PrState {
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: merged_changed.then(|| inner.merged.clone()),
             save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
+            save_fix_requests: fixes_changed.then(|| inner.fix_requests.clone()),
             tray_count: Some(inner.tray_count()),
         }
     }
@@ -211,6 +247,7 @@ impl PrState {
             save_turns: None,
             save_merged: None,
             save_snoozes: None,
+            save_fix_requests: None,
             tray_count: None,
         }
     }
@@ -218,8 +255,8 @@ impl PrState {
     /// No token or no repos: clear any list left over from previous settings,
     /// but keep the read watermarks and merged list for when a token comes
     /// back. The turn starts are forgotten: every PR has left the Snapshot,
-    /// and nothing watches the turns until syncing resumes. The snoozes go
-    /// with the PRs they parked.
+    /// and nothing watches the turns until syncing resumes. The snoozes and
+    /// the fix requests go with the PRs they were made for.
     pub fn unconfigured(&self) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
@@ -227,12 +264,16 @@ impl PrState {
         let turns_changed = turns::forget_starts(&mut inner.turn_starts);
         let snoozes_changed = !inner.snoozes.is_empty();
         inner.snoozes.clear();
+        let fixes_changed = !inner.fix_requests.is_empty();
+        inner.fix_requests.clear();
+        inner.displaced_turns.clear();
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: None,
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
             save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
+            save_fix_requests: fixes_changed.then(|| inner.fix_requests.clone()),
             tray_count: Some(inner.tray_count()),
         }
     }
@@ -267,6 +308,7 @@ impl PrState {
             save_turns: None,
             save_merged: None,
             save_snoozes: None,
+            save_fix_requests: None,
             tray_count: Some(inner.tray_count()),
         }
     }
@@ -302,17 +344,99 @@ impl PrState {
         inner.snooze_effects(changed)
     }
 
-    /// Wakes every PR whose snooze has run out by `now_epoch_ms`. Needs no
-    /// sync, so a failing or rate-limited GitHub cannot keep a row parked.
-    pub fn wake_expired(&self, now_epoch_ms: u64) -> Effects {
+    /// The clock reached `now_epoch_ms`: wakes every PR whose snooze has run
+    /// out, and gives back every PR whose fix request has outlived its hour
+    /// with the conflict still there. Needs no sync, so a failing or
+    /// rate-limited GitHub cannot keep a row parked or waiting on Copilot.
+    pub fn expire(&self, now_epoch_ms: u64) -> Effects {
         let mut inner = self.inner.lock().unwrap();
-        let changed = snooze::wake_expired(&mut inner.snoozes, now_epoch_ms);
-        inner.snooze_effects(changed)
+        let inner = &mut *inner;
+        let snoozes_changed = snooze::wake_expired(&mut inner.snoozes, now_epoch_ms);
+        let expired = fix_requests::expire(&mut inner.fix_requests, now_epoch_ms);
+        let mut turns_changed = false;
+        for key in &expired {
+            let displaced = inner.displaced_turns.remove(key);
+            let Some(pr) = inner
+                .snapshot
+                .prs
+                .iter_mut()
+                .find(|pr| unread::key(pr) == *key)
+            else {
+                continue;
+            };
+            let was_yours = pr.turn == Some(Turn::Yours);
+            fix_requests::take_back(pr, displaced.unwrap_or(pr.turn));
+            // The viewer's turn begins again here, not when the conflict
+            // first showed up: the hour with Copilot was not their wait.
+            if pr.turn == Some(Turn::Yours) && !was_yours {
+                if let Some(starts) = inner.turn_starts.as_mut() {
+                    pr.turn_since = Some(now_epoch_ms);
+                    starts.insert(key.clone(), Some(now_epoch_ms));
+                    turns_changed = true;
+                }
+            }
+        }
+        inner.mirror_snoozes();
+        let changed = snoozes_changed || !expired.is_empty();
+        Effects {
+            snapshot: inner.snapshot.clone(),
+            save_read: None,
+            save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
+            save_merged: None,
+            save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
+            save_fix_requests: (!expired.is_empty()).then(|| inner.fix_requests.clone()),
+            tray_count: changed.then(|| inner.tray_count()),
+        }
     }
 
-    /// When the clock next has a snoozed row to wake, in epoch ms.
-    pub fn next_snooze_expiry(&self) -> Option<u64> {
-        snooze::next_expiry(&self.inner.lock().unwrap().snoozes)
+    /// When the clock next has something for [`PrState::expire`] to do, in
+    /// epoch ms.
+    pub fn next_expiry(&self) -> Option<u64> {
+        let inner = self.inner.lock().unwrap();
+        snooze::next_expiry(&inner.snoozes)
+            .into_iter()
+            .chain(fix_requests::next_expiry(&inner.fix_requests))
+            .min()
+    }
+
+    /// Copilot was asked, at `now_epoch_ms`, to fix the conflict on the
+    /// matching PR, which waits on Copilot from here. Call it only after the
+    /// request was posted. Nothing happens for a key that is not in the
+    /// Snapshot, or that already has a live request: the hour is not
+    /// restarted.
+    pub fn fix_requested(&self, key: &str, now_epoch_ms: u64) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        let inner = &mut *inner;
+        let Some(pr) = inner
+            .snapshot
+            .prs
+            .iter_mut()
+            .find(|pr| unread::key(pr) == key && !pr.fix_requested)
+        else {
+            return inner.no_effects();
+        };
+        let displaced = fix_requests::hand_over(pr);
+        inner.displaced_turns.insert(key.to_string(), displaced);
+        inner
+            .fix_requests
+            .insert(key.to_string(), fix_requests::entry(now_epoch_ms));
+        let mut turns_changed = false;
+        if pr.turn != Some(Turn::Yours) {
+            pr.turn_since = None;
+            turns_changed = inner
+                .turn_starts
+                .as_mut()
+                .is_some_and(|starts| starts.remove(key).is_some());
+        }
+        Effects {
+            snapshot: inner.snapshot.clone(),
+            save_read: None,
+            save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
+            save_merged: None,
+            save_snoozes: None,
+            save_fix_requests: Some(inner.fix_requests.clone()),
+            tray_count: Some(inner.tray_count()),
+        }
     }
 
     pub fn dismiss_merged(&self, key: &str) -> Effects {
@@ -334,6 +458,7 @@ impl PrState {
             save_turns: None,
             save_merged: Some(inner.merged.clone()),
             save_snoozes: None,
+            save_fix_requests: None,
             tray_count: None,
         }
     }
@@ -440,6 +565,8 @@ mod tests {
             turn: None,
             turn_since: None,
             can_fix_conflict: false,
+            fix_requested: false,
+            mergeability_unknown: false,
             node_id: String::new(),
             unread_count: 0,
             bot_unread_count: 0,
@@ -478,12 +605,15 @@ mod tests {
     }
 
     #[test]
-    fn a_pr_is_found_by_its_key_only_while_it_is_in_the_snapshot() {
+    fn a_fix_can_be_asked_only_for_a_pr_in_the_snapshot() {
         let state = state_with_one_unread();
-        assert_eq!(state.find("acme/widgets#8").map(|pr| pr.number), Some(8));
-        assert!(state.find("acme/widgets#9").is_none());
+        assert_eq!(
+            state.fix_target("acme/widgets#8").map(|pr| pr.number),
+            Ok(8)
+        );
+        assert!(state.fix_target("acme/widgets#9").is_err());
         state.unconfigured();
-        assert!(state.find("acme/widgets#8").is_none());
+        assert!(state.fix_target("acme/widgets#8").is_err());
     }
 
     fn unread_counts(snapshot: &Snapshot) -> Vec<u64> {
@@ -787,7 +917,13 @@ mod tests {
             .expect("turn starts need saving");
 
         let after = PrState::default();
-        after.restore(saved_read, vec![], Some(saved_turns), HashMap::new());
+        after.restore(
+            saved_read,
+            vec![],
+            Some(saved_turns),
+            HashMap::new(),
+            HashMap::new(),
+        );
         let effects = sync_one(&after, yours(pr("acme/widgets", 7, &[])), SYNC_3);
 
         assert_eq!(turn_since(&effects), Some(SYNC_2));
@@ -802,6 +938,7 @@ mod tests {
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![],
             Some(HashMap::new()),
+            HashMap::new(),
             HashMap::new(),
         );
 
@@ -820,6 +957,7 @@ mod tests {
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![],
             None,
+            HashMap::new(),
             HashMap::new(),
         );
 
@@ -1013,19 +1151,19 @@ mod tests {
     fn an_expiry_that_passes_with_no_sync_wakes_the_row() {
         let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
         state.sync_failed("GitHub rate limit reached.".into());
-        assert_eq!(state.next_snooze_expiry(), Some(EXPIRES_AT));
+        assert_eq!(state.next_expiry(), Some(EXPIRES_AT));
 
-        let early = state.wake_expired(EXPIRES_AT - 1);
+        let early = state.expire(EXPIRES_AT - 1);
         assert!(is_snoozed(&early));
         assert_eq!(early.save_snoozes, None);
         assert_eq!(early.tray_count, None);
 
-        let effects = state.wake_expired(EXPIRES_AT);
+        let effects = state.expire(EXPIRES_AT);
 
         assert!(effects.snapshot.snoozed.is_empty());
         assert_eq!(effects.tray_count, Some(1));
         assert_eq!(effects.save_snoozes, Some(HashMap::new()));
-        assert_eq!(state.next_snooze_expiry(), None);
+        assert_eq!(state.next_expiry(), None);
     }
 
     #[test]
@@ -1048,7 +1186,7 @@ mod tests {
             .expect("snoozes need saving");
 
         let after = PrState::default();
-        after.restore(HashMap::new(), vec![], None, saved);
+        after.restore(HashMap::new(), vec![], None, saved, HashMap::new());
         let effects = sync_one(&after, yours(pr("acme/widgets", 7, &[])), LAST_SYNC + 1);
 
         assert!(is_snoozed(&effects));
@@ -1122,6 +1260,278 @@ mod tests {
         assert_eq!(effects.save_snoozes, Some(HashMap::new()));
     }
 
+    const HOUR_MS: u64 = 3_600_000;
+    const ASKED_AT: u64 = LAST_SYNC + 5_000;
+
+    /// One of the viewer's PRs with a merge conflict Copilot can be asked to
+    /// resolve: the viewer's turn until the fix is requested.
+    fn conflicted(number: u64) -> PullRequest {
+        PullRequest {
+            section: Section::Mine,
+            blocked_reasons: vec![BlockedReason::Conflict],
+            can_fix_conflict: true,
+            ..yours(pr("acme/widgets", number, &[]))
+        }
+    }
+
+    /// #7 synced at `LAST_SYNC`, conflicted, with the fix requested since.
+    fn fix_requested_state() -> PrState {
+        let state = PrState::default();
+        sync_one(&state, conflicted(7), LAST_SYNC);
+        state.fix_requested(KEY, ASKED_AT);
+        state
+    }
+
+    #[test]
+    fn requesting_a_fix_on_a_your_turn_pr_lowers_the_tray_count_by_one() {
+        let state = PrState::default();
+        let synced = state.sync_succeeded(vec![conflicted(7), conflicted(8)], vec![], LAST_SYNC);
+        assert_eq!(synced.tray_count, Some(2));
+
+        let effects = state.fix_requested(KEY, ASKED_AT);
+
+        assert_eq!(effects.tray_count, Some(1));
+        let row = &effects.snapshot.prs[0];
+        assert!(row.fix_requested);
+        assert_eq!(row.turn, Some(Turn::Theirs));
+        assert_eq!(row.turn_since, None);
+        // Still conflicting: the pill stays on the row.
+        assert_eq!(row.blocked_reasons, [BlockedReason::Conflict]);
+        assert!(!effects.snapshot.prs[1].fix_requested);
+        // A later sync with the conflict still there keeps it out of the count.
+        let next = state.sync_succeeded(
+            vec![conflicted(7), conflicted(8)],
+            vec![],
+            LAST_SYNC + 180_000,
+        );
+        assert_eq!(next.tray_count, Some(1));
+        assert!(next.snapshot.prs[0].fix_requested);
+        assert_eq!(next.snapshot.prs[0].turn, Some(Turn::Theirs));
+    }
+
+    fn is_fixing(effects: &Effects) -> bool {
+        effects.snapshot.prs[0].fix_requested
+    }
+
+    #[test]
+    fn a_requested_fix_survives_a_restart() {
+        let before = PrState::default();
+        sync_one(&before, conflicted(7), LAST_SYNC);
+        let saved = before
+            .fix_requested(KEY, ASKED_AT)
+            .save_fix_requests
+            .expect("fix requests need saving");
+
+        let after = PrState::default();
+        after.restore(HashMap::new(), vec![], None, HashMap::new(), saved);
+        let effects = sync_one(&after, conflicted(7), LAST_SYNC + 180_000);
+
+        assert!(is_fixing(&effects));
+        assert_eq!(effects.tray_count, Some(0));
+        assert_eq!(effects.save_fix_requests, None);
+    }
+
+    #[test]
+    fn a_sync_that_finds_the_conflict_gone_removes_the_request_and_the_mark() {
+        let state = fix_requested_state();
+        let resolved = PullRequest {
+            blocked_reasons: vec![],
+            can_fix_conflict: false,
+            ready_to_merge: true,
+            ..conflicted(7)
+        };
+
+        let effects = sync_one(&state, resolved, LAST_SYNC + 180_000);
+
+        assert!(!is_fixing(&effects));
+        assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
+        // The row takes the turn its new state earned: ready, so yours.
+        assert_eq!(effects.snapshot.prs[0].turn, Some(Turn::Yours));
+        assert_eq!(effects.tray_count, Some(1));
+        // A conflict that comes back later is a new one, to be asked about
+        // again.
+        let again = sync_one(&state, conflicted(7), LAST_SYNC + 360_000);
+        assert!(!is_fixing(&again));
+        assert!(state.fix_target(KEY).is_ok());
+    }
+
+    /// GitHub reports no blocked reasons while it works mergeability out,
+    /// which must not read as the conflict clearing.
+    #[test]
+    fn a_sync_that_finds_mergeability_unknown_keeps_the_request() {
+        let state = fix_requested_state();
+        let unsettled = PullRequest {
+            blocked_reasons: vec![],
+            can_fix_conflict: false,
+            mergeability_unknown: true,
+            ..conflicted(7)
+        };
+
+        let effects = sync_one(&state, unsettled, LAST_SYNC + 180_000);
+
+        assert!(is_fixing(&effects));
+        assert_eq!(effects.snapshot.prs[0].turn, Some(Turn::Theirs));
+        assert_eq!(effects.tray_count, Some(0));
+        assert_eq!(effects.save_fix_requests, None);
+    }
+
+    /// The popover opening and the sync loop's wait both run this, so no
+    /// sync has to succeed for the hour to be up.
+    #[test]
+    fn an_hour_passing_with_no_sync_makes_the_row_yours_again() {
+        let state = fix_requested_state();
+        state.sync_failed("GitHub rate limit reached.".into());
+        assert_eq!(state.next_expiry(), Some(ASKED_AT + HOUR_MS));
+
+        let early = state.expire(ASKED_AT + HOUR_MS - 1);
+        assert!(is_fixing(&early));
+        assert_eq!(early.save_fix_requests, None);
+        assert_eq!(early.tray_count, None);
+
+        let effects = state.expire(ASKED_AT + HOUR_MS);
+
+        assert!(!is_fixing(&effects));
+        assert_eq!(effects.snapshot.prs[0].turn, Some(Turn::Yours));
+        assert_eq!(effects.tray_count, Some(1));
+        assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
+        assert_eq!(state.next_expiry(), None);
+        // The control is back: the fix can be asked for again.
+        assert!(state.fix_target(KEY).is_ok());
+    }
+
+    #[test]
+    fn a_sync_after_the_hour_makes_the_row_yours_again() {
+        let state = fix_requested_state();
+
+        let effects = sync_one(&state, conflicted(7), ASKED_AT + HOUR_MS);
+
+        assert!(!is_fixing(&effects));
+        assert_eq!(effects.snapshot.prs[0].turn, Some(Turn::Yours));
+        assert_eq!(effects.tray_count, Some(1));
+    }
+
+    /// The hour with Copilot was not the viewer's wait.
+    #[test]
+    fn a_turn_that_is_yours_again_after_the_hour_starts_afresh() {
+        let by_clock = PrState::default();
+        sync_one(&by_clock, pr("acme/widgets", 7, &[]), LAST_SYNC - 180_000);
+        let before = sync_one(&by_clock, conflicted(7), LAST_SYNC);
+        assert_eq!(turn_since(&before), Some(LAST_SYNC));
+        let asked = by_clock.fix_requested(KEY, ASKED_AT);
+        assert_eq!(turn_since(&asked), None);
+        assert_eq!(asked.save_turns, Some(HashMap::new()));
+
+        let expired = by_clock.expire(ASKED_AT + HOUR_MS);
+
+        assert_eq!(turn_since(&expired), Some(ASKED_AT + HOUR_MS));
+        assert_eq!(
+            expired.save_turns,
+            Some(HashMap::from([(KEY.to_string(), Some(ASKED_AT + HOUR_MS))]))
+        );
+        // The next sync keeps that start instead of moving it again.
+        let synced = sync_one(&by_clock, conflicted(7), ASKED_AT + HOUR_MS + 60_000);
+        assert_eq!(turn_since(&synced), Some(ASKED_AT + HOUR_MS));
+
+        let by_sync = PrState::default();
+        sync_one(&by_sync, pr("acme/widgets", 7, &[]), LAST_SYNC - 180_000);
+        sync_one(&by_sync, conflicted(7), LAST_SYNC);
+        by_sync.fix_requested(KEY, ASKED_AT);
+        let late = sync_one(&by_sync, conflicted(7), ASKED_AT + HOUR_MS + 5);
+        assert_eq!(turn_since(&late), Some(ASKED_AT + HOUR_MS + 5));
+    }
+
+    #[test]
+    fn a_pr_with_a_requested_fix_that_merges_or_closes_drops_its_request() {
+        let merged = fix_requested_state();
+        let gone = merged::from_pr(&conflicted(7), "2026-07-16T13:00:00Z".into());
+        let effects = merged.sync_succeeded(vec![], vec![gone], LAST_SYNC + 180_000);
+        assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
+        assert_eq!(effects.snapshot.merged.len(), 1);
+        assert_eq!(merged.next_expiry(), None);
+
+        let closed = fix_requested_state();
+        let effects = closed.sync_succeeded(vec![], vec![], LAST_SYNC + 180_000);
+        assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
+        // Reopened within the hour, it is not still waiting on Copilot.
+        let reopened = sync_one(&closed, conflicted(7), LAST_SYNC + 360_000);
+        assert!(!is_fixing(&reopened));
+    }
+
+    /// The review-request rule outranks every other turn rule, this one
+    /// included.
+    #[test]
+    fn a_requested_fix_beside_a_review_asked_of_you_by_name_is_your_turn() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), LAST_SYNC - 180_000);
+        let before = sync_one(&state, requested(conflicted(7)), LAST_SYNC);
+        assert_eq!(turn_since(&before), Some(LAST_SYNC));
+
+        let asked = state.fix_requested(KEY, ASKED_AT);
+
+        assert!(is_fixing(&asked));
+        assert_eq!(asked.snapshot.prs[0].turn, Some(Turn::Yours));
+        assert_eq!(asked.tray_count, Some(1));
+        assert_eq!(turn_since(&asked), Some(LAST_SYNC));
+        let next = sync_one(&state, requested(conflicted(7)), LAST_SYNC + 180_000);
+        assert!(is_fixing(&next));
+        assert_eq!(next.snapshot.prs[0].turn, Some(Turn::Yours));
+        assert_eq!(turn_since(&next), Some(LAST_SYNC));
+        // The review done, the row waits on Copilot like any other.
+        let reviewed = sync_one(&state, conflicted(7), LAST_SYNC + 360_000);
+        assert_eq!(reviewed.snapshot.prs[0].turn, Some(Turn::Theirs));
+        assert_eq!(reviewed.tray_count, Some(0));
+    }
+
+    /// One PR gets one comment: the command asks here before it posts.
+    #[test]
+    fn a_second_fix_cannot_be_asked_for_while_the_first_is_live() {
+        let state = fix_requested_state();
+        assert!(state.fix_target(KEY).is_err());
+        // Nor across a sync, a restart of the clock, or a repeat of the call.
+        sync_one(&state, conflicted(7), LAST_SYNC + 180_000);
+        assert!(state.fix_target(KEY).is_err());
+        let repeated = state.fix_requested(KEY, ASKED_AT + 600_000);
+        assert_eq!(repeated.save_fix_requests, None);
+        assert_eq!(state.next_expiry(), Some(ASKED_AT + HOUR_MS));
+    }
+
+    #[test]
+    fn recording_a_fix_for_a_pr_that_left_the_snapshot_does_nothing() {
+        let state = PrState::default();
+        sync_one(&state, conflicted(7), LAST_SYNC);
+
+        let effects = state.fix_requested("acme/widgets#9", ASKED_AT);
+
+        assert_eq!(effects.save_fix_requests, None);
+        assert_eq!(effects.tray_count, None);
+        assert_eq!(state.next_expiry(), None);
+    }
+
+    #[test]
+    fn a_row_with_a_requested_fix_snoozes_and_wakes_as_usual() {
+        let state = fix_requested_state();
+
+        let snoozed = state.snooze(KEY, EXPIRES_AT);
+        assert!(is_snoozed(&snoozed));
+        assert!(is_fixing(&snoozed));
+
+        let woken = state.wake(KEY);
+        assert!(woken.snapshot.snoozed.is_empty());
+        assert!(is_fixing(&woken));
+        assert_eq!(woken.tray_count, Some(0));
+    }
+
+    #[test]
+    fn an_unconfigured_sync_drops_the_fix_requests_with_the_prs() {
+        let state = fix_requested_state();
+
+        let effects = state.unconfigured();
+
+        assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
+        let back = sync_one(&state, conflicted(7), LAST_SYNC + 180_000);
+        assert!(!is_fixing(&back));
+    }
+
     #[test]
     fn a_pr_is_open_then_departs_is_reported_merged_and_is_dismissed() {
         let state = PrState::default();
@@ -1171,6 +1581,7 @@ mod tests {
             ],
             None,
             HashMap::new(),
+            HashMap::new(),
         );
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])],
@@ -1195,6 +1606,7 @@ mod tests {
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
             None,
             HashMap::new(),
+            HashMap::new(),
         );
 
         let effects = state.clear_merged();
@@ -1212,6 +1624,7 @@ mod tests {
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
             None,
             HashMap::new(),
+            HashMap::new(),
         );
         let snapshot = state.snapshot();
         assert_eq!(snapshot.merged.len(), 1);
@@ -1227,6 +1640,7 @@ mod tests {
             HashMap::new(),
             vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
             None,
+            HashMap::new(),
             HashMap::new(),
         );
 
@@ -1326,6 +1740,9 @@ mod tests {
                 turn: Some(Turn::Yours),
                 turn_since: Some(1_784_205_000_000),
                 can_fix_conflict: true,
+                fix_requested: true,
+                // Internal: says how to read the reasons, not what to show.
+                mergeability_unknown: true,
                 // Internal: the frontend names a PR by key, never by node id.
                 node_id: "PR_kwDOAAAAAA".into(),
                 unread_count: 3,
@@ -1379,6 +1796,7 @@ mod tests {
                     "turn": "yours",
                     "turn_since": 1_784_205_000_000u64,
                     "can_fix_conflict": true,
+                    "fix_requested": true,
                     "unread_count": 3,
                     "bot_unread_count": 8
                 }],

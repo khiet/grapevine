@@ -60,11 +60,27 @@ export function createFakeBackend(
         ...snapshot,
         snoozed: snapshot.snoozed.filter((k) => k !== key),
       }),
-    // Refuses what the backend would; a fixable PR is taken as asked, and
-    // nothing changes, since the fake has no Copilot to clear the conflict.
+    // Refuses what the backend would, and hands a fixable PR to Copilot.
+    // There it stays: the fake has no Copilot to clear the conflict and no
+    // clock to run the request out.
     fix_conflict: ({ key }) => {
       const pr = snapshot.prs.find((candidate) => prKey(candidate) === key);
+      if (pr?.fix_requested) throw "Copilot has already been asked to fix this.";
       if (!pr?.can_fix_conflict) throw "Nothing here for Copilot to fix.";
+      const waitsOnCopilot = !pr.review_requested;
+      publish({
+        ...snapshot,
+        prs: snapshot.prs.map((candidate) =>
+          candidate === pr
+            ? {
+                ...pr,
+                fix_requested: true,
+                turn: waitsOnCopilot ? "theirs" : pr.turn,
+                turn_since: waitsOnCopilot ? null : pr.turn_since,
+              }
+            : candidate,
+        ),
+      });
     },
   };
 

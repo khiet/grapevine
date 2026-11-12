@@ -80,6 +80,12 @@ export interface PullRequest {
    * fork, in a repo where Copilot's cloud agent is enabled. The backend
    * checks it again before posting, so this only decides what is offered. */
   can_fix_conflict: boolean;
+  /** Copilot has been asked to resolve the conflict, within the last hour,
+   * and the conflict is still there; renders the Copilot fixing mark in
+   * place of the fix control. Backend-kept, so it survives a restart. Such a
+   * PR waits on Copilot: its turn is "theirs" unless a review is asked of the
+   * viewer by name. */
+  fix_requested: boolean;
   /** New activity from people. The only count that badges a row or a
    * collapsed section. It does not feed the tray. */
   unread_count: number;
@@ -216,8 +222,8 @@ export const wake = (key: string) => adapter.invoke<void>("wake", { key });
 /** Asks Copilot to resolve the PR's merge conflict, with a comment posted on
  * GitHub as the user: the one command that writes there. Only the key goes
  * over; the backend picks the PR and the words. Rejects with the message to
- * show on the row. No Snapshot follows: the conflict clears on a later sync,
- * once Copilot has pushed. */
+ * show on the row. A posted comment is answered with a Snapshot in which the
+ * PR waits on Copilot; the backend refuses a second one while that lasts. */
 export const fixConflict = (key: string) =>
   adapter.invoke<void>("fix_conflict", { key });
 

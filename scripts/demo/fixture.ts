@@ -43,6 +43,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     turn: null,
     turn_since: null,
     can_fix_conflict: false,
+    fix_requested: false,
     unread_count: 0,
     bot_unread_count: 0,
     ...extra,

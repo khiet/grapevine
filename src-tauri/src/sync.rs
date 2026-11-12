@@ -35,9 +35,9 @@ pub struct SyncState {
     delivery: Mutex<()>,
     /// Wakes the poll loop early, e.g. right after settings change.
     pub wake: Notify,
-    /// Tells the poll loop's wait that the snoozes changed, so the expiry it
-    /// is timing may no longer be the earliest.
-    snoozes_changed: Notify,
+    /// Tells the poll loop's wait that the snoozes or the fix requests
+    /// changed, so the expiry it is timing may no longer be the earliest.
+    expiries_changed: Notify,
 }
 
 impl SyncState {
@@ -45,9 +45,9 @@ impl SyncState {
         self.pr_state.snapshot()
     }
 
-    /// The PR filed under `key` in the Snapshot.
-    pub fn find(&self, key: &str) -> Option<PullRequest> {
-        self.pr_state.find(key)
+    /// See [`PrState::fix_target`].
+    pub fn fix_target(&self, key: &str) -> Result<PullRequest, String> {
+        self.pr_state.fix_target(key)
     }
 }
 
@@ -65,6 +65,7 @@ pub fn start(app: &AppHandle) {
             store.load(&store::MERGED).unwrap_or_default(),
             store.load(&store::TURN_STARTS).unwrap_or_default(),
             store.load(&store::SNOOZES).unwrap_or_default(),
+            store.load(&store::FIX_REQUESTS).unwrap_or_default(),
         );
     }
     tauri::async_runtime::spawn(async move {
@@ -100,17 +101,19 @@ pub fn start(app: &AppHandle) {
 const EXPIRY_RECHECK: Duration = Duration::from_secs(60);
 
 /// Sleeps until the next sync is due or [`SyncState::wake`] asks for one.
-/// Snoozes that run out in the meantime are woken on time: the wait can be a
-/// long rate-limit backoff, and that must not hold a row past its expiry.
+/// Snoozes and fix requests that run out in the meantime are expired on time:
+/// the wait can be a long rate-limit backoff, and that must not hold a row
+/// past its expiry.
 async fn wait_for_next_sync(app: &AppHandle, delay: Duration) {
     let state = app.state::<SyncState>();
     let due = tokio::time::sleep(delay);
     tokio::pin!(due);
     loop {
-        // Read afresh each round: a snooze made during the wait has to be
-        // timed too, and `snoozes_changed` ends the round when one is.
+        // Read afresh each round: a snooze or a fix request made during the
+        // wait has to be timed too, and `expiries_changed` ends the round
+        // when one is.
         let expiry = async {
-            match state.pr_state.next_snooze_expiry() {
+            match state.pr_state.next_expiry() {
                 Some(at) => {
                     let wait = Duration::from_millis(at.saturating_sub(now_epoch_ms()));
                     tokio::time::sleep(wait.min(EXPIRY_RECHECK)).await
@@ -121,22 +124,22 @@ async fn wait_for_next_sync(app: &AppHandle, delay: Duration) {
         tokio::select! {
             _ = &mut due => return,
             _ = state.wake.notified() => return,
-            _ = state.snoozes_changed.notified() => {}
+            _ = state.expiries_changed.notified() => {}
             _ = expiry => {
                 let now = now_epoch_ms();
-                if state.pr_state.next_snooze_expiry().is_some_and(|at| at <= now) {
-                    wake_expired_snoozes(app);
+                if state.pr_state.next_expiry().is_some_and(|at| at <= now) {
+                    expire_by_clock(app);
                 }
             }
         }
     }
 }
 
-/// Wakes the rows whose snooze has run out by the local clock, with no sync
-/// involved.
-pub fn wake_expired_snoozes(app: &AppHandle) {
-    if let Err(e) = transition(app, |state| state.wake_expired(now_epoch_ms())) {
-        eprintln!("cannot deliver woken snoozes: {e}");
+/// Wakes the rows whose snooze has run out, and gives back the PRs whose fix
+/// request has, by the local clock, with no sync involved.
+pub fn expire_by_clock(app: &AppHandle) {
+    if let Err(e) = transition(app, |state| state.expire(now_epoch_ms())) {
+        eprintln!("cannot deliver expiries: {e}");
     }
 }
 
@@ -235,9 +238,14 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
     let saved_merged = effects
         .save_merged
         .map_or(Ok(()), |merged| store.save(&store::MERGED, &merged));
-    let saved_snoozes = effects.save_snoozes.map_or(Ok(()), |snoozes| {
-        state.snoozes_changed.notify_one();
-        store.save(&store::SNOOZES, &snoozes)
+    if effects.save_snoozes.is_some() || effects.save_fix_requests.is_some() {
+        state.expiries_changed.notify_one();
+    }
+    let saved_snoozes = effects
+        .save_snoozes
+        .map_or(Ok(()), |snoozes| store.save(&store::SNOOZES, &snoozes));
+    let saved_fix_requests = effects.save_fix_requests.map_or(Ok(()), |requests| {
+        store.save(&store::FIX_REQUESTS, &requests)
     });
     if let Some(total) = effects.tray_count {
         if let Some(tray) = app.tray_by_id("main") {
@@ -251,6 +259,7 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
         .and(saved_turns)
         .and(saved_merged)
         .and(saved_snoozes)
+        .and(saved_fix_requests)
         .and(emitted)
 }
 
@@ -266,7 +275,7 @@ enum Outcome {
     },
 }
 
-fn now_epoch_ms() -> u64 {
+pub fn now_epoch_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

@@ -107,6 +107,8 @@ mod tests {
             turn: None,
             turn_since: None,
             can_fix_conflict: false,
+            fix_requested: false,
+            mergeability_unknown: false,
             node_id: String::new(),
             unread_count: 0,
             bot_unread_count: 0,
