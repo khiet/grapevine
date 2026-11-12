@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.0](https://github.com/khiet/grapevine/compare/grapevine-v0.12.0...grapevine-v0.13.0) (2026-11-12)
+
+
+### Features
+
+* a PR Copilot is fixing waits on Copilot, not on you ([#107](https://github.com/khiet/grapevine/issues/107)) ([7df909b](https://github.com/khiet/grapevine/commit/7df909b2f86145ac5673c51856edbf099b5bf196)), closes [#105](https://github.com/khiet/grapevine/issues/105)
+* ask Copilot to resolve a merge conflict from the row ([#106](https://github.com/khiet/grapevine/issues/106)) ([1fef5f3](https://github.com/khiet/grapevine/commit/1fef5f3e1d126ff846d9d7be859e374586394311)), closes [#104](https://github.com/khiet/grapevine/issues/104)
+* list Grapevine in the Ubuntu app switcher and dock ([#103](https://github.com/khiet/grapevine/issues/103)) ([5952ff5](https://github.com/khiet/grapevine/commit/5952ff504087f1a4bcf19924e3d7efccfb11630a)), closes [#102](https://github.com/khiet/grapevine/issues/102)
+* show deploy status on Merged rows ([#111](https://github.com/khiet/grapevine/issues/111)) ([00ef4ce](https://github.com/khiet/grapevine/commit/00ef4ce1e61da996cf8bcac9ae237c1b1cfe2d62)), closes [#109](https://github.com/khiet/grapevine/issues/109)
+* track the deploy of each merged PR ([#110](https://github.com/khiet/grapevine/issues/110)) ([3d0c238](https://github.com/khiet/grapevine/commit/3d0c2381e2a2d05505950709d3498b5ce5684358)), closes [#108](https://github.com/khiet/grapevine/issues/108)
+
+
+### Bug Fixes
+
+* float the snooze control over the timestamp instead of its own column ([#99](https://github.com/khiet/grapevine/issues/99)) ([1593d30](https://github.com/khiet/grapevine/commit/1593d304fdd9f91a0a8d286c1dbc731c14b1c90b))
+
 ## [0.12.0](https://github.com/khiet/grapevine/compare/grapevine-v0.11.0...grapevine-v0.12.0) (2026-11-12)
 
 
