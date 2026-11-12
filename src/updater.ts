@@ -19,8 +19,8 @@ let state: UpdateState = { phase: "idle" };
 const listeners = new Set<() => void>();
 
 // Installing a .deb needs administrator rights, so on Linux the install is
-// held back until the user asks for it: a password prompt out of nowhere, from
-// a background check, would be indistinguishable from something malicious.
+// held back until the user asks for it, so the password prompt is always the
+// result of their own click and never of a background check.
 function installNeedsPassword(): boolean {
   return /\bLinux\b/.test(navigator.userAgent);
 }
