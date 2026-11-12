@@ -5,13 +5,13 @@
 
 import { useSyncExternalStore } from "react";
 import { fixConflict } from "./backend";
-import type { FixRequests } from "./popoverView";
+import type { FixRequest, FixRequests } from "./popoverView";
 
 // Replaced, never mutated: useSyncExternalStore compares by identity.
 let requests: FixRequests = new Map();
 const listeners = new Set<() => void>();
 
-function record(key: string, state: "posting" | "requested" | null): void {
+function record(key: string, state: FixRequest | null): void {
   const next = new Map(requests);
   if (state === null) next.delete(key);
   else next.set(key, state);
@@ -57,9 +57,17 @@ export async function requestFix(key: string): Promise<string | null> {
   }
 }
 
-/** What a click on the control does. The first only arms it, and the second
- * posts: the comment goes out under the user's name, so one stray click must
- * never send it. */
-export function clickFix(armed: boolean): { armed: boolean; post: boolean } {
-  return armed ? { armed: false, post: true } : { armed: true, post: false };
+/** A click on the control of the PR filed under `key`. The first only arms
+ * it, and the second posts: the comment goes out under the user's name, so
+ * one stray click must never send it. Returns whether the control is armed
+ * now, and the request when this click made one (see requestFix for what it
+ * resolves to). The caller holds `armed` and stands it down on its own
+ * schedule. */
+export function clickFix(
+  key: string,
+  armed: boolean,
+): { armed: boolean; request: Promise<string | null> | null } {
+  return armed
+    ? { armed: false, request: requestFix(key) }
+    : { armed: true, request: null };
 }

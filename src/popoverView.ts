@@ -22,9 +22,12 @@ const SECTIONS = [
  * deliberately not collapsible. */
 export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
 
-/** Where a row's request for a Copilot fix stands: being posted, or posted.
- * A key with no entry has had none made. Held by fixConflict.ts. */
-export type FixRequests = ReadonlyMap<string, "posting" | "requested">;
+/** Where a request for a Copilot fix stands: being posted, or posted. */
+export type FixRequest = "posting" | "requested";
+
+/** The requests made so far, by PR key. A key with no entry has had none
+ * made. Held by fixConflict.ts. */
+export type FixRequests = ReadonlyMap<string, FixRequest>;
 
 /** One item of a row's right-edge marker cluster. `tip` is the hover tooltip
  * and the accessible name; null on the primary blocked pill, which is its own
@@ -63,7 +66,7 @@ export interface RowView {
   /** The row's Fix with Copilot control: "offer" to ask Copilot to resolve
    * the merge conflict, "posting" while the request is on its way,
    * "requested" once it is made, null where the fix is not on offer. */
-  fix: "offer" | "posting" | "requested" | null;
+  fix: "offer" | FixRequest | null;
 }
 
 /** The snoozed rows of a section, folded into one line at its foot. */
@@ -258,8 +261,8 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
 
 // Offered wherever the backend allows it, except on a snoozed row: that one
 // was put out of the way, and waking it is the only thing it offers. A
-// request made earlier shows only while the row is still fixable, so it never
-// outlives the conflict it was about.
+// request made earlier shows only while the row is fixable. It is not
+// forgotten in between: a row that becomes fixable again reads as requested.
 function fixControl(
   pr: PullRequest,
   snooze: RowView["snooze"],

@@ -9,7 +9,7 @@ import {
   wake,
   type MergedPr,
 } from "./backend";
-import { clickFix, requestFix } from "./fixConflict";
+import { clickFix } from "./fixConflict";
 import type {
   ListView,
   Mark,
@@ -491,10 +491,10 @@ function useFixControl(row: RowView) {
   }, [armed]);
 
   const click = () => {
-    const next = clickFix(armed);
+    const next = clickFix(prKey(row.pr), armed);
     setArmed(next.armed);
     setError(null);
-    if (next.post) requestFix(prKey(row.pr)).then(setError);
+    next.request?.then(setError);
   };
 
   let control: ReactNode = null;
@@ -526,7 +526,13 @@ function useFixControl(row: RowView) {
       </span>
     );
   }
-  return { control, standDown: () => setArmed(false), error };
+  return {
+    control,
+    standDown: () => setArmed(false),
+    // Shown only beside the offer it explains: once the row stops offering
+    // the fix, a note about a failed try has nothing left to say.
+    error: row.fix === "offer" ? error : null,
+  };
 }
 
 // showRepo is false inside a repo group, where the header already names it.

@@ -473,7 +473,7 @@ impl<T: Transport> Client<'_, T> {
         let mut team_search_pages = 0;
         let mut team_requested: HashSet<String> = HashSet::new();
         // Whether the repo pages still ask if Copilot can be assigned.
-        let mut ask_copilot = true;
+        let mut ask_actors = true;
         let searched_repos: Vec<String> = pending
             .iter()
             .map(|(owner, name, _)| format!("{owner}/{name}"))
@@ -495,7 +495,7 @@ impl<T: Transport> Client<'_, T> {
                     owner,
                     name,
                     cursor.as_deref(),
-                    ask_copilot,
+                    ask_actors,
                 ));
             }
             if let Some(cursor) = &team_search {
@@ -521,8 +521,8 @@ impl<T: Transport> Client<'_, T> {
                     team_requested.clear();
                     continue;
                 }
-                if ask_copilot {
-                    ask_copilot = false;
+                if ask_actors {
+                    ask_actors = false;
                     continue;
                 }
                 return Err(error);

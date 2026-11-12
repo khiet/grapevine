@@ -75,15 +75,15 @@ function backend(fail: string | null = null): string[] {
   return asked;
 }
 
-/** A control as the row drives it: each click goes through clickFix, and
- * posts when that says so. */
+/** A control as the row holds it: the armed flag, carried from click to
+ * click. */
 function control(key: string) {
   let armed = false;
   return {
     async click(): Promise<string | null> {
-      const next = clickFix(armed);
+      const next = clickFix(key, armed);
       armed = next.armed;
-      return next.post ? requestFix(key) : null;
+      return next.request;
     },
   };
 }
