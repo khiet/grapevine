@@ -241,10 +241,12 @@ body {
   background-color: rgba(10, 132, 255, 0.12);
 }
 
-/* A merged row is two sibling buttons (open + dismiss) that must read as
-   one row: the li carries the hover highlight and the hairline, and the
-   inner .pr-row gives up its own so they don't stack. */
+/* A row with a second control (a merged row's dismiss, an open row's
+   snooze) is two sibling buttons that must read as one row: the li carries
+   the hover highlight and the hairline, and the inner .pr-row gives up its
+   own so they don't stack. */
 .pr-row-split {
+  position: relative;
   display: flex;
   align-items: stretch;
 }
@@ -288,17 +290,15 @@ body {
 }
 
 /* The snooze and wake control: floated over the timestamp's slot and shown in
-   its place on hover, Mail-style, so it costs the title no width. Its top and
-   height track the row's top padding and the title's first line. */
-.pr-row-split {
-  position: relative;
-}
-
+   its place on hover, Mail-style, so it costs the title no width. The price
+   is that a click on the timestamp corner snoozes instead of opening. The
+   offsets must track .pr-row's padding (top 9px; right 11px = 7px + the 4px
+   side padding) and the title's first line (13px x 1.35). */
 .pr-snooze {
   position: absolute;
   top: 9px;
   right: 7px;
-  height: 20px;
+  height: calc(13px * 1.35);
   display: flex;
   align-items: center;
   border: none;
@@ -313,7 +313,9 @@ body {
   opacity: 1;
 }
 
-.pr-row-split:hover .pr-updated,
+/* Scoped to rows with the control: a merged row is also split but keeps its
+   date on hover. */
+.pr-row-split:has(.pr-snooze):hover .pr-updated,
 .pr-row-split:has(.pr-snooze:focus-visible) .pr-updated {
   visibility: hidden;
 }
