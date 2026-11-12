@@ -1,0 +1,9 @@
+{
+  "version": "1.2.4",
+  "platforms": {
+    "linux-x86_64-deb": {
+      "signature": "linux-signature",
+      "url": "https://example.test/releases/download/grapevine-v1.2.4/Grapevine-v1.2.4-amd64.deb"
+    }
+  }
+}

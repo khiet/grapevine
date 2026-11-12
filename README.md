@@ -138,8 +138,9 @@ Releases are automated with
 [release-please](https://github.com/googleapis/release-please). Merging a
 Conventional Commit to `main` updates a standing release PR that bumps the
 version in `package.json` and writes `CHANGELOG.md`; merging *that* PR tags the
-release and builds the universal app onto it. `package.json` is the only place
-the app version lives, so never bump a version by hand.
+release and builds the universal macOS app and the Ubuntu `.deb` onto it, then
+publishes the updater manifest once both have built. `package.json` is the only
+place the app version lives, so never bump a version by hand.
 
 ## Setup
 

@@ -2,7 +2,13 @@ name: release
 
 # Every push to main runs release-please, which only maintains a release PR.
 # Nothing is built until that PR is merged: the merge is the deliberate
-# "ship it" signal, and it alone marks a release created and gates the build.
+# "ship it" signal, and it alone marks a release created and gates the builds.
+#
+# A release is built by one job per platform. Each attaches its own downloads
+# and hands over a fragment of the updater manifest; publish-manifest merges
+# the fragments and attaches the one manifest installed apps poll. The
+# manifest is the switch that offers a release to installed apps, so it is
+# published last and only when every platform built.
 #
 # workflow_dispatch is a manual escape hatch: rebuild and re-attach an existing
 # release tag without release-please. Use it when a release was cut but its
@@ -48,7 +54,7 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build:
+  build-macos:
     needs: release-please
     # Build on a push only when release-please actually cut a release, or on any
     # manual rebuild. '!cancelled()' lets this run even though release-please is
@@ -61,6 +67,8 @@ jobs:
         || github.event_name == 'workflow_dispatch'
       ) }}
     runs-on: macos-latest
+    outputs:
+      updater: ${{ steps.signing.outputs.updater }}
     steps:
       # On a manual rebuild, check out the named tag; on a push, the default
       # ref (the commit that triggered the run).
@@ -83,28 +91,19 @@ jobs:
 
       - run: npm ci
 
-      # Resolve TAG and VERSION once for every step below. A manual rebuild names
-      # the tag directly; a push derives it from the manifest and config rather
-      # than a release-please action output, whose per-package output key is
-      # namespaced by path and came back empty on an action re-run, which blanked
-      # the tag and broke the upload. Both mirror release-please's own tag
-      # format, '<package-name>-v<version>'.
+      # The release scripts come from the commit the workflow runs at, not
+      # from the tag being rebuilt: a manual rebuild may name a tag cut before
+      # they existed.
+      - uses: actions/checkout@v5
+        with:
+          path: .release-tools
+          sparse-checkout: .github/scripts
+
       - name: Resolve the release tag
         env:
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
-        run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            TAG="$INPUT_TAG"
-            # Strip the '<package-name>-v' prefix for the changelog lookup.
-            VERSION="${TAG#*-v}"
-          else
-            NAME="$(jq -r '.packages["."]["package-name"]' release-please-config.json)"
-            VERSION="$(jq -r '."."' .release-please-manifest.json)"
-            TAG="${NAME}-v${VERSION}"
-          fi
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+        run: .release-tools/.github/scripts/resolve-release-tag.sh
 
       # When the Apple secrets are absent (e.g. a fork), signing is skipped
       # rather than failing the release: the signing and verification steps
@@ -232,13 +231,11 @@ jobs:
             "src-tauri/target/universal-apple-darwin/release/bundle/macos/Grapevine.app" \
             "Grapevine-v${VERSION}-universal.zip"
 
-      # The manifest is what installed apps poll via the stable
-      # releases/latest/download/latest.json URL, so it is regenerated for and
-      # attached to every release. Both platform keys carry the same universal
-      # tarball: the updater reports the arch it runs on, never "universal".
-      # The tarball gets a versioned name so its per-release download URL in the
-      # manifest can never collide across releases.
-      - name: Write the updater manifest
+      # This job's share of the updater manifest. Both platform keys carry the
+      # same universal tarball: the updater reports the arch it runs on, never
+      # "universal". The tarball gets a versioned name so its per-release
+      # download URL in the manifest can never collide across releases.
+      - name: Write the updater manifest fragment
         if: steps.signing.outputs.updater == 'true'
         run: |
           BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
@@ -246,17 +243,15 @@ jobs:
           mv "$BUNDLE_DIR/Grapevine.app.tar.gz" "$TARBALL"
           jq -n \
             --arg version "$VERSION" \
-            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${TARBALL}" \
             --rawfile signature "$BUNDLE_DIR/Grapevine.app.tar.gz.sig" \
             '{
               version: $version,
-              pub_date: $pub_date,
               platforms: {
                 "darwin-aarch64": { signature: $signature, url: $url },
                 "darwin-x86_64": { signature: $signature, url: $url }
               }
-            }' > latest.json
+            }' > manifest-darwin.json
 
       - name: Attach the build to the release
         env:
@@ -265,9 +260,16 @@ jobs:
         run: |
           ASSETS=("Grapevine-v${VERSION}-universal.zip")
           if [ "$UPDATER" = "true" ]; then
-            ASSETS+=("Grapevine-v${VERSION}-universal.app.tar.gz" latest.json)
+            ASSETS+=("Grapevine-v${VERSION}-universal.app.tar.gz")
           fi
           gh release upload "$TAG" "${ASSETS[@]}" --clobber
+
+      - uses: actions/upload-artifact@v7
+        if: steps.signing.outputs.updater == 'true'
+        with:
+          name: manifest-fragment-darwin
+          path: manifest-darwin.json
+          if-no-files-found: error
 
       # Notes come from CHANGELOG.md, not from what release-please derived for
       # the release body: the changelog is the copy a human may have rewritten
@@ -293,3 +295,192 @@ jobs:
           printf '\n' >> notes.md
           cat .github/release-footer.md >> notes.md
           gh release edit "$TAG" --notes-file notes.md
+
+  build-linux:
+    needs: release-please
+    # Same gate as build-macos.
+    if: >-
+      ${{ !cancelled()
+      && (
+        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
+        || github.event_name == 'workflow_dispatch'
+      ) }}
+    # One LTS behind current, so the .deb links against a glibc that current
+    # Ubuntu also satisfies. Keep in step with test-ubuntu in ci.yml: the .deb
+    # built there is the one CI proves installs on current Ubuntu.
+    runs-on: ubuntu-24.04
+    outputs:
+      updater: ${{ steps.signing.outputs.updater }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+
+      # Keep in step with the package list in ci.yml.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev libdbus-1-dev
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # The release scripts come from the commit the workflow runs at, not
+      # from the tag being rebuilt: a manual rebuild may name a tag cut before
+      # they existed.
+      - uses: actions/checkout@v5
+        with:
+          path: .release-tools
+          sparse-checkout: .github/scripts
+
+      - name: Resolve the release tag
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: .release-tools/.github/scripts/resolve-release-tag.sh
+
+      # As in build-macos: without the updater key the .deb is still built and
+      # attached, but carries no signature and joins no manifest.
+      - name: Detect whether the updater key is configured
+        id: signing
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "updater=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "updater=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set; skipping the updater signature, so installed apps will not auto-update to this release."
+          fi
+
+      # The updater key is the only signature the .deb gets; it is not signed
+      # as a package. With the overlay config the bundler writes a .sig next to
+      # the .deb, which installed apps verify before installing it.
+      - name: Build the .deb
+        env:
+          UPDATER: ${{ steps.signing.outputs.updater }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ "$UPDATER" = "true" ]; then
+            npm run tauri build -- --bundles deb \
+              --config src-tauri/updater-artifacts.conf.json
+          else
+            npm run tauri build -- --bundles deb
+          fi
+
+      # Versioned names, matching the macOS assets, so the download URL in the
+      # manifest can never collide across releases. Exactly one .deb is
+      # expected; more or fewer fails the job rather than shipping a guess.
+      - name: Name the .deb for the release
+        env:
+          UPDATER: ${{ steps.signing.outputs.updater }}
+        run: |
+          shopt -s nullglob
+          DEBS=(src-tauri/target/release/bundle/deb/*.deb)
+          if [ "${#DEBS[@]}" -ne 1 ]; then
+            echo "::error::Expected one .deb, found ${#DEBS[@]}"
+            exit 1
+          fi
+          DEB="Grapevine-v${VERSION}-amd64.deb"
+          mv "${DEBS[0]}" "$DEB"
+          if [ "$UPDATER" = "true" ]; then
+            mv "${DEBS[0]}.sig" "$DEB.sig"
+          fi
+          echo "DEB=$DEB" >> "$GITHUB_ENV"
+
+      - name: Write the updater manifest fragment
+        if: steps.signing.outputs.updater == 'true'
+        run: |
+          jq -n \
+            --arg version "$VERSION" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${DEB}" \
+            --rawfile signature "$DEB.sig" \
+            '{
+              version: $version,
+              platforms: {
+                "linux-x86_64-deb": { signature: $signature, url: $url }
+              }
+            }' > manifest-linux.json
+
+      - name: Attach the build to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATER: ${{ steps.signing.outputs.updater }}
+        run: |
+          ASSETS=("$DEB")
+          if [ "$UPDATER" = "true" ]; then
+            ASSETS+=("$DEB.sig")
+          fi
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
+
+      - uses: actions/upload-artifact@v7
+        if: steps.signing.outputs.updater == 'true'
+        with:
+          name: manifest-fragment-linux
+          path: manifest-linux.json
+          if-no-files-found: error
+
+  publish-manifest:
+    needs: [build-macos, build-linux]
+    # Both builds must have succeeded: a failed or skipped build publishes no
+    # manifest, so releases/latest/download/latest.json has nothing new to
+    # offer and installed apps stay on the release they run. The results are
+    # checked by hand because '!cancelled()', needed for the same skipped
+    # release-please reason as the builds, also switches off the default
+    # "every dependency succeeded" rule.
+    if: >-
+      ${{ !cancelled()
+      && needs.build-macos.result == 'success'
+      && needs.build-linux.result == 'success'
+      && needs.build-macos.outputs.updater == 'true'
+      && needs.build-linux.outputs.updater == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      # Not the tag, even on a manual rebuild: this job only runs the release
+      # scripts, and a rebuilt tag may have been cut before they existed.
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Resolve the release tag
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: .github/scripts/resolve-release-tag.sh
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: manifest-fragment-*
+          path: fragments
+          merge-multiple: true
+
+      # The script refuses to print a manifest that lacks a platform or mixes
+      # versions, and the upload never runs after a failed merge.
+      - name: Merge the fragments into the updater manifest
+        run: |
+          node scripts/merge-manifest.mjs \
+            fragments/manifest-darwin.json fragments/manifest-linux.json \
+            > latest.json
+
+      # Installed apps poll this through the stable
+      # releases/latest/download/latest.json URL.
+      - name: Attach the manifest to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" latest.json --clobber
