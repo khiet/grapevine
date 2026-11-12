@@ -28,7 +28,7 @@
 3. The number in your menubar is how many PRs are waiting on you. Click it to
    see the list.
 
-No notifications, no Dock icon, no dashboard to keep open.
+No notifications, no dashboard to keep open, and on macOS no Dock icon.
 
 ## What it shows you
 
@@ -79,6 +79,8 @@ differently from macOS:
 
 - Clicking the icon opens a menu. "Open Grapevine" toggles the popover, and
   "Quit Grapevine" stops the app.
+- To open the popover in one step, click Grapevine in the dock or switch to
+  it with Super+Tab or Alt+Tab. It is in both for as long as it runs.
 - The popover opens in the top-right corner of the primary monitor, not under
   the icon.
 

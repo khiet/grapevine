@@ -51,8 +51,8 @@ tray has a count to show. Steps 13 and 14 need `xlsclients`, from the
 5. Hide the popover (step 7), move another app's window so it covers the
    top-right corner, and choose "Open Grapevine" again. **Expect:** the
    popover draws above that window.
-6. With the popover open, look at the dock and press Super+Tab, then Alt+Tab.
-   **Expect:** Grapevine is in none of them.
+6. With the popover open, look at the dock, then press Super+Tab and Alt+Tab.
+   **Expect:** Grapevine is in all three.
 7. Click on the desktop or in another window. **Expect:** the popover hides.
 8. Open the popover again, then click the glyph and choose "Open Grapevine".
    **Expect:** the popover ends up hidden, not hidden and shown again.
@@ -71,6 +71,30 @@ tray has a count to show. Steps 13 and 14 need `xlsclients`, from the
     this mode, which is accepted. Quit it.
 14. Run `grapevine` with no variable set and repeat the `xlsclients` command.
     **Expect:** a `grapevine` line; the app is running through XWayland.
+
+## App switcher and dock
+
+Run on the default Wayland session, starting with Grapevine not running and
+not pinned to the dock.
+
+1. Start Grapevine from the app grid and wait for the glyph. **Expect:** no
+   popover appears, not even for a moment, and Grapevine's own icon (not a
+   generic one) is in the dock, marked as running.
+2. Press Super+Tab, move to Grapevine and release. **Expect:** Grapevine is
+   listed with its icon, and the popover appears in the top-right corner of
+   the primary monitor, just below the panel.
+3. Click on the desktop or in another window. **Expect:** the popover leaves
+   the screen and Grapevine's icon stays in the dock.
+4. Press Alt+Tab, move to Grapevine and release. **Expect:** the popover
+   appears in the same corner.
+5. Put the popover away again, then click Grapevine's icon in the dock.
+   **Expect:** the popover appears in the same corner.
+6. Put the popover away, click the glyph and choose "Open Grapevine".
+   **Expect:** the popover appears; the tray menu still opens a popover that
+   the switcher or the dock last opened.
+7. Open the popover from the dock, then click the glyph and choose "Open
+   Grapevine". **Expect:** the popover ends up hidden, not hidden and shown
+   again.
 
 ## Second launch
 

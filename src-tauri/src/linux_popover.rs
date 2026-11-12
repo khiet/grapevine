@@ -1,6 +1,7 @@
 //! The decisions behind the Linux popover that do not need a display: which
-//! display backend to force, and where the popover goes. Compiled for tests on
-//! every platform so the macOS CI job covers them too.
+//! display backend to force, where the popover goes, and whether it counts as
+//! on screen. Compiled for tests on every platform so the macOS CI job covers
+//! them too.
 
 use std::ffi::OsStr;
 
@@ -13,13 +14,21 @@ pub const BACKEND_VAR: &str = "GDK_BACKEND";
 /// The backend to set in [`BACKEND_VAR`], given its current value, or `None`
 /// to leave the environment alone. Wayland does not let an app place its own
 /// window, so the popover needs X11 (XWayland on the default session) to land
-/// in its corner, stay on top and stay out of the dock. A backend the user
+/// in its corner and stay on top. A backend the user
 /// already chose wins, even though the popover may then be misplaced.
 pub fn backend_to_force(chosen: Option<&OsStr>) -> Option<&'static str> {
     match chosen {
         Some(backend) if !backend.is_empty() => None,
         _ => Some("x11"),
     }
+}
+
+/// Whether the user can see the popover. Putting it away minimizes it rather
+/// than hiding it, so that it stays in the dock and the app switchers; a
+/// minimized popover is therefore still `shown` to the window system.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn on_screen(shown: bool, minimized: bool) -> bool {
+    shown && !minimized
 }
 
 /// Where the popover's top-left corner goes so it sits in the top-right
@@ -64,6 +73,22 @@ mod tests {
     #[test]
     fn treats_an_empty_backend_as_no_choice() {
         assert_eq!(backend_to_force(Some(OsStr::new(""))), Some("x11"));
+    }
+
+    #[test]
+    fn a_shown_popover_that_is_not_minimized_is_on_screen() {
+        assert!(on_screen(true, false));
+    }
+
+    #[test]
+    fn a_minimized_popover_is_not_on_screen() {
+        // Put away, yet still shown as far as the window system is concerned.
+        assert!(!on_screen(true, true));
+    }
+
+    #[test]
+    fn a_popover_that_was_never_shown_is_not_on_screen() {
+        assert!(!on_screen(false, false));
     }
 
     #[test]

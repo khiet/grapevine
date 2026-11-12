@@ -42,7 +42,7 @@ fn request_popover(app: &tauri::AppHandle, request: popover::Request) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let visible = window.is_visible().unwrap_or(false);
+    let visible = on_screen(&window);
     let recently_auto_hidden = app
         .state::<LastAutoHide>()
         .0
@@ -52,7 +52,7 @@ fn request_popover(app: &tauri::AppHandle, request: popover::Request) {
     match popover::decide(request, visible, recently_auto_hidden) {
         popover::Action::Nothing => {}
         popover::Action::Hide => {
-            let _ = window.hide();
+            let _ = put_away(&window);
         }
         popover::Action::Show => {
             // Before the window shows, so a row whose snooze ran out
@@ -61,9 +61,37 @@ fn request_popover(app: &tauri::AppHandle, request: popover::Request) {
             sync::wake_expired_snoozes(app);
             place_popover(&window);
             let _ = window.show();
+            #[cfg(target_os = "linux")]
+            let _ = window.unminimize();
             let _ = window.set_focus();
         }
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn on_screen(window: &tauri::WebviewWindow) -> bool {
+    window.is_visible().unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn on_screen(window: &tauri::WebviewWindow) -> bool {
+    linux_popover::on_screen(
+        window.is_visible().unwrap_or(false),
+        window.is_minimized().unwrap_or(false),
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn put_away(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    window.hide()
+}
+
+/// Takes the popover off screen by minimizing it. GNOME's app switcher and
+/// dock list only windows that exist on screen or minimized, so a hidden
+/// popover could not be switched to.
+#[cfg(target_os = "linux")]
+fn put_away(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    window.minimize()
 }
 
 /// Under the tray icon, where the last tray event said it is.
@@ -154,10 +182,21 @@ pub fn run() {
             commands::set_launch_at_login,
         ])
         .on_window_event(|window, event| {
+            let Some(popover) = window.get_webview_window(window.label()) else {
+                return;
+            };
             if let WindowEvent::Focused(false) = event {
-                if window.hide().is_ok() {
+                if put_away(&popover).is_ok() {
                     *window.state::<LastAutoHide>().0.lock().unwrap() = Some(Instant::now());
                 }
+            }
+            // The app switcher or the dock can bring the popover back without
+            // going through `request_popover`, so what that does before
+            // showing is repeated here.
+            #[cfg(target_os = "linux")]
+            if let WindowEvent::Focused(true) = event {
+                sync::wake_expired_snoozes(window.app_handle());
+                place_popover(&popover);
             }
         })
         .setup(|app| {
@@ -176,7 +215,7 @@ pub fn run() {
             let quit = MenuItemBuilder::with_id("quit", "Quit Grapevine").build(app)?;
             let menu = MenuBuilder::new(app);
             // The Linux tray reports no clicks and opens its menu on every
-            // click, so the menu is the only way to reach the popover.
+            // click, so the menu is the tray's only way to reach the popover.
             #[cfg(target_os = "linux")]
             let open = MenuItemBuilder::with_id("open", "Open Grapevine").build(app)?;
             #[cfg(target_os = "linux")]
@@ -218,6 +257,19 @@ pub fn run() {
                 .build(app)?;
 
             sync::start(app.handle());
+
+            // Shown from the start as far as GNOME is concerned, but
+            // minimized: the app switcher and the dock list Grapevine before
+            // the popover has ever been opened. Minimizing before showing
+            // keeps the popover from flashing up at launch. The window config
+            // skips the taskbar, which only macOS wants now.
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_skip_taskbar(false);
+                place_popover(&window);
+                let _ = window.minimize();
+                let _ = window.show();
+            }
 
             #[cfg(target_os = "linux")]
             if app
