@@ -259,10 +259,11 @@ pub fn run() {
 
             sync::start(app.handle());
 
-            // On screen from the start as far as GNOME is concerned, but
+            // Shown from the start as far as GNOME is concerned, but
             // minimized: the app switcher and the dock list Grapevine before
             // the popover has ever been opened. Minimizing before showing
-            // keeps the popover from flashing up at launch.
+            // keeps the popover from flashing up at launch. The window config
+            // skips the taskbar, which only macOS wants now.
             #[cfg(target_os = "linux")]
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_skip_taskbar(false);

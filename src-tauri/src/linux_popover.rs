@@ -1,6 +1,7 @@
 //! The decisions behind the Linux popover that do not need a display: which
-//! display backend to force, and where the popover goes. Compiled for tests on
-//! every platform so the macOS CI job covers them too.
+//! display backend to force, where the popover goes, and whether it counts as
+//! on screen. Compiled for tests on every platform so the macOS CI job covers
+//! them too.
 
 use std::ffi::OsStr;
 

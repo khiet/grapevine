@@ -51,8 +51,8 @@ tray has a count to show. Steps 13 and 14 need `xlsclients`, from the
 5. Hide the popover (step 7), move another app's window so it covers the
    top-right corner, and choose "Open Grapevine" again. **Expect:** the
    popover draws above that window.
-6. With the popover open, look at the dock. **Expect:** Grapevine's icon is in
-   it, marked as running.
+6. With the popover open, look at the dock, then press Super+Tab and Alt+Tab.
+   **Expect:** Grapevine is in all three.
 7. Click on the desktop or in another window. **Expect:** the popover hides.
 8. Open the popover again, then click the glyph and choose "Open Grapevine".
    **Expect:** the popover ends up hidden, not hidden and shown again.
@@ -92,8 +92,9 @@ not pinned to the dock.
 6. Put the popover away, click the glyph and choose "Open Grapevine".
    **Expect:** the popover appears; the tray menu still opens a popover that
    the switcher or the dock last opened.
-7. With the popover open, click the glyph and choose "Open Grapevine".
-   **Expect:** the popover ends up off screen, not put away and shown again.
+7. Open the popover from the dock, then click the glyph and choose "Open
+   Grapevine". **Expect:** the popover ends up hidden, not hidden and shown
+   again.
 
 ## Second launch
 
