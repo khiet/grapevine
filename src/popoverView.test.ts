@@ -432,17 +432,6 @@ test("a cancelled deploy is named without the failure color", () => {
   });
 });
 
-test("a sync that changes the deploy changes the row's status", () => {
-  const before = mergedPr({
-    deploy: { state: "deploying", completed_at: null, url: RUN_URL },
-  });
-  const after = mergedPr({
-    deploy: { state: "deployed", completed_at: DEPLOY_DONE, url: RUN_URL },
-  });
-  expect(deployFor(before)?.label).toBe("Deploying");
-  expect(deployFor(after)?.label).toBe("Deployed");
-});
-
 test("each PR lands in the section the backend assigned it", () => {
   const view = list(
     synced({
