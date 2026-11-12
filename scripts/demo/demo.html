@@ -183,23 +183,33 @@
       // sits level with the ring unless `chipY` moves it clear of a neighbour.
       window.callout = (box, side, text, chipY) => {
         const pad = 4;
-        const r = { x: box.x - pad, y: box.y - pad, w: box.width + pad * 2, h: box.height + pad * 2 };
+        const ringBox = {
+          x: box.x - pad,
+          y: box.y - pad,
+          w: box.width + pad * 2,
+          h: box.height + pad * 2,
+        };
         const ring = document.createElement("div");
         ring.className = "ring";
-        Object.assign(ring.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+        Object.assign(ring.style, {
+          left: `${ringBox.x}px`,
+          top: `${ringBox.y}px`,
+          width: `${ringBox.w}px`,
+          height: `${ringBox.h}px`,
+        });
         const chip = document.createElement("div");
         chip.className = "chip";
         chip.textContent = text;
         document.body.append(ring, chip);
-        const cy = chipY ?? r.y + r.h / 2;
-        const cx = side === "right" ? GUTTER.right : GUTTER.left - chip.offsetWidth;
-        Object.assign(chip.style, { left: `${cx}px`, top: `${cy - chip.offsetHeight / 2}px` });
+        const chipMid = chipY ?? ringBox.y + ringBox.h / 2;
+        const chipLeft = side === "right" ? GUTTER.right : GUTTER.left - chip.offsetWidth;
+        Object.assign(chip.style, { left: `${chipLeft}px`, top: `${chipMid - chip.offsetHeight / 2}px` });
         const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
         const ends = {
-          x1: side === "right" ? cx : cx + chip.offsetWidth,
-          y1: cy,
-          x2: side === "right" ? r.x + r.w : r.x,
-          y2: Math.min(Math.max(cy, r.y), r.y + r.h),
+          x1: side === "right" ? chipLeft : chipLeft + chip.offsetWidth,
+          y1: chipMid,
+          x2: side === "right" ? ringBox.x + ringBox.w : ringBox.x,
+          y2: Math.min(Math.max(chipMid, ringBox.y), ringBox.y + ringBox.h),
         };
         for (const [name, value] of Object.entries(ends)) line.setAttribute(name, value);
         document.getElementById("lines").append(line);
