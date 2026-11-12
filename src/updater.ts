@@ -72,10 +72,9 @@ export function updateStatusLabel(state: UpdateState): string {
 }
 
 /** Popover banner copy for a ready update. */
-export function restartLabel(state: {
-  version: string;
-  needsPassword: boolean;
-}): string {
+export function restartLabel(
+  state: Extract<UpdateState, { phase: "ready" }>,
+): string {
   return state.needsPassword
     ? `Restart to update to v${state.version} (asks for your password)`
     : `Restart to update to v${state.version}`;
@@ -85,9 +84,9 @@ export function restartLabel(state: {
  * Check the release feed and, if an update exists, download it. Where the
  * install needs no password it is staged here too; otherwise the install waits
  * for restartToUpdate(). Either way nothing takes effect before then, and
- * this function never raises a prompt. Failures on a
- * background check reset to idle so nothing is surfaced; a manual check moves
- * to "failed"/"up-to-date" so the settings row always answers the click.
+ * this function never raises a prompt. Failures on a background check reset
+ * to idle so nothing is surfaced; a manual check moves to "failed" or
+ * "up-to-date" so the settings row always answers the click.
  */
 export async function checkForUpdates(manual: boolean): Promise<void> {
   // A staged or in-flight download stays authoritative: re-checking cannot
@@ -151,15 +150,20 @@ export async function restartToUpdate(): Promise<void> {
   try {
     if (awaitingInstall !== null) {
       const update = awaitingInstall;
-      // A failed install releases the downloaded bytes, so it cannot be retried.
       awaitingInstall = null;
       try {
         await update.install();
       } catch (error) {
         console.error("Update install failed:", error);
+        // The plugin keeps the downloaded package in memory after a failed
+        // install; release it, since the next check downloads a fresh one.
+        await update.close().catch(() => {});
         setState({ phase: "failed", reason: "install" });
         return;
       }
+      // Installed: if the relaunch below fails, a retry only relaunches, so
+      // the copy must stop promising a password prompt.
+      setState({ phase: "ready", version: update.version, needsPassword: false });
     }
     try {
       await relaunch();

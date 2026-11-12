@@ -173,6 +173,7 @@ describe("on Linux, where installing asks for the password", () => {
       version: "0.6.0",
       download: vi.fn().mockResolvedValue(undefined),
       install: vi.fn(install),
+      close: vi.fn().mockResolvedValue(undefined),
       downloadAndInstall: vi.fn().mockResolvedValue(undefined),
     };
     check.mockResolvedValue(update);
@@ -224,6 +225,22 @@ describe("on Linux, where installing asks for the password", () => {
 
     expect(relaunch).not.toHaveBeenCalled();
     expect(currentUpdateState()).toEqual({ phase: "failed", reason: "install" });
+  });
+
+  test("a relaunch that fails after the install stops promising a password prompt", async () => {
+    foundUpdate(async () => {});
+    relaunch.mockRejectedValue(new Error("spawn failed"));
+    const { checkForUpdates, currentUpdateState, restartToUpdate } =
+      await import("./updater");
+    await checkForUpdates(false);
+
+    await restartToUpdate();
+
+    expect(currentUpdateState()).toEqual({
+      phase: "ready",
+      version: "0.6.0",
+      needsPassword: false,
+    });
   });
 
   test("a second click while the password prompt is open does not install twice", async () => {
