@@ -51,7 +51,7 @@ pub fn wake(app: AppHandle, key: String) -> Result<(), String> {
 /// comes from the Snapshot, and [`github::request_conflict_fix`] holds the
 /// rule and the comment's words. `Err` is the message the row shows. Once the
 /// comment is posted the request is recorded, which pushes a Snapshot with
-/// the PR waiting on Copilot.
+/// the PR's `fix_requested` set.
 #[tauri::command]
 pub async fn fix_conflict(app: AppHandle, key: String) -> Result<(), String> {
     let state = app.state::<sync::SyncState>();

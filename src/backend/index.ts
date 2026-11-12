@@ -81,10 +81,10 @@ export interface PullRequest {
    * checks it again before posting, so this only decides what is offered. */
   can_fix_conflict: boolean;
   /** Copilot has been asked to resolve the conflict, within the last hour,
-   * and the conflict is still there; renders the Copilot fixing mark in
-   * place of the fix control. Backend-kept, so it survives a restart. Such a
-   * PR waits on Copilot: its turn is "theirs" unless a review is asked of the
-   * viewer by name. */
+   * and no sync has shown the conflict gone since; renders the Copilot fixing
+   * mark in place of the fix control. Backend-kept, so it survives a restart.
+   * Such a PR waits on Copilot: its turn is never "yours" unless a review is
+   * asked of the viewer by name. */
   fix_requested: boolean;
   /** New activity from people. The only count that badges a row or a
    * collapsed section. It does not feed the tray. */

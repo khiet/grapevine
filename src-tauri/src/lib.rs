@@ -57,8 +57,8 @@ fn request_popover(app: &tauri::AppHandle, request: popover::Request) {
         }
         popover::Action::Show => {
             // Before the window shows, so a row whose snooze ran out
-            // overnight is awake, and one Copilot has had its hour with is
-            // the viewer's again, the moment the popover opens, whatever the
+            // overnight is awake, and a row whose fix request ran out is the
+            // viewer's again, the moment the popover opens, whatever the
             // sync loop is waiting on.
             sync::expire_by_clock(app);
             place_popover(&window);
