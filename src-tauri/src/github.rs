@@ -63,8 +63,8 @@ const TEAM_SEARCH_MAX_PAGES: usize = 10;
 /// The login of Copilot's cloud agent, as GitHub lists it among a repo's
 /// assignable actors when the agent is enabled there.
 const COPILOT_LOGIN: &str = "copilot-swe-agent";
-/// Room for accounts whose login merely contains [`COPILOT_LOGIN`]: the
-/// actor filter is a substring search, and the bot is matched exactly after.
+/// Room for other accounts the actor filter returns: it is a search on
+/// [`COPILOT_LOGIN`], not an exact match, and the bot is picked out after.
 const COPILOT_ACTOR_PAGE: usize = 5;
 /// The whole comment that asks Copilot for the fix. Fixed here so nothing
 /// outside this module can choose what Grapevine writes to a PR.
@@ -509,10 +509,9 @@ impl<T: Transport> Client<'_, T> {
                 // GitHub refuses a whole query over one field it will not
                 // serve. The round is asked again without the extras, one at
                 // a time, so a token that cannot search or cannot list a
-                // repo's actors still syncs: first the search, which is the
-                // one known to be refused, then the Copilot actors. A quota
-                // refusal is not about either, and asking again would only
-                // spend more of it.
+                // repo's actors still syncs: first the search, then the
+                // Copilot actors. A quota refusal is not about either, and
+                // asking again would only spend more of it.
                 if matches!(error, GithubError::RateLimited { .. }) {
                     return Err(error);
                 }
@@ -1208,11 +1207,10 @@ fn copilot_enabled(repo: &Value) -> bool {
     })
 }
 
-/// Whether the row may offer to ask Copilot for a conflict fix. Every clause
-/// is needed for the comment to be both the viewer's to make and able to
-/// work: Copilot pushes to the PR's own branch, which it cannot do on a
-/// fork, and only answers where its cloud agent is enabled. Mine keeps the
-/// offer to PRs whose conflict is the viewer's to clear.
+/// Whether the row may offer to ask Copilot for a conflict fix. Copilot
+/// answers by pushing to the PR's branch, so the offer stays with branches of
+/// the repo itself, and it answers only where its cloud agent is enabled.
+/// Mine keeps the offer to PRs whose conflict is the viewer's to clear.
 fn can_fix_conflict(
     node: &Value,
     section: Section,
@@ -3344,8 +3342,8 @@ mod tests {
     type QueryChars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
 
     /// Reads the selection out of the GraphQL subset this module writes:
-    /// one anonymous `query` or `mutation`, aliases, arguments, and inline fragments, whose
-    /// fields count as the enclosing field's own.
+    /// one anonymous `query` or `mutation`, aliases, arguments, and inline
+    /// fragments, whose fields count as the enclosing field's own.
     fn parse_query(query: &str) -> Asked {
         let mut chars = query.chars().peekable();
         skip_space(&mut chars);
@@ -4768,8 +4766,8 @@ mod tests {
         assert!(!can_fix(json!({ "nodes": [] }), json!({})));
     }
 
-    /// The actor filter is a substring search, so it can return accounts that
-    /// are not the agent.
+    /// The actor filter is a search, so it can return accounts that are not
+    /// the agent.
     #[test]
     fn only_the_copilot_bot_itself_counts_as_copilot() {
         let lookalikes = json!({ "nodes": [

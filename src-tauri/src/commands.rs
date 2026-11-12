@@ -48,9 +48,9 @@ pub fn wake(app: AppHandle, key: String) -> Result<(), String> {
 
 /// Asks Copilot to resolve the merge conflict on the PR filed under `key`, by
 /// commenting on it as the user. The key is all the webview supplies: the PR
-/// comes from the Snapshot, and the rule and the comment are GitHub-side
-/// (see [`github::request_conflict_fix`]). `Err` is the message the row
-/// shows. Nothing is stored and no Snapshot is pushed.
+/// comes from the Snapshot, and [`github::request_conflict_fix`] holds the
+/// rule and the comment's words. `Err` is the message the row shows. Nothing
+/// is stored and no Snapshot is pushed.
 #[tauri::command]
 pub async fn fix_conflict(
     state: tauri::State<'_, sync::SyncState>,
