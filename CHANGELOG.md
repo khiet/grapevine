@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/khiet/grapevine/compare/grapevine-v0.11.0...grapevine-v0.12.0) (2026-11-12)
+
+
+### Features
+
+* ask for the password only on restart when updating on Ubuntu ([#94](https://github.com/khiet/grapevine/issues/94)) ([24ae2fb](https://github.com/khiet/grapevine/commit/24ae2fb5ff4a2017e0c8b1134307ae53f10b9845)), closes [#84](https://github.com/khiet/grapevine/issues/84)
+* build and test Grapevine on Ubuntu ([#86](https://github.com/khiet/grapevine/issues/86)) ([6a55c92](https://github.com/khiet/grapevine/commit/6a55c9290a7b340fabc460b72f77b15c7fef193e)), closes [#78](https://github.com/khiet/grapevine/issues/78)
+* launch at login on Ubuntu ([#88](https://github.com/khiet/grapevine/issues/88)) ([08fe47c](https://github.com/khiet/grapevine/commit/08fe47c51ff28c07f3558c2cf5f183df2da5341a)), closes [#79](https://github.com/khiet/grapevine/issues/79)
+* open the popover from the tray menu on Ubuntu, pinned top-right ([#89](https://github.com/khiet/grapevine/issues/89)) ([3b467c8](https://github.com/khiet/grapevine/commit/3b467c89f1a353bad3a1e277f588269765bd4d8b)), closes [#80](https://github.com/khiet/grapevine/issues/80)
+* publish a deb and one merged updater manifest on release ([#93](https://github.com/khiet/grapevine/issues/93)) ([514af9f](https://github.com/khiet/grapevine/commit/514af9f67001b0349362ace34c25561d85e6d8c4)), closes [#83](https://github.com/khiet/grapevine/issues/83)
+* set the popover in the desktop's UI font on Ubuntu ([#91](https://github.com/khiet/grapevine/issues/91)) ([99b9a9b](https://github.com/khiet/grapevine/commit/99b9a9b53620e46be48d0904a0b8493a674e4d97)), closes [#82](https://github.com/khiet/grapevine/issues/82)
+* show the running Grapevine on a second launch on Ubuntu ([#90](https://github.com/khiet/grapevine/issues/90)) ([de9460f](https://github.com/khiet/grapevine/commit/de9460ff9c723b09b4e85650dab97daed7dc9cd0)), closes [#81](https://github.com/khiet/grapevine/issues/81)
+
 ## [0.11.0](https://github.com/khiet/grapevine/compare/grapevine-v0.10.0...grapevine-v0.11.0) (2026-11-11)
 
 
