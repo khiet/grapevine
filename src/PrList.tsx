@@ -7,12 +7,13 @@ import {
   prKey,
   snooze,
   wake,
-  type MergedPr,
 } from "./backend";
 import { clickFix } from "./fixConflict";
 import type {
+  DeployView,
   ListView,
   Mark,
+  MergedRowView,
   RowView,
   SectionKey,
   SectionView,
@@ -107,11 +108,30 @@ export function formatUpdated(iso: string, now: Date = new Date()): string {
     new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   // Rounding absorbs DST days, which are not exactly 24 hours long.
   const days = Math.round((startOfDay(now) - startOfDay(then)) / 86_400_000);
-  if (days <= 0) {
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${pad(then.getHours())}:${pad(then.getMinutes())}`;
-  }
-  return days === 1 ? "Yesterday" : `${then.getDate()} ${MONTHS[then.getMonth()]}`;
+  if (days <= 0) return clockTime(then);
+  return days === 1 ? "Yesterday" : dayAndMonth(then);
+}
+
+const clockTime = (d: Date) => {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const dayAndMonth = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+
+// The exact local date and time, for tooltips: "16 Jul 2026, 14:59".
+function formatExact(iso: string): string {
+  const then = new Date(iso);
+  return `${dayAndMonth(then)} ${then.getFullYear()}, ${clockTime(then)}`;
+}
+
+// The deploy status tooltip: the exact times the row abbreviates, one event
+// per line. A deploy under way has no time of its own yet.
+export function deployTip(mergedAt: string, deploy: DeployView): string {
+  const deployed = deploy.completedAt
+    ? `${deploy.label} ${formatExact(deploy.completedAt)}`
+    : deploy.label;
+  return `Merged ${formatExact(mergedAt)}\n${deployed}`;
 }
 
 // Footer label for the last successful sync, reusing the row-timestamp
@@ -638,33 +658,61 @@ function SnoozedGroup({ group }: { group: SnoozedGroupView }) {
   );
 }
 
-/* Two sibling buttons, not a dismiss nested inside the row button, which
-   would be invalid HTML. No mark_read here: merged PRs carry no unread
-   state. */
-function MergedRow({ pr }: { pr: MergedPr }) {
+/* Sibling buttons, not a dismiss or a deploy status nested inside the row
+   button, which would be invalid HTML. No mark_read here: merged PRs carry
+   no unread state. */
+function MergedRow({ row }: { row: MergedRowView }) {
+  const { pr, deploy } = row;
+  const status = deploy && (
+    <>
+      {deploy.label}
+      {deploy.showsTime &&
+        deploy.completedAt &&
+        ` ${formatUpdated(deploy.completedAt)}`}
+    </>
+  );
   return (
     <li className="pr-row-split">
-      <button
-        type="button"
-        className="pr-row"
-        onClick={() => openUrl(pr.url).catch(() => {})}
-      >
-        <PrAvatar
-          avatarUrl={pr.avatar_url}
-          ownerAvatarUrl={pr.owner_avatar_url}
-          author={pr.author}
-        />
-        <span className="pr-text">
-          <span className="pr-title-row">
-            <span className="pr-title">{pr.title}</span>
-            <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
+      <span className="pr-row-main">
+        <button
+          type="button"
+          className="pr-row"
+          onClick={() => openUrl(pr.url).catch(() => {})}
+        >
+          <PrAvatar
+            avatarUrl={pr.avatar_url}
+            ownerAvatarUrl={pr.owner_avatar_url}
+            author={pr.author}
+          />
+          <span className="pr-text">
+            <span className="pr-title-row">
+              <span className="pr-title">{pr.title}</span>
+              <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
+            </span>
+            <span className="pr-origin">
+              <span className="pr-number">#{pr.number}</span>
+              <span className="pr-repo">{pr.repo}</span>
+              {/* Holds the status's place in the line so the repo truncates
+                  before it; the real control floats over this spot. */}
+              {status && (
+                <span className="pr-deploy-space" aria-hidden="true">
+                  {status}
+                </span>
+              )}
+            </span>
           </span>
-          <span className="pr-origin">
-            <span className="pr-number">#{pr.number}</span>
-            <span className="pr-repo">{pr.repo}</span>
-          </span>
-        </span>
-      </button>
+        </button>
+        {deploy && (
+          <button
+            type="button"
+            className={deploy.failed ? "pr-deploy is-failed" : "pr-deploy"}
+            title={deployTip(pr.merged_at, deploy)}
+            onClick={() => openUrl(deploy.url).catch(() => {})}
+          >
+            {status}
+          </button>
+        )}
+      </span>
       <button
         type="button"
         className="pr-dismiss"
@@ -779,8 +827,8 @@ function SectionBodyView({ section }: { section: SectionView }) {
     case "merged":
       return (
         <ul>
-          {body.rows.map((pr) => (
-            <MergedRow key={prKey(pr)} pr={pr} />
+          {body.rows.map((row) => (
+            <MergedRow key={prKey(row.pr)} row={row} />
           ))}
         </ul>
       );

@@ -7,6 +7,8 @@
 import {
   prKey,
   type BlockedReason,
+  type Deploy,
+  type DeployState,
   type MergedPr,
   type PullRequest,
   type Snapshot,
@@ -84,13 +86,34 @@ export interface RepoGroupView {
   rows: RowView[];
 }
 
+/** The deploy status of a Merged row: its own control, which opens the
+ * workflow run rather than the PR. */
+export interface DeployView {
+  label: string;
+  /** Whether the row shows `completedAt` beside the label; only a deploy
+   * that landed does. */
+  showsTime: boolean;
+  /** The one state in the failure color; the rest stay metadata grey. */
+  failed: boolean;
+  /** When the run finished (ISO-8601 UTC); null while deploying. */
+  completedAt: string | null;
+  url: string;
+}
+
+export interface MergedRowView {
+  pr: MergedPr;
+  /** Null when no deploy run has been found: the row then shows nothing
+   * about deploys at all. */
+  deploy: DeployView | null;
+}
+
 export type SectionBody =
   /** No rows: the section shows its empty line. */
   | { kind: "empty" }
   /** `rows` is empty when every row of the section is snoozed. */
   | { kind: "rows"; rows: RowView[]; snoozed: SnoozedGroupView | null }
   | { kind: "groups"; groups: RepoGroupView[] }
-  | { kind: "merged"; rows: MergedPr[] };
+  | { kind: "merged"; rows: MergedRowView[] };
 
 export interface SectionView {
   key: SectionKey;
@@ -363,6 +386,24 @@ function groupByRepo(
     }));
 }
 
+const DEPLOY_LABELS: Record<DeployState, string> = {
+  deploying: "Deploying",
+  deployed: "Deployed",
+  failed: "Deploy failed",
+  cancelled: "Deploy cancelled",
+};
+
+function deployView(deploy: Deploy | null): DeployView | null {
+  if (!deploy) return null;
+  return {
+    label: DEPLOY_LABELS[deploy.state],
+    showsTime: deploy.state === "deployed",
+    failed: deploy.state === "failed",
+    completedAt: deploy.completed_at,
+    url: deploy.url,
+  };
+}
+
 export function derivePopover(
   snapshot: Snapshot,
   query: string,
@@ -461,7 +502,10 @@ export function derivePopover(
       /* Not while collapsed: clearing rows you cannot see invites a
          destructive misclick from the adjacent whole-row toggle. */
       offerClearAll: expanded,
-      body: { kind: "merged", rows: merged },
+      body: {
+        kind: "merged",
+        rows: merged.map((pr) => ({ pr, deploy: deployView(pr.deploy) })),
+      },
     });
   }
 
