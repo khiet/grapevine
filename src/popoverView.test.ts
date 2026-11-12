@@ -378,7 +378,7 @@ test("a merged row with a deploy under way says Deploying", () => {
   );
   expect(deploy).toEqual({
     label: "Deploying",
-    landedAt: null,
+    showsTime: false,
     failed: false,
     completedAt: null,
     url: RUN_URL,
@@ -395,7 +395,7 @@ test("a deployed row says Deployed and when the deploy landed", () => {
   );
   expect(deploy).toEqual({
     label: "Deployed",
-    landedAt: DEPLOY_DONE,
+    showsTime: true,
     failed: false,
     completedAt: DEPLOY_DONE,
     url: RUN_URL,
@@ -410,7 +410,7 @@ test("a failed deploy is the one status in the failure color", () => {
   );
   expect(deploy).toEqual({
     label: "Deploy failed",
-    landedAt: null,
+    showsTime: false,
     failed: true,
     completedAt: DEPLOY_DONE,
     url: RUN_URL,
@@ -425,7 +425,7 @@ test("a cancelled deploy is named without the failure color", () => {
   );
   expect(deploy).toEqual({
     label: "Deploy cancelled",
-    landedAt: null,
+    showsTime: false,
     failed: false,
     completedAt: DEPLOY_DONE,
     url: RUN_URL,

@@ -89,7 +89,7 @@ const RUN = "https://github.com/acme/widgets/actions/runs/1";
 test("the deploy tooltip gives the exact local merge and deploy times", () => {
   const tip = deployTip(at(2026, 7, 16, 14, 59).toISOString(), {
     label: "Deployed",
-    landedAt: at(2026, 7, 16, 15, 4).toISOString(),
+    showsTime: true,
     failed: false,
     completedAt: at(2026, 7, 16, 15, 4).toISOString(),
     url: RUN,
@@ -100,7 +100,7 @@ test("the deploy tooltip gives the exact local merge and deploy times", () => {
 test("the tooltip of a deploy under way has only the merge time to give", () => {
   const tip = deployTip(at(2026, 1, 2, 9, 5).toISOString(), {
     label: "Deploying",
-    landedAt: null,
+    showsTime: false,
     failed: false,
     completedAt: null,
     url: RUN,

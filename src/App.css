@@ -277,11 +277,7 @@ body {
 .pr-dismiss {
   border: none;
   background: none;
-  /* A fixed width, not padding around the glyph: .pr-deploy is placed
-     against it. */
-  flex: none;
-  width: 32px;
-  padding: 0;
+  padding: 0 12px;
   color: #8e8e93;
   font: inherit;
   font-size: 15px;
@@ -296,13 +292,20 @@ body {
 /* A merged row's deploy status: a control of its own (it opens the workflow
    run, the row opens the PR) floated over the end of the metadata line,
    where .pr-deploy-space holds its width so the repo truncates before it.
-   The offsets must track .pr-row's padding (bottom 9px, right 11px) and
-   .pr-dismiss's 32px, and the type must match .pr-origin so the control
-   covers its placeholder exactly. */
+   .pr-row-main is the row button's box, so the offsets track only .pr-row's
+   padding (bottom 9px, right 11px); the type must match .pr-origin so the
+   control covers its placeholder exactly. */
+.pr-row-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
 .pr-deploy {
   position: absolute;
   bottom: 9px;
-  right: 43px;
+  right: 11px;
   border: none;
   background: none;
   padding: 0;

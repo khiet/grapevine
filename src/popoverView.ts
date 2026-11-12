@@ -90,14 +90,13 @@ export interface RepoGroupView {
  * workflow run rather than the PR. */
 export interface DeployView {
   label: string;
-  /** When the deploy landed (ISO-8601 UTC), for the row to show beside the
-   * label; null in every state but deployed. */
-  landedAt: string | null;
+  /** Whether the row shows `completedAt` beside the label; only a deploy
+   * that landed does. */
+  showsTime: boolean;
   /** The one state in the failure color; the rest stay metadata grey. */
   failed: boolean;
-  /** When the run finished, for the tooltip; null while deploying. */
+  /** When the run finished (ISO-8601 UTC); null while deploying. */
   completedAt: string | null;
-  /** The workflow run. */
   url: string;
 }
 
@@ -398,7 +397,7 @@ function deployView(deploy: Deploy | null): DeployView | null {
   if (!deploy) return null;
   return {
     label: DEPLOY_LABELS[deploy.state],
-    landedAt: deploy.state === "deployed" ? deploy.completed_at : null,
+    showsTime: deploy.state === "deployed",
     failed: deploy.state === "failed",
     completedAt: deploy.completed_at,
     url: deploy.url,
