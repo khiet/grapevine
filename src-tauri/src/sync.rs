@@ -45,9 +45,14 @@ impl SyncState {
         self.pr_state.snapshot()
     }
 
-    /// See [`PrState::fix_target`].
-    pub fn fix_target(&self, key: &str) -> Result<PullRequest, String> {
-        self.pr_state.fix_target(key)
+    /// See [`PrState::begin_fix`].
+    pub fn begin_fix(&self, key: &str) -> Result<PullRequest, String> {
+        self.pr_state.begin_fix(key)
+    }
+
+    /// See [`PrState::abandon_fix`].
+    pub fn abandon_fix(&self, key: &str) {
+        self.pr_state.abandon_fix(key)
     }
 }
 

@@ -223,7 +223,8 @@ export const wake = (key: string) => adapter.invoke<void>("wake", { key });
  * GitHub as the user: the one command that writes there. Only the key goes
  * over; the backend picks the PR and the words. Rejects with the message to
  * show on the row. A posted comment is answered with a Snapshot in which the
- * PR waits on Copilot; the backend refuses a second one while that lasts. */
+ * PR has fix_requested set; the backend refuses a second one while that
+ * lasts. */
 export const fixConflict = (key: string) =>
   adapter.invoke<void>("fix_conflict", { key });
 

@@ -54,17 +54,25 @@ pub fn wake(app: AppHandle, key: String) -> Result<(), String> {
 /// the PR waiting on Copilot.
 #[tauri::command]
 pub async fn fix_conflict(app: AppHandle, key: String) -> Result<(), String> {
-    let pr = app.state::<sync::SyncState>().fix_target(&key)?;
-    let Some(token) = keychain::load()? else {
-        return Err("Save a valid GitHub token first.".into());
-    };
-    github::request_conflict_fix(&token, &pr).await?;
+    let state = app.state::<sync::SyncState>();
+    let pr = state.begin_fix(&key)?;
+    if let Err(e) = post_conflict_fix(&pr).await {
+        state.abandon_fix(&key);
+        return Err(e);
+    }
     // The comment is out, so a failed save must not read as a failed request:
     // the row would offer a second one.
     if let Err(e) = sync::transition(&app, |prs| prs.fix_requested(&key, sync::now_epoch_ms())) {
         eprintln!("cannot deliver the fix request: {e}");
     }
     Ok(())
+}
+
+async fn post_conflict_fix(pr: &github::PullRequest) -> Result<(), String> {
+    let Some(token) = keychain::load()? else {
+        return Err("Save a valid GitHub token first.".into());
+    };
+    Ok(github::request_conflict_fix(&token, pr).await?)
 }
 
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.

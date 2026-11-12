@@ -21,6 +21,9 @@
 //! - Merge detection compares a fetch against the previous Snapshot's open
 //!   PRs.
 //!
+//! The keys of the fix requests being posted are the one piece kept outside
+//! the transitions: they gate a write to GitHub and show nowhere.
+//!
 //! A transition never touches disk, the tray or the webview. It returns
 //! [`Effects`], and the caller owes the outside world all of them, in the
 //! order the transitions ran: effects delivered out of order would publish or
@@ -98,6 +101,9 @@ struct Inner {
     fix_requests: fix_requests::FixRequests,
     /// What GitHub's state made of each handed-over PR in the Snapshot.
     displaced_turns: fix_requests::DisplacedTurns,
+    /// Keys whose fix request is on its way to GitHub, from
+    /// [`PrState::begin_fix`] until it is recorded or abandoned.
+    fixes_posting: HashSet<String>,
 }
 
 impl Inner {
@@ -172,19 +178,31 @@ impl PrState {
         self.inner.lock().unwrap().snapshot.clone()
     }
 
-    /// The PR filed under `key`, for asking Copilot to fix its conflict.
-    /// `Err` is the message the row shows: the PR has left the Snapshot, or a
-    /// fix was already requested and is still live, and a second comment must
-    /// not go out.
-    pub fn fix_target(&self, key: &str) -> Result<PullRequest, String> {
-        let inner = self.inner.lock().unwrap();
+    /// Claims the PR filed under `key` for asking Copilot to fix its
+    /// conflict. `Err` is the message the row shows: the PR has left the
+    /// Snapshot, or a fix is being asked for or was asked for and is still
+    /// live. This is what keeps one conflict to one comment, so the caller
+    /// must post only on `Ok`, and then owes exactly one of
+    /// [`PrState::fix_requested`] or [`PrState::abandon_fix`].
+    pub fn begin_fix(&self, key: &str) -> Result<PullRequest, String> {
+        let mut inner = self.inner.lock().unwrap();
         let Some(pr) = inner.snapshot.prs.iter().find(|pr| unread::key(pr) == key) else {
             return Err("That PR is no longer in the list.".into());
         };
         if pr.fix_requested {
             return Err("Copilot has already been asked to fix this.".into());
         }
-        Ok(pr.clone())
+        let pr = pr.clone();
+        if !inner.fixes_posting.insert(key.to_string()) {
+            return Err("Copilot is already being asked to fix this.".into());
+        }
+        Ok(pr)
+    }
+
+    /// The request claimed by [`PrState::begin_fix`] was not posted, so the
+    /// fix can be asked for again.
+    pub fn abandon_fix(&self, key: &str) {
+        self.inner.lock().unwrap().fixes_posting.remove(key);
     }
 
     /// A sync fetched `prs`, and `newly_merged` are the departed PRs GitHub
@@ -241,15 +259,7 @@ impl PrState {
     pub fn sync_failed(&self, message: String) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         inner.snapshot.sync_error = Some(message);
-        Effects {
-            snapshot: inner.snapshot.clone(),
-            save_read: None,
-            save_turns: None,
-            save_merged: None,
-            save_snoozes: None,
-            save_fix_requests: None,
-            tray_count: None,
-        }
+        inner.no_effects()
     }
 
     /// No token or no repos: clear any list left over from previous settings,
@@ -368,12 +378,12 @@ impl PrState {
             fix_requests::take_back(pr, displaced.unwrap_or(pr.turn));
             // The viewer's turn begins again here, not when the conflict
             // first showed up: the hour with Copilot was not their wait.
-            if pr.turn == Some(Turn::Yours) && !was_yours {
-                if let Some(starts) = inner.turn_starts.as_mut() {
-                    pr.turn_since = Some(now_epoch_ms);
-                    starts.insert(key.clone(), Some(now_epoch_ms));
-                    turns_changed = true;
-                }
+            if pr.turn == Some(Turn::Yours)
+                && !was_yours
+                && turns::begin(&mut inner.turn_starts, key, now_epoch_ms)
+            {
+                pr.turn_since = Some(now_epoch_ms);
+                turns_changed = true;
             }
         }
         inner.mirror_snoozes();
@@ -407,6 +417,7 @@ impl PrState {
     pub fn fix_requested(&self, key: &str, now_epoch_ms: u64) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
+        inner.fixes_posting.remove(key);
         let Some(pr) = inner
             .snapshot
             .prs
@@ -423,10 +434,7 @@ impl PrState {
         let mut turns_changed = false;
         if pr.turn != Some(Turn::Yours) {
             pr.turn_since = None;
-            turns_changed = inner
-                .turn_starts
-                .as_mut()
-                .is_some_and(|starts| starts.remove(key).is_some());
+            turns_changed = turns::end(&mut inner.turn_starts, key);
         }
         Effects {
             snapshot: inner.snapshot.clone(),
@@ -607,13 +615,10 @@ mod tests {
     #[test]
     fn a_fix_can_be_asked_only_for_a_pr_in_the_snapshot() {
         let state = state_with_one_unread();
-        assert_eq!(
-            state.fix_target("acme/widgets#8").map(|pr| pr.number),
-            Ok(8)
-        );
-        assert!(state.fix_target("acme/widgets#9").is_err());
+        assert_eq!(state.begin_fix("acme/widgets#8").map(|pr| pr.number), Ok(8));
+        assert!(state.begin_fix("acme/widgets#9").is_err());
         state.unconfigured();
-        assert!(state.fix_target("acme/widgets#8").is_err());
+        assert!(state.begin_fix("acme/widgets#7").is_err());
     }
 
     fn unread_counts(snapshot: &Snapshot) -> Vec<u64> {
@@ -1352,7 +1357,7 @@ mod tests {
         // again.
         let again = sync_one(&state, conflicted(7), LAST_SYNC + 360_000);
         assert!(!is_fixing(&again));
-        assert!(state.fix_target(KEY).is_ok());
+        assert!(state.begin_fix(KEY).is_ok());
     }
 
     /// GitHub reports no blocked reasons while it works mergeability out,
@@ -1396,7 +1401,7 @@ mod tests {
         assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
         assert_eq!(state.next_expiry(), None);
         // The control is back: the fix can be asked for again.
-        assert!(state.fix_target(KEY).is_ok());
+        assert!(state.begin_fix(KEY).is_ok());
     }
 
     /// The row goes back to what GitHub's state made of it, which is not
@@ -1505,25 +1510,74 @@ mod tests {
         assert_eq!(reviewed.tray_count, Some(0));
     }
 
-    /// One PR gets one comment: the command asks here before it posts.
+    /// One conflict gets one comment: the command asks here before it posts.
     #[test]
     fn a_second_fix_cannot_be_asked_for_while_the_first_is_live() {
         let state = fix_requested_state();
-        assert!(state.fix_target(KEY).is_err());
-        // Nor across a sync, a restart of the clock, or a repeat of the call.
+        assert!(state.begin_fix(KEY).is_err());
+        // Nor after a sync that still shows the conflict.
         sync_one(&state, conflicted(7), LAST_SYNC + 180_000);
-        assert!(state.fix_target(KEY).is_err());
+        assert!(state.begin_fix(KEY).is_err());
+        // Recording it twice does not restart the hour.
         let repeated = state.fix_requested(KEY, ASKED_AT + 600_000);
         assert_eq!(repeated.save_fix_requests, None);
         assert_eq!(state.next_expiry(), Some(ASKED_AT + HOUR_MS));
     }
 
+    /// Two clicks that overlap must not both reach GitHub: the first is still
+    /// posting when the second asks.
+    #[test]
+    fn a_second_fix_cannot_be_asked_for_while_the_first_is_being_posted() {
+        let state = PrState::default();
+        sync_one(&state, conflicted(7), LAST_SYNC);
+
+        assert!(state.begin_fix(KEY).is_ok());
+        assert!(state.begin_fix(KEY).is_err());
+
+        // A post that failed frees the PR for another try.
+        state.abandon_fix(KEY);
+        assert!(state.begin_fix(KEY).is_ok());
+        // One that went out hands over to the live request.
+        state.fix_requested(KEY, ASKED_AT);
+        assert!(state.begin_fix(KEY).is_err());
+        state.expire(ASKED_AT + HOUR_MS);
+        assert!(state.begin_fix(KEY).is_ok());
+    }
+
+    /// A draft shows no blocked reasons, conflicting or not, so going draft
+    /// must not read as the conflict clearing.
+    #[test]
+    fn a_pr_converted_to_draft_keeps_its_request() {
+        let state = fix_requested_state();
+        let draft = PullRequest {
+            is_draft: true,
+            blocked_reasons: vec![],
+            can_fix_conflict: false,
+            turn: None,
+            ..conflicted(7)
+        };
+
+        let effects = sync_one(&state, draft, LAST_SYNC + 180_000);
+
+        assert!(is_fixing(&effects));
+        assert_eq!(effects.save_fix_requests, None);
+        // A draft carries no turn, handed over or not.
+        assert_eq!(effects.snapshot.prs[0].turn, None);
+        assert_eq!(effects.tray_count, Some(0));
+        // Ready again within the hour, it still waits on Copilot.
+        let ready = sync_one(&state, conflicted(7), LAST_SYNC + 360_000);
+        assert!(is_fixing(&ready));
+        assert!(state.begin_fix(KEY).is_err());
+    }
+
+    /// The comment went out, and the PR merged before that could be recorded.
     #[test]
     fn recording_a_fix_for_a_pr_that_left_the_snapshot_does_nothing() {
         let state = PrState::default();
         sync_one(&state, conflicted(7), LAST_SYNC);
+        state.sync_succeeded(vec![], vec![], LAST_SYNC + 180_000);
 
-        let effects = state.fix_requested("acme/widgets#9", ASKED_AT);
+        let effects = state.fix_requested(KEY, ASKED_AT + 180_000);
 
         assert_eq!(effects.save_fix_requests, None);
         assert_eq!(effects.tray_count, None);
