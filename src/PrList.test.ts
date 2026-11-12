@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   DEFAULT_COLLAPSED,
+  deployTip,
   formatLastSync,
   formatUpdated,
   parseCollapsed,
@@ -81,4 +82,28 @@ test("parseCollapsed never returns the shared defaults object", () => {
   const state = parseCollapsed(null);
   state.mine = false;
   expect(DEFAULT_COLLAPSED.mine).toBe(true);
+});
+
+const RUN = "https://github.com/acme/widgets/actions/runs/1";
+
+test("the deploy tooltip gives the exact local merge and deploy times", () => {
+  const tip = deployTip(at(2026, 7, 16, 14, 59).toISOString(), {
+    label: "Deployed",
+    landedAt: at(2026, 7, 16, 15, 4).toISOString(),
+    failed: false,
+    completedAt: at(2026, 7, 16, 15, 4).toISOString(),
+    url: RUN,
+  });
+  expect(tip).toBe("Merged 16 Jul 2026, 14:59\nDeployed 16 Jul 2026, 15:04");
+});
+
+test("the tooltip of a deploy under way has only the merge time to give", () => {
+  const tip = deployTip(at(2026, 1, 2, 9, 5).toISOString(), {
+    label: "Deploying",
+    landedAt: null,
+    failed: false,
+    completedAt: null,
+    url: RUN,
+  });
+  expect(tip).toBe("Merged 2 Jan 2026, 09:05\nDeploying");
 });

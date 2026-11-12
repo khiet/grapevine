@@ -1,4 +1,4 @@
-import type { MergedPr, PullRequest, Snapshot } from "../../src/backend";
+import type { Deploy, MergedPr, PullRequest, Snapshot } from "../../src/backend";
 
 // Every PR here is fictional; the people, the bot and the repo owners are real
 // GitHub accounts. The capture clock in demo.mjs is set just after the newest
@@ -54,6 +54,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     title: string,
     author: string,
     mergedAt: string,
+    deploy: Deploy | null = null,
   ): MergedPr => ({
     number,
     title,
@@ -63,8 +64,10 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     avatar_url: avatars[author],
     owner_avatar_url: avatars[repo.split("/")[0]],
     merged_at: at(mergedAt),
-    deploy: null,
+    deploy,
   });
+  const run = (repo: string, id: number) =>
+    `https://github.com/${repo}/actions/runs/${id}`;
   const since = (time: string) => Date.parse(at(time));
   const mine = { section: "mine" } as const;
   const all = { section: "all" } as const;
@@ -89,8 +92,8 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
       pr("fuseinsight/ingest", 409, "Move transcoding jobs to the shared queue", "maxliddiard", "27T13:15:00", all),
     ],
     merged: [
-      merged("teampave/web-app", 2309, "Show delivery ETA on the order confirmation", ME, "30T13:05:00"),
-      merged("khiet/design-tokens", 85, "Add focus ring tokens", "maxliddiard", "29T15:50:00"),
+      merged("teampave/web-app", 2309, "Show delivery ETA on the order confirmation", ME, "30T15:36:00", { state: "deploying", completed_at: null, url: run("teampave/web-app", 11873) }),
+      merged("khiet/design-tokens", 85, "Add focus ring tokens", "maxliddiard", "29T15:50:00", { state: "deployed", completed_at: at("29T15:58:00"), url: run("khiet/design-tokens", 642) }),
     ],
   };
 }

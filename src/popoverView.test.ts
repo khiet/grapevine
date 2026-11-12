@@ -354,7 +354,93 @@ test("Merged follows the PR sections while it holds rows", () => {
   const mergedSection = section(view, "merged");
   expect(mergedSection.label).toBe("Merged");
   expect(mergedSection.count).toBe(2);
-  expect(mergedSection.body).toEqual({ kind: "merged", rows: merged });
+  expect(mergedSection.body).toEqual({
+    kind: "merged",
+    rows: merged.map((pr) => ({ pr, deploy: null })),
+  });
+});
+
+const RUN_URL = "https://github.com/acme/widgets/actions/runs/1";
+
+// The deploy status of the single Merged row of a snapshot holding just
+// this PR.
+const deployFor = (only: MergedPr) => {
+  const { body } = section(list(synced({ merged: [only] })), "merged");
+  if (body.kind !== "merged") throw new Error(`merged body is ${body.kind}`);
+  return body.rows[0].deploy;
+};
+
+test("a merged row with a deploy under way says Deploying", () => {
+  const deploy = deployFor(
+    mergedPr({
+      deploy: { state: "deploying", completed_at: null, url: RUN_URL },
+    }),
+  );
+  expect(deploy).toEqual({
+    label: "Deploying",
+    landedAt: null,
+    failed: false,
+    completedAt: null,
+    url: RUN_URL,
+  });
+});
+
+const DEPLOY_DONE = "2026-07-11T09:42:00Z";
+
+test("a deployed row says Deployed and when the deploy landed", () => {
+  const deploy = deployFor(
+    mergedPr({
+      deploy: { state: "deployed", completed_at: DEPLOY_DONE, url: RUN_URL },
+    }),
+  );
+  expect(deploy).toEqual({
+    label: "Deployed",
+    landedAt: DEPLOY_DONE,
+    failed: false,
+    completedAt: DEPLOY_DONE,
+    url: RUN_URL,
+  });
+});
+
+test("a failed deploy is the one status in the failure color", () => {
+  const deploy = deployFor(
+    mergedPr({
+      deploy: { state: "failed", completed_at: DEPLOY_DONE, url: RUN_URL },
+    }),
+  );
+  expect(deploy).toEqual({
+    label: "Deploy failed",
+    landedAt: null,
+    failed: true,
+    completedAt: DEPLOY_DONE,
+    url: RUN_URL,
+  });
+});
+
+test("a cancelled deploy is named without the failure color", () => {
+  const deploy = deployFor(
+    mergedPr({
+      deploy: { state: "cancelled", completed_at: DEPLOY_DONE, url: RUN_URL },
+    }),
+  );
+  expect(deploy).toEqual({
+    label: "Deploy cancelled",
+    landedAt: null,
+    failed: false,
+    completedAt: DEPLOY_DONE,
+    url: RUN_URL,
+  });
+});
+
+test("a sync that changes the deploy changes the row's status", () => {
+  const before = mergedPr({
+    deploy: { state: "deploying", completed_at: null, url: RUN_URL },
+  });
+  const after = mergedPr({
+    deploy: { state: "deployed", completed_at: DEPLOY_DONE, url: RUN_URL },
+  });
+  expect(deployFor(before)?.label).toBe("Deploying");
+  expect(deployFor(after)?.label).toBe("Deployed");
 });
 
 test("each PR lands in the section the backend assigned it", () => {
@@ -400,7 +486,7 @@ test("a filter force-expands collapsed sections and keeps only matching rows", (
   expect(numbers(view, "mine")).toEqual([42]);
   expect(section(view, "merged").body).toEqual({
     kind: "merged",
-    rows: [FILTER_FIXTURE.merged[0]],
+    rows: [{ pr: FILTER_FIXTURE.merged[0], deploy: null }],
   });
   expect(view.canToggle).toBe(false);
 });

@@ -277,7 +277,11 @@ body {
 .pr-dismiss {
   border: none;
   background: none;
-  padding: 0 12px;
+  /* A fixed width, not padding around the glyph: .pr-deploy is placed
+     against it. */
+  flex: none;
+  width: 32px;
+  padding: 0;
   color: #8e8e93;
   font: inherit;
   font-size: 15px;
@@ -287,6 +291,40 @@ body {
 .pr-row-split:hover .pr-dismiss,
 .pr-dismiss:focus-visible {
   opacity: 1;
+}
+
+/* A merged row's deploy status: a control of its own (it opens the workflow
+   run, the row opens the PR) floated over the end of the metadata line,
+   where .pr-deploy-space holds its width so the repo truncates before it.
+   The offsets must track .pr-row's padding (bottom 9px, right 11px) and
+   .pr-dismiss's 32px, and the type must match .pr-origin so the control
+   covers its placeholder exactly. */
+.pr-deploy {
+  position: absolute;
+  bottom: 9px;
+  right: 43px;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: #8e8e93;
+  white-space: nowrap;
+}
+
+.pr-deploy:hover {
+  text-decoration: underline;
+}
+
+.pr-deploy.is-failed {
+  color: #d70015;
+}
+
+.pr-deploy-space {
+  flex: none;
+  margin-left: auto;
+  visibility: hidden;
+  white-space: nowrap;
 }
 
 /* The snooze and wake control: floated over the timestamp's slot and shown in
@@ -1227,8 +1265,13 @@ body {
   }
 
   .pr-updated,
-  .pr-origin {
+  .pr-origin,
+  .pr-deploy {
     color: #7c7c80;
+  }
+
+  .pr-deploy.is-failed {
+    color: #ff453a;
   }
 
   /* A slightly lighter grey so the glyphs read on the dark card without
