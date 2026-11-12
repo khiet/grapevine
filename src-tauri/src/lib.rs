@@ -81,7 +81,6 @@ fn on_screen(window: &tauri::WebviewWindow) -> bool {
     )
 }
 
-/// Takes the popover off screen.
 #[cfg(not(target_os = "linux"))]
 fn put_away(window: &tauri::WebviewWindow) -> tauri::Result<()> {
     window.hide()
