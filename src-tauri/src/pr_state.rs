@@ -1399,6 +1399,29 @@ mod tests {
         assert!(state.fix_target(KEY).is_ok());
     }
 
+    /// The row goes back to what GitHub's state made of it, which is not
+    /// always the viewer's turn.
+    #[test]
+    fn an_hour_passing_gives_the_row_back_the_turn_the_last_sync_found() {
+        let state = fix_requested_state();
+        let unsettled = PullRequest {
+            blocked_reasons: vec![],
+            can_fix_conflict: false,
+            mergeability_unknown: true,
+            turn: Some(Turn::Theirs),
+            ..conflicted(7)
+        };
+        sync_one(&state, unsettled, LAST_SYNC + 180_000);
+
+        let effects = state.expire(ASKED_AT + HOUR_MS);
+
+        assert!(!is_fixing(&effects));
+        assert_eq!(effects.snapshot.prs[0].turn, Some(Turn::Theirs));
+        assert_eq!(turn_since(&effects), None);
+        assert_eq!(effects.save_turns, None);
+        assert_eq!(effects.tray_count, Some(0));
+    }
+
     #[test]
     fn a_sync_after_the_hour_makes_the_row_yours_again() {
         let state = fix_requested_state();

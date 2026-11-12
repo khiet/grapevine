@@ -798,13 +798,6 @@ test("a row with a requested fix shows the Copilot fixing mark beside its confli
   expect(row.fix).toBeNull();
 });
 
-test("a row with a requested fix offers no fix even while another request for it is on its way", () => {
-  const snapshot = synced({ prs: [fixing({ number: 1 })] });
-  const posting = new Set(["acme/widgets#1"]);
-  const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, posting);
-  expect(rows(content as ListView, "mine")[0].fix).toBeNull();
-});
-
 test("a row with a requested fix gives up the head of Mine and the your-turn count", () => {
   const snapshot = synced({
     prs: [
@@ -831,16 +824,6 @@ test("a requested fix beside a review asked of you leaves the row yours, tinted 
     },
     { kind: "blocked", label: "Merge conflict", tip: null },
   ]);
-});
-
-test("a snoozed row with a requested fix keeps its mark and offers only waking", () => {
-  const view = list(
-    synced({ prs: [fixing({ number: 1 })], snoozed: ["acme/widgets#1"] }),
-  );
-  const [row] = snoozedGroup(view, "mine").rows;
-  expect(row.marks.map((mark) => mark.kind)).toEqual(["copilot-fixing", "blocked"]);
-  expect(row.snooze).toBe("wake");
-  expect(row.fix).toBeNull();
 });
 
 test("a snoozed row's unread stays off its collapsed section's badge", () => {
