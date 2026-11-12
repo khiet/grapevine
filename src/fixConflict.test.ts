@@ -4,12 +4,14 @@ import {
   setAdapter,
   type Adapter,
   type PullRequest,
+  type Snapshot,
 } from "./backend";
 import { createFakeBackend } from "./backend/fake";
 import { tauriAdapter } from "./backend/tauri";
 import {
   clickFix,
   fixRequests,
+  forgetCleared,
   requestFix,
   resetFixRequests,
 } from "./fixConflict";
@@ -51,6 +53,12 @@ const conflicted: PullRequest = {
   unread_count: 0,
   bot_unread_count: 0,
 };
+
+const synced = (prs: PullRequest[]): Snapshot => ({
+  ...EMPTY_SNAPSHOT,
+  prs,
+  has_synced: true,
+});
 
 /** Installs a backend holding one fixable PR and returns the keys the fix
  * was asked for, in order. `fail` makes the backend turn each request down. */
@@ -132,4 +140,37 @@ test("the backend refuses a PR that is not fixable", async () => {
   expect(await requestFix("acme/widgets#8")).toBe(
     "Nothing here for Copilot to fix.",
   );
+});
+
+test("a request stands while a sync still shows the conflict", async () => {
+  backend();
+  await requestFix(KEY);
+  forgetCleared(synced([conflicted]));
+  expect(fixRequests().get(KEY)).toBe("requested");
+});
+
+test("a request is forgotten once a sync shows the row no longer fixable, so a later conflict can ask again", async () => {
+  const asked = backend();
+  await requestFix(KEY);
+  forgetCleared(
+    synced([{ ...conflicted, blocked_reasons: [], can_fix_conflict: false }]),
+  );
+  expect(fixRequests().has(KEY)).toBe(false);
+  await requestFix(KEY);
+  expect(asked).toEqual([KEY, KEY]);
+});
+
+test("a request is forgotten when its PR leaves the list", async () => {
+  backend();
+  await requestFix(KEY);
+  forgetCleared(synced([]));
+  expect(fixRequests().has(KEY)).toBe(false);
+});
+
+test("a request still on its way is not forgotten by a sync that lands meanwhile", async () => {
+  const asked = backend();
+  const posting = requestFix(KEY);
+  forgetCleared(synced([]));
+  await Promise.all([posting, requestFix(KEY)]);
+  expect(asked).toEqual([KEY]);
 });

@@ -1,10 +1,11 @@
 // The popover's side of Fix with Copilot: which rows have had the fix asked
 // for, and the two clicks it takes to ask. The requests live here, outside
 // any component, so they outlast a collapsed section, a filter and a visit to
-// Settings. They last as long as the webview does and are never stored.
+// Settings. A request lasts until a sync shows its conflict gone, or the
+// webview ends; none is ever stored.
 
 import { useSyncExternalStore } from "react";
-import { fixConflict } from "./backend";
+import { fixConflict, prKey, type Snapshot } from "./backend";
 import type { FixRequest, FixRequests } from "./popoverView";
 
 // Replaced, never mutated: useSyncExternalStore compares by identity.
@@ -36,6 +37,22 @@ export function useFixRequests(): FixRequests {
 /** Forgets every request. For tests, which share this module's state. */
 export function resetFixRequests(): void {
   requests = new Map();
+}
+
+/** Brings the requests level with a Snapshot: one made for a PR that is no
+ * longer fixable is forgotten, so a conflict that comes back can be asked
+ * about again. Call it with every Snapshot delivered. A request still being
+ * posted stays, since dropping it would let a second click post a second
+ * comment. GitHub briefly reports no conflict while it works mergeability
+ * out, and such a blip forgets a request too; asking again still takes both
+ * clicks. */
+export function forgetCleared(snapshot: Snapshot): void {
+  const fixable = new Set(
+    snapshot.prs.filter((pr) => pr.can_fix_conflict).map(prKey),
+  );
+  for (const [key, state] of requests) {
+    if (state === "requested" && !fixable.has(key)) record(key, null);
+  }
 }
 
 /** Asks Copilot to fix the conflict on the PR filed under `key`. Resolves to

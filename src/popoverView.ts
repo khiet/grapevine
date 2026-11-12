@@ -261,8 +261,7 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
 
 // Offered wherever the backend allows it, except on a snoozed row: that one
 // was put out of the way, and waking it is the only thing it offers. A
-// request made earlier shows only while the row is fixable. It is not
-// forgotten in between: a row that becomes fixable again reads as requested.
+// request made earlier shows in the offer's place.
 function fixControl(
   pr: PullRequest,
   snooze: RowView["snooze"],

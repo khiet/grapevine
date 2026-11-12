@@ -6,7 +6,7 @@ import {
   subscribeSnapshot,
   type Snapshot,
 } from "./backend";
-import { useFixRequests } from "./fixConflict";
+import { forgetCleared, useFixRequests } from "./fixConflict";
 import { derivePopover } from "./popoverView";
 import PrList, { formatLastSync, useCollapsedSections } from "./PrList";
 import SettingsView from "./SettingsView";
@@ -41,7 +41,10 @@ function App() {
 
   useEffect(() => {
     startUpdateChecks();
-    return subscribeSnapshot(setSnapshot);
+    return subscribeSnapshot((next) => {
+      forgetCleared(next);
+      setSnapshot(next);
+    });
   }, []);
 
   return (
