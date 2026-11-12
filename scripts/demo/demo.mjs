@@ -35,7 +35,7 @@ const AVATARS = {};
 const ACCOUNT_IDS = {
   khiet: 310614,
   doutatsu: 4270980,
-  MarcusAl: 71977744,
+  maxliddiard: 161249553,
   dependabot: 49699333,
   teampave: 40337291,
   fuseinsight: 176946223,
