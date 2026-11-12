@@ -1,6 +1,7 @@
 <!doctype html>
 <!-- Stage for scripts/demo/demo.mjs: a fake desktop and menubar around the real
-     popover, which runs in the iframe (popover.html) on the fake backend. -->
+     popover, which runs in the iframe (popover.html) on the fake backend.
+     demo.mjs labels the popover through window.callout. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -45,6 +46,8 @@
         font-weight: 700;
       }
       .tray {
+        position: absolute;
+        left: 742px;
         display: flex;
         align-items: center;
         gap: 4px;
@@ -65,7 +68,7 @@
       .popover {
         position: absolute;
         top: 34px;
-        right: 128px;
+        left: 360px;
         width: 440px;
         height: 680px;
         border: 0;
@@ -79,45 +82,78 @@
       .popover[hidden] {
         display: none;
       }
-      .caption {
+      .hero {
         position: absolute;
-        left: 56px;
-        top: 250px;
-        width: 480px;
+        left: 40px;
+        top: 486px;
+        width: 290px;
       }
-      .caption-step {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        font-size: 14px;
-        color: #e8cfe6;
-      }
-      .caption-step kbd {
-        font: inherit;
-        font-weight: 600;
-        padding: 2px 9px;
-        border-radius: 6px;
-        background: rgba(255, 255, 255, 0.16);
-        color: #fff;
-      }
-      .caption h1 {
-        margin-top: 16px;
-        font-size: 34px;
-        line-height: 1.15;
+      .hero h1 {
+        font-size: 30px;
         font-weight: 700;
+        line-height: 1.1;
       }
-      .caption p {
-        margin-top: 12px;
-        font-size: 17px;
-        line-height: 1.45;
+      .hero p {
+        margin-top: 10px;
+        font-size: 16px;
+        line-height: 1.4;
         color: #ead9ea;
+      }
+      .hero-os {
+        margin-top: 16px;
+        display: flex;
+        gap: 8px;
+      }
+      .hero-os[hidden] {
+        display: none;
+      }
+      .hero-os span {
+        font-size: 13px;
+        font-weight: 600;
+        padding: 4px 11px;
+        border-radius: 999px;
+        background: #fff;
+        color: #3b2350;
+      }
+      .ring {
+        position: absolute;
+        border: 2px solid #ff4d8d;
+        border-radius: 7px;
+        box-shadow: 0 0 0 3px rgba(255, 77, 141, 0.22);
+        z-index: 20;
+        pointer-events: none;
+      }
+      .chip {
+        position: absolute;
+        z-index: 21;
+        white-space: nowrap;
+        font-size: 15px;
+        font-weight: 600;
+        line-height: 1;
+        padding: 8px 11px;
+        border-radius: 8px;
+        background: #fff;
+        color: #1c1c1e;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+      }
+      .lines {
+        position: absolute;
+        inset: 0;
+        width: 1120px;
+        height: 760px;
+        z-index: 19;
+        pointer-events: none;
+      }
+      .lines line {
+        stroke: #ff4d8d;
+        stroke-width: 1.5;
       }
       .cursor {
         position: absolute;
         width: 22px;
         height: 22px;
         pointer-events: none;
-        z-index: 10;
+        z-index: 30;
       }
       .cursor[hidden] {
         display: none;
@@ -130,14 +166,54 @@
       <span id="tray" class="tray"><img src="/src-tauri/icons/tray.png" alt="" /><span id="tray-count" class="tray-count"></span></span>
       <span>Wed 30 Sep 15:42</span>
     </div>
-    <div class="caption">
-      <div class="caption-step"><span id="step"></span><kbd id="key"></kbd></div>
-      <h1 id="headline"></h1>
-      <p id="detail"></p>
+    <div class="hero">
+      <h1>Grapevine</h1>
+      <p>Every pull request that needs you, one click from the menubar.</p>
+      <div id="os" class="hero-os" hidden><span>macOS</span><span>Ubuntu</span></div>
     </div>
     <iframe id="popover" class="popover" src="/scripts/demo/popover.html" hidden></iframe>
     <svg id="cursor" class="cursor" viewBox="0 0 24 24" hidden>
       <path d="M4 2 L4 19 L8.5 14.8 L11.6 21.6 L14.4 20.4 L11.3 13.7 L17.5 13.7 Z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round" />
     </svg>
+    <svg id="lines" class="lines"></svg>
+    <script>
+      // Chips hang in the gutters either side of the popover (x 360 to 800).
+      const GUTTER = { right: 826, left: 334 };
+      // Ring `box` and join it by a line to a chip reading `text`. The chip
+      // sits level with the ring unless `chipY` moves it clear of a neighbour.
+      window.callout = (box, side, text, chipY) => {
+        const pad = 4;
+        const ringBox = {
+          x: box.x - pad,
+          y: box.y - pad,
+          w: box.width + pad * 2,
+          h: box.height + pad * 2,
+        };
+        const ring = document.createElement("div");
+        ring.className = "ring";
+        Object.assign(ring.style, {
+          left: `${ringBox.x}px`,
+          top: `${ringBox.y}px`,
+          width: `${ringBox.w}px`,
+          height: `${ringBox.h}px`,
+        });
+        const chip = document.createElement("div");
+        chip.className = "chip";
+        chip.textContent = text;
+        document.body.append(ring, chip);
+        const chipMid = chipY ?? ringBox.y + ringBox.h / 2;
+        const chipLeft = side === "right" ? GUTTER.right : GUTTER.left - chip.offsetWidth;
+        Object.assign(chip.style, { left: `${chipLeft}px`, top: `${chipMid - chip.offsetHeight / 2}px` });
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        const ends = {
+          x1: side === "right" ? chipLeft : chipLeft + chip.offsetWidth,
+          y1: chipMid,
+          x2: side === "right" ? ringBox.x + ringBox.w : ringBox.x,
+          y2: Math.min(Math.max(chipMid, ringBox.y), ringBox.y + ringBox.h),
+        };
+        for (const [name, value] of Object.entries(ends)) line.setAttribute(name, value);
+        document.getElementById("lines").append(line);
+      };
+    </script>
   </body>
 </html>
