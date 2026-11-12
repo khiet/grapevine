@@ -5,7 +5,7 @@
   <br>Grapevine
 </h1>
   <p align="center">
-    A minimal macOS menubar watcher for GitHub pull requests.
+    A minimal menubar watcher for GitHub pull requests, for macOS and Ubuntu.
     <br />
     Add the repos you care about, watch their PRs. That is the whole app.
     <br />
@@ -24,7 +24,8 @@
 ## About
 
 Grapevine lives in the menubar only, with no Dock icon. Clicking the tray icon
-toggles a popover with the PR list, and clicking away dismisses it. You give it
+toggles a popover with the PR list, and clicking away dismisses it. On Ubuntu
+the icon opens a menu instead, and the popover opens from there. You give it
 a GitHub token and a list of repos; it polls them every few minutes and shows
 the open PRs, split into the ones you authored, the ones you are involved in,
 and everything else. The number in the menubar is how many of the first two
@@ -57,18 +58,55 @@ Grapevine deliberately does not, and will not:
 - Send system notifications. The number in the menubar is the whole signal.
 - Support GitHub Enterprise or anything other than github.com.
 - Handle more than one GitHub account at a time.
-- Run anywhere other than a Mac menubar. No iOS, no Android, no CLI.
+- Run anywhere other than a Mac menubar or an Ubuntu tray. No Windows, no iOS,
+  no Android, no CLI.
 - Ship on the App Store.
 
 ## Install
 
-Download the `Grapevine-<version>-universal.zip` asset from the latest
+### macOS
+
+Download the `Grapevine-v<version>-universal.zip` asset from the latest
 [release](https://github.com/khiet/grapevine/releases), unzip it, and drag
 `Grapevine.app` to `/Applications`. The build is universal and runs on both
 Apple silicon and Intel Macs.
 
 Releases are signed with an Apple Developer ID and notarized by Apple, so the
 first launch opens normally with no Gatekeeper warning.
+
+### Ubuntu
+
+Current Ubuntu on x86_64 is the only supported Linux target. Other
+distributions and architectures may work, but are not tested or claimed.
+
+Download the `Grapevine-v<version>-amd64.deb` asset from the latest
+[release](https://github.com/khiet/grapevine/releases) and install it from the
+folder you downloaded it to:
+
+```sh
+sudo apt-get install ./Grapevine-v<version>-amd64.deb
+```
+
+`apt-get` pulls in the system libraries Grapevine needs. Start Grapevine from
+the app grid; a grape icon appears in the top panel.
+
+The tray works differently from the macOS menubar, because Ubuntu's tray does
+not report clicks on the icon:
+
+- Clicking the icon opens a menu. "Open Grapevine" opens the popover, and
+  closes it when it is already open. "Quit Grapevine" stops the app.
+- The popover appears in the top-right corner of the primary monitor instead
+  of under the icon.
+
+### Updates
+
+Grapevine checks for new releases in the background and downloads them
+without asking. When one is ready it offers a restart, so the manual download
+is only needed the first time.
+
+On Ubuntu, the restart asks for your password, because installing a `.deb`
+needs administrator rights. Nothing is installed until you choose to restart,
+and cancelling the password prompt leaves the current version running.
 
 ## Building
 
@@ -153,10 +191,11 @@ Once the app is running, open the popover and go to settings.
    private repos, but note that it grants read *and write* access to all of
    your private repositories; Grapevine only ever reads. If you only watch
    public repos, `public_repo` is the tighter choice.
-2. Paste the token into settings. Grapevine stores it in the macOS Keychain and
-   never writes it to `settings.json`. Saving checks the scopes GitHub actually
-   granted: a classic token without `repo` gets a notice that private
-   repositories won't be visible, but the token still saves.
+2. Paste the token into settings. Grapevine stores it in the macOS Keychain, or
+   the system keyring on Ubuntu, and never writes it to `settings.json`. Saving
+   checks the scopes GitHub actually granted: a classic token without `repo`
+   gets a notice that private repositories won't be visible, but the token
+   still saves.
 3. Add repos as `owner/name`, one at a time.
 
 Fine-grained tokens are not recommended: they are scoped to a single resource
