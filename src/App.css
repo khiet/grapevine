@@ -287,18 +287,23 @@ body {
   opacity: 1;
 }
 
-/* The snooze and wake control: hidden until the row is hovered, like the
-   merged row's dismiss, so a list of rows does not grow a column of moons. */
-.pr-snooze {
-  /* Anchors the tooltip. */
+/* The snooze and wake control: floated over the timestamp's slot and shown in
+   its place on hover, Mail-style, so it costs the title no width. Its top and
+   height track the row's top padding and the title's first line. */
+.pr-row-split {
   position: relative;
+}
+
+.pr-snooze {
+  position: absolute;
+  top: 9px;
+  right: 7px;
+  height: 20px;
   display: flex;
   align-items: center;
   border: none;
   background: none;
-  /* The row's own right padding is the gap on the left; the strip costs each
-     title only the glyph and this edge. */
-  padding: 0 10px 0 0;
+  padding: 0 4px;
   color: #8e8e93;
   opacity: 0;
 }
@@ -306,6 +311,11 @@ body {
 .pr-row-split:hover .pr-snooze,
 .pr-snooze:focus-visible {
   opacity: 1;
+}
+
+.pr-row-split:hover .pr-updated,
+.pr-row-split:has(.pr-snooze:focus-visible) .pr-updated {
+  visibility: hidden;
 }
 
 .pr-snooze:hover {

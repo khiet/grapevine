@@ -440,9 +440,9 @@ function Sun() {
 }
 
 /* The row's one snooze control: park it, or wake it once parked. A sibling of
-   the row button rather than a child (nested buttons are invalid HTML), in
-   its own strip at the row's edge so opening a row cannot land on it, and
-   hidden until the row is hovered or the control focused. */
+   the row button rather than a child (nested buttons are invalid HTML),
+   floated over the timestamp and shown in its place only while the row is
+   hovered or the control focused. */
 function SnoozeControl({ row }: { row: RowView }) {
   if (row.snooze === null) return null;
   const key = prKey(row.pr);
