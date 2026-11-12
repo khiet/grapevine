@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::merged::{Deploy, DeployState};
+
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
 /// A sync-path failure, split by what the sync loop should do about it: rate
@@ -676,17 +678,40 @@ impl<T: Transport> Client<'_, T> {
         &self,
         keys: &[String],
     ) -> Result<HashMap<String, String>, GithubError> {
+        let data = self.pull_requests(keys, "merged mergedAt").await?;
+        Ok(collect_merged(&data))
+    }
+
+    async fn fetch_deploy_status(
+        &self,
+        keys: &[String],
+    ) -> Result<HashMap<String, Deploy>, GithubError> {
+        let data = self.pull_requests(keys, DEPLOY_SELECTION).await?;
+        Ok(data
+            .into_iter()
+            .filter_map(|(key, pr)| Some((key, deploy_for(&pr)?)))
+            .collect())
+    }
+
+    /// Asks for `selection` on each of the `owner/repo#number` PRs in one
+    /// aliased query, and answers by key. A PR GitHub could not resolve is
+    /// left out. No request is sent when no key is well formed.
+    async fn pull_requests(
+        &self,
+        keys: &[String],
+        selection: &str,
+    ) -> Result<HashMap<String, Value>, GithubError> {
         let mut query = String::from("query { ");
         // Keys come from PRs the app itself fetched, so skipping a malformed one
         // drops corrupt data, not a real PR.
-        let mut targets: Vec<(String, String)> = Vec::new();
+        let mut targets: Vec<(String, &String)> = Vec::new();
         for key in keys {
             let Some((owner, name, number)) = parse_pr_key(key) else {
                 continue;
             };
             let alias = format!("p{}", targets.len());
-            query.push_str(&merged_status_field(&alias, owner, name, number));
-            targets.push((alias, key.clone()));
+            query.push_str(&pr_field(&alias, owner, name, number, selection));
+            targets.push((alias, key));
         }
         if targets.is_empty() {
             return Ok(HashMap::new());
@@ -694,10 +719,16 @@ impl<T: Transport> Client<'_, T> {
         query.push('}');
 
         let response = self.graphql(&query, json!({})).await?;
-        let Some(data) = response.data else {
+        let Some(mut data) = response.data else {
             return Err(error_from_graphql(response.errors));
         };
-        Ok(collect_merged(&data, &targets))
+        Ok(targets
+            .into_iter()
+            .filter_map(|(alias, key)| {
+                let pr = data.pointer_mut(&format!("/{alias}/pullRequest"))?.take();
+                (!pr.is_null()).then(|| (key.clone(), pr))
+            })
+            .collect())
     }
 }
 
@@ -911,35 +942,101 @@ fn parse_pr_key(key: &str) -> Option<(&str, &str, u64)> {
     Some((owner, name, number.parse().ok()?))
 }
 
-fn merged_status_field(alias: &str, owner: &str, name: &str, number: u64) -> String {
+fn pr_field(alias: &str, owner: &str, name: &str, number: u64, selection: &str) -> String {
     format!(
         "{alias}: repository(owner: {owner}, name: {name}) {{ \
-           pullRequest(number: {number}) {{ merged mergedAt }} \
+           pullRequest(number: {number}) {{ {selection} }} \
          }} ",
         owner = json!(owner),
         name = json!(name),
     )
 }
 
-/// Reads the merged aliases back out of the response. A vanished repository
-/// or PR and an unmerged PR both mean "not merged" and are left out.
-fn collect_merged(data: &Value, targets: &[(String, String)]) -> HashMap<String, String> {
-    let mut merged = HashMap::new();
-    for (alias, key) in targets {
-        let Some(pr) = data
-            .pointer(&format!("/{alias}/pullRequest"))
-            .filter(|v| !v.is_null())
-        else {
-            continue;
-        };
-        if pr.get("merged").and_then(Value::as_bool) != Some(true) {
-            continue;
-        }
-        if let Some(t) = pr.get("mergedAt").and_then(Value::as_str) {
-            merged.insert(key.clone(), t.to_string());
-        }
+/// Reads the merge times out of the answered PRs. An unmerged PR is left
+/// out, as a vanished one already was.
+fn collect_merged(prs: &HashMap<String, Value>) -> HashMap<String, String> {
+    prs.iter()
+        .filter(|(_, pr)| pr.get("merged").and_then(Value::as_bool) == Some(true))
+        .filter_map(|(key, pr)| {
+            let merged_at = pr.get("mergedAt").and_then(Value::as_str)?;
+            Some((key.clone(), merged_at.to_string()))
+        })
+        .collect()
+}
+
+/// The workflow runs on a PR's merge commit. A commit carries one suite per
+/// workflow or app, so the page is far past what a real commit has.
+/// `workflowRun` is null for a suite that belongs to an app other than
+/// Actions.
+const DEPLOY_SELECTION: &str = "\
+mergeCommit { checkSuites(first: 50) { nodes { \
+  status conclusion \
+  workflowRun { event url updatedAt workflow { name } } \
+} } }";
+
+/// Asks GitHub where the deploy of each of the given `owner/repo#number`
+/// merged PRs stands, in one aliased query. Keys absent from the result have
+/// no deploy run on their merge commit, or are no longer accessible with
+/// this token. No request is sent for an empty `keys`.
+pub async fn fetch_deploy_status(
+    token: &str,
+    keys: &[String],
+) -> Result<HashMap<String, Deploy>, GithubError> {
+    Client::live(token).fetch_deploy_status(keys).await
+}
+
+/// Folds the deploy runs on a PR's merge commit into one status; `None` when
+/// the commit has none. A deploy run is one triggered by `push` whose
+/// workflow name contains "deploy": the event keeps out pre-merge runs such
+/// as a "Deploy Test" on `merge_group`. The worst run wins, and among equals
+/// the one that finished last.
+fn deploy_for(pr: &Value) -> Option<Deploy> {
+    list(pr, "/mergeCommit/checkSuites/nodes")
+        .iter()
+        .filter_map(deploy_run)
+        .max_by_key(|deploy| {
+            let severity = match deploy.state {
+                DeployState::Failed => 3,
+                DeployState::Deploying => 2,
+                DeployState::Cancelled => 1,
+                DeployState::Deployed => 0,
+            };
+            // ISO-8601 UTC timestamps sort lexically.
+            (severity, deploy.completed_at.clone())
+        })
+}
+
+/// One check suite as a deploy, if it is a deploy run at all.
+fn deploy_run(suite: &Value) -> Option<Deploy> {
+    let run = suite.get("workflowRun").filter(|run| !run.is_null())?;
+    let name = run.pointer("/workflow/name").and_then(Value::as_str)?;
+    if run.get("event").and_then(Value::as_str) != Some("push")
+        || !name.to_lowercase().contains("deploy")
+    {
+        return None;
     }
-    merged
+    let state = if suite.get("status").and_then(Value::as_str) != Some("COMPLETED") {
+        DeployState::Deploying
+    } else {
+        match suite.get("conclusion").and_then(Value::as_str) {
+            Some("SUCCESS" | "NEUTRAL") => DeployState::Deployed,
+            Some("CANCELLED") => DeployState::Cancelled,
+            // Every job was skipped, so nothing was deployed.
+            Some("SKIPPED") => return None,
+            _ => DeployState::Failed,
+        }
+    };
+    Some(Deploy {
+        completed_at: (state != DeployState::Deploying)
+            .then(|| {
+                run.get("updatedAt")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            })
+            .flatten(),
+        url: run.get("url").and_then(Value::as_str)?.to_string(),
+        state,
+    })
 }
 
 fn pr_key(repo: &str, number: u64) -> String {
@@ -3021,7 +3118,7 @@ mod tests {
 
     #[test]
     fn merged_status_field_quotes_arguments() {
-        let field = merged_status_field("p0", "acme", "widgets", 7);
+        let field = pr_field("p0", "acme", "widgets", 7, "merged mergedAt");
         assert!(field.contains(r#"p0: repository(owner: "acme", name: "widgets")"#));
         assert!(field.contains("pullRequest(number: 7)"));
     }
@@ -3032,24 +3129,6 @@ mod tests {
         assert_eq!(parse_pr_key("no-separator"), None);
         assert_eq!(parse_pr_key("acme#7"), None);
         assert_eq!(parse_pr_key("acme/widgets#seven"), None);
-    }
-
-    #[test]
-    fn collect_merged_keeps_only_merged_prs() {
-        let data = json!({
-            "p0": { "pullRequest": { "merged": true, "mergedAt": "2026-07-12T10:00:00Z" } },
-            "p1": { "pullRequest": { "merged": false, "mergedAt": null } }
-        });
-        let targets = [
-            ("p0".to_string(), "acme/widgets#7".to_string()),
-            ("p1".to_string(), "acme/widgets#8".to_string()),
-        ];
-        let merged = collect_merged(&data, &targets);
-        assert_eq!(
-            merged.get("acme/widgets#7").map(String::as_str),
-            Some("2026-07-12T10:00:00Z")
-        );
-        assert!(!merged.contains_key("acme/widgets#8"));
     }
 
     #[test]
@@ -3229,19 +3308,6 @@ mod tests {
                 reset_epoch_secs: None,
             })
         );
-    }
-
-    #[test]
-    fn vanished_repos_and_prs_do_not_count_as_merged() {
-        let data = json!({
-            "p0": null,
-            "p1": { "pullRequest": null }
-        });
-        let targets = [
-            ("p0".to_string(), "acme/widgets#7".to_string()),
-            ("p1".to_string(), "acme/widgets#8".to_string()),
-        ];
-        assert!(collect_merged(&data, &targets).is_empty());
     }
 
     // Fetch-level tests: each operation runs on a `Client` over canned
@@ -5127,6 +5193,19 @@ mod tests {
         assert_eq!(github.variables(1), json!({ "cursor": "c1" }));
     }
 
+    #[test]
+    fn vanished_repos_and_prs_do_not_count_as_merged() {
+        let github = Canned::new(vec![ok(json!({
+            "p0": null,
+            "p1": { "pullRequest": null }
+        }))]);
+        let keys = ["acme/widgets#7", "acme/widgets#8"].map(String::from);
+
+        let merged = run(github.client().fetch_merged_status(&keys)).unwrap();
+
+        assert!(merged.is_empty());
+    }
+
     /// Malformed keys take no alias, so the aliases in the answer line up
     /// with the well-formed keys only.
     #[test]
@@ -5146,5 +5225,224 @@ mod tests {
                 "2026-07-12T08:00:00Z".to_string()
             )])
         );
+    }
+
+    /// One check suite on a merge commit, as the deploy query reads it.
+    fn suite(workflow: &str, event: &str, conclusion: Option<&str>, at: &str, run: u64) -> Value {
+        json!({
+            "status": if conclusion.is_some() { "COMPLETED" } else { "IN_PROGRESS" },
+            "conclusion": conclusion,
+            "workflowRun": {
+                "event": event,
+                "url": format!("https://github.com/acme/widgets/actions/runs/{run}"),
+                "updatedAt": at,
+                "workflow": { "name": workflow }
+            }
+        })
+    }
+
+    /// The deploy status of acme/widgets#7 when its merge commit carries
+    /// `suites`.
+    fn deploy_of(suites: Vec<Value>) -> Option<Deploy> {
+        let github = Canned::new(vec![ok(json!({
+            "p0": { "pullRequest": { "mergeCommit": { "checkSuites": { "nodes": suites } } } }
+        }))]);
+        let keys = ["acme/widgets#7".to_string()];
+        run(github.client().fetch_deploy_status(&keys))
+            .unwrap()
+            .remove("acme/widgets#7")
+    }
+
+    fn run_url(run: u64) -> String {
+        format!("https://github.com/acme/widgets/actions/runs/{run}")
+    }
+
+    #[test]
+    fn a_running_deploy_workflow_reports_deploying() {
+        let deploy = deploy_of(vec![
+            suite("ci", "push", Some("SUCCESS"), "2026-07-12T10:01:00Z", 1),
+            suite("Deploy Production", "push", None, "2026-07-12T10:02:00Z", 2),
+        ]);
+        assert_eq!(
+            deploy,
+            Some(Deploy {
+                state: DeployState::Deploying,
+                completed_at: None,
+                url: run_url(2),
+            })
+        );
+    }
+
+    #[test]
+    fn a_succeeded_deploy_reports_deployed_with_its_completion_time() {
+        let deploy = deploy_of(vec![suite(
+            "deploy",
+            "push",
+            Some("SUCCESS"),
+            "2026-07-12T10:09:00Z",
+            2,
+        )]);
+        assert_eq!(
+            deploy,
+            Some(Deploy {
+                state: DeployState::Deployed,
+                completed_at: Some("2026-07-12T10:09:00Z".into()),
+                url: run_url(2),
+            })
+        );
+    }
+
+    #[test]
+    fn failed_and_cancelled_deploys_keep_the_run_url() {
+        for (conclusion, state) in [
+            ("FAILURE", DeployState::Failed),
+            ("TIMED_OUT", DeployState::Failed),
+            ("STARTUP_FAILURE", DeployState::Failed),
+            ("CANCELLED", DeployState::Cancelled),
+        ] {
+            let deploy = deploy_of(vec![suite(
+                "Deploy",
+                "push",
+                Some(conclusion),
+                "2026-07-12T10:09:00Z",
+                2,
+            )]);
+            assert_eq!(
+                deploy,
+                Some(Deploy {
+                    state,
+                    completed_at: Some("2026-07-12T10:09:00Z".into()),
+                    url: run_url(2),
+                }),
+                "{conclusion}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_worst_of_several_deploy_runs_wins() {
+        let done = |run, at| suite("Deploy API", "push", Some("SUCCESS"), at, run);
+        let failed = suite(
+            "Deploy Web",
+            "push",
+            Some("FAILURE"),
+            "2026-07-12T10:03:00Z",
+            3,
+        );
+        let running = suite("Deploy Web", "push", None, "2026-07-12T10:04:00Z", 4);
+        let cancelled = suite(
+            "Deploy Web",
+            "push",
+            Some("CANCELLED"),
+            "2026-07-12T10:02:00Z",
+            5,
+        );
+        let state_and_run = |suites| {
+            let deploy = deploy_of(suites).unwrap();
+            (deploy.state, deploy.url)
+        };
+
+        assert_eq!(
+            state_and_run(vec![
+                done(1, "2026-07-12T10:09:00Z"),
+                running.clone(),
+                failed
+            ]),
+            (DeployState::Failed, run_url(3))
+        );
+        assert_eq!(
+            state_and_run(vec![
+                done(1, "2026-07-12T10:09:00Z"),
+                cancelled.clone(),
+                running
+            ]),
+            (DeployState::Deploying, run_url(4))
+        );
+        assert_eq!(
+            state_and_run(vec![done(1, "2026-07-12T10:09:00Z"), cancelled]),
+            (DeployState::Cancelled, run_url(5))
+        );
+        // All succeeded: the deploy finished when the last run did.
+        assert_eq!(
+            deploy_of(vec![
+                done(1, "2026-07-12T10:05:00Z"),
+                done(2, "2026-07-12T10:09:00Z"),
+                done(6, "2026-07-12T10:07:00Z"),
+            ]),
+            Some(Deploy {
+                state: DeployState::Deployed,
+                completed_at: Some("2026-07-12T10:09:00Z".into()),
+                url: run_url(2),
+            })
+        );
+    }
+
+    /// A pre-merge "Deploy Test" on `merge_group` and a `release` deploy are
+    /// not the deploy of the merge commit, and neither is a push workflow
+    /// that does not deploy.
+    #[test]
+    fn only_push_runs_of_a_workflow_named_deploy_count() {
+        let deploy = deploy_of(vec![
+            suite(
+                "Deploy Test",
+                "merge_group",
+                Some("FAILURE"),
+                "2026-07-12T09:00:00Z",
+                1,
+            ),
+            suite("Deploy", "release", None, "2026-07-12T10:00:00Z", 2),
+            suite("ci", "push", Some("FAILURE"), "2026-07-12T10:01:00Z", 3),
+            // A suite from an app other than Actions has no workflow run.
+            json!({ "status": "COMPLETED", "conclusion": "FAILURE", "workflowRun": null }),
+        ]);
+        assert_eq!(deploy, None);
+    }
+
+    /// A skipped run deployed nothing, so it does not make the commit
+    /// deployed.
+    #[test]
+    fn a_skipped_deploy_run_is_no_deploy() {
+        let deploy = deploy_of(vec![suite(
+            "Deploy",
+            "push",
+            Some("SKIPPED"),
+            "2026-07-12T10:01:00Z",
+            1,
+        )]);
+        assert_eq!(deploy, None);
+    }
+
+    #[test]
+    fn deploy_status_maps_each_answer_back_to_its_pr_key() {
+        let commit = |suites: Vec<Value>| json!({ "pullRequest": { "mergeCommit": { "checkSuites": { "nodes": suites } } } });
+        let github = Canned::new(vec![ok(json!({
+            "p0": commit(vec![]),
+            "p1": commit(vec![suite("deploy", "push", None, "2026-07-12T10:02:00Z", 9)]),
+            // A repository the token can no longer read.
+            "p2": null
+        }))]);
+        let keys = [
+            "acme/widgets#1",
+            "not a key",
+            "acme/gadgets#2",
+            "acme/gone#3",
+        ]
+        .map(String::from);
+
+        let deploys = run(github.client().fetch_deploy_status(&keys)).unwrap();
+
+        assert_eq!(
+            deploys.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["acme/gadgets#2"]
+        );
+        assert!(github.query(0).contains("pullRequest(number: 2)"));
+    }
+
+    #[test]
+    fn asking_about_no_deploys_sends_no_query() {
+        let github = Canned::new(vec![]);
+        let deploys = run(github.client().fetch_deploy_status(&[])).unwrap();
+        assert!(deploys.is_empty());
+        assert_eq!(github.request_count(), 0);
     }
 }

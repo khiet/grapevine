@@ -30,7 +30,9 @@
 //! save an older state over a newer one.
 //!
 //! The only I/O here is [`PrState::detect_merged`], which is not a transition:
-//! it asks GitHub about departed PRs on the way to `sync_succeeded`.
+//! it asks GitHub about departed PRs on the way to `sync_succeeded`. Deploy
+//! polling keeps its I/O in `sync`: it reads [`PrState::awaiting_deploy`]
+//! and reports back through [`PrState::deploys_found`].
 
 use std::{
     collections::{HashMap, HashSet},
@@ -468,6 +470,27 @@ impl PrState {
             save_snoozes: None,
             save_fix_requests: None,
             tray_count: None,
+        }
+    }
+
+    /// Keys of the merged PRs to ask GitHub about; see
+    /// [`merged::awaiting_deploy`].
+    pub fn awaiting_deploy(&self, now_epoch_ms: u64) -> Vec<String> {
+        merged::awaiting_deploy(&self.inner.lock().unwrap().merged, now_epoch_ms)
+    }
+
+    /// GitHub answered where the deploys of some merged PRs stand. The tray
+    /// is left alone: a merged PR waits on nobody.
+    pub fn deploys_found(&self, found: HashMap<String, merged::Deploy>) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        let changed = merged::apply_deploys(&found, &mut inner.merged);
+        // The unconfigured Snapshot shows no Merged section.
+        if inner.snapshot.has_synced {
+            inner.snapshot.merged = inner.merged.clone();
+        }
+        Effects {
+            save_merged: changed.then(|| inner.merged.clone()),
+            ..inner.no_effects()
         }
     }
 
@@ -1647,6 +1670,97 @@ mod tests {
         assert!(after.snapshot.merged.is_empty());
     }
 
+    fn deploy(state: merged::DeployState, completed_at: Option<&str>) -> merged::Deploy {
+        merged::Deploy {
+            state,
+            completed_at: completed_at.map(String::from),
+            url: "https://github.com/acme/widgets/actions/runs/2".into(),
+        }
+    }
+
+    /// T2 in epoch ms, plus an hour: inside the day a merge is polled for.
+    const AN_HOUR_AFTER_T2_MS: u64 = 1_783_036_800_000 + 3_600_000;
+
+    fn state_with_merged(number: u64) -> PrState {
+        let state = PrState::default();
+        state.restore(
+            HashMap::new(),
+            vec![merged::from_pr(
+                &pr("acme/widgets", number, &[]),
+                T2.to_string(),
+            )],
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        );
+        state.sync_succeeded(vec![], vec![], NOW_MS);
+        state
+    }
+
+    #[test]
+    fn a_merged_pr_reports_deploying_then_deployed_and_is_then_left_alone() {
+        let state = state_with_merged(7);
+        let key = "acme/widgets#7".to_string();
+        assert_eq!(state.awaiting_deploy(AN_HOUR_AFTER_T2_MS), [key.as_str()]);
+
+        let deploying = deploy(merged::DeployState::Deploying, None);
+        let effects = state.deploys_found(HashMap::from([(key.clone(), deploying.clone())]));
+        assert_eq!(effects.snapshot.merged[0].deploy, Some(deploying));
+        assert_eq!(effects.save_merged, Some(effects.snapshot.merged.clone()));
+        assert_eq!(effects.tray_count, None);
+        assert_eq!(state.awaiting_deploy(AN_HOUR_AFTER_T2_MS), [key.as_str()]);
+
+        let deployed = deploy(merged::DeployState::Deployed, Some("2026-07-03T00:09:00Z"));
+        let effects = state.deploys_found(HashMap::from([(key, deployed.clone())]));
+        assert_eq!(effects.snapshot.merged[0].deploy, Some(deployed));
+        assert!(state.awaiting_deploy(AN_HOUR_AFTER_T2_MS).is_empty());
+    }
+
+    #[test]
+    fn a_deploy_answer_that_changes_nothing_saves_nothing() {
+        let state = state_with_merged(7);
+        let found = HashMap::from([(
+            "acme/widgets#7".to_string(),
+            deploy(merged::DeployState::Deploying, None),
+        )]);
+        state.deploys_found(found.clone());
+        assert_eq!(state.deploys_found(found).save_merged, None);
+    }
+
+    #[test]
+    fn a_dismissed_merged_pr_is_no_longer_asked_about() {
+        let state = state_with_merged(7);
+        state.dismiss_merged("acme/widgets#7");
+        assert!(state.awaiting_deploy(AN_HOUR_AFTER_T2_MS).is_empty());
+    }
+
+    /// The deploy survives the syncs that follow: a sync rebuilds the
+    /// Snapshot from the merged list.
+    #[test]
+    fn a_found_deploy_survives_the_next_sync() {
+        let state = state_with_merged(7);
+        let failed = deploy(merged::DeployState::Failed, Some("2026-07-03T00:09:00Z"));
+        state.deploys_found(HashMap::from([(
+            "acme/widgets#7".to_string(),
+            failed.clone(),
+        )]));
+        let effects = state.sync_succeeded(vec![], vec![], NOW_MS + 1);
+        assert_eq!(effects.snapshot.merged[0].deploy, Some(failed));
+    }
+
+    #[test]
+    fn a_deploy_found_while_unconfigured_does_not_bring_the_merged_section_back() {
+        let state = state_with_merged(7);
+        state.unconfigured();
+        let effects = state.deploys_found(HashMap::from([(
+            "acme/widgets#7".to_string(),
+            deploy(merged::DeployState::Deploying, None),
+        )]));
+        assert!(effects.snapshot.merged.is_empty());
+        let back = state.sync_succeeded(vec![], vec![], NOW_MS + 1);
+        assert!(back.snapshot.merged[0].deploy.is_some());
+    }
+
     #[test]
     fn dismissing_a_merged_pr_leaves_the_tray_count_untouched() {
         let state = PrState::default();
@@ -1837,6 +1951,11 @@ mod tests {
                 avatar_url: "https://avatars.example/someone".into(),
                 owner_avatar_url: "https://avatars.example/acme".into(),
                 merged_at: "2026-07-11T10:00:00Z".into(),
+                deploy: Some(merged::Deploy {
+                    state: merged::DeployState::Deployed,
+                    completed_at: Some("2026-07-11T10:09:00Z".into()),
+                    url: "https://github.com/acme/widgets/actions/runs/2".into(),
+                }),
             }],
             snoozed: vec!["acme/widgets#7".into()],
             has_synced: true,
@@ -1885,7 +2004,12 @@ mod tests {
                     "author": "someone",
                     "avatar_url": "https://avatars.example/someone",
                     "owner_avatar_url": "https://avatars.example/acme",
-                    "merged_at": "2026-07-11T10:00:00Z"
+                    "merged_at": "2026-07-11T10:00:00Z",
+                    "deploy": {
+                        "state": "deployed",
+                        "completed_at": "2026-07-11T10:09:00Z",
+                        "url": "https://github.com/acme/widgets/actions/runs/2"
+                    }
                 }],
                 "snoozed": ["acme/widgets#7"],
                 "has_synced": true,

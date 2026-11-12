@@ -323,7 +323,36 @@ async fn sync_once(app: &AppHandle) -> Outcome {
     if let Err(e) = delivered {
         eprintln!("cannot deliver sync effects: {e}");
     }
+    if matches!(outcome, Outcome::Synced { .. }) {
+        poll_deploys(app).await;
+    }
     outcome
+}
+
+/// Asks GitHub where the deploys of the merged PRs stand, after a sync that
+/// worked. A merge is snapshotted once, usually while its deploy is still
+/// running, so this is what moves an entry on from there. A failure costs
+/// nothing but time: the entries are asked about again next sync, and the
+/// sync itself has already been delivered.
+async fn poll_deploys(app: &AppHandle) {
+    let state = app.state::<SyncState>();
+    let keys = state.pr_state.awaiting_deploy(now_epoch_ms());
+    if keys.is_empty() {
+        return;
+    }
+    let Ok(Some(token)) = keychain::load() else {
+        return;
+    };
+    match github::fetch_deploy_status(&token, &keys).await {
+        // Nothing found changes nothing, so there is nothing to deliver.
+        Ok(found) if found.is_empty() => {}
+        Ok(found) => {
+            if let Err(e) = transition(app, |state| state.deploys_found(found)) {
+                eprintln!("cannot deliver deploy statuses: {e}");
+            }
+        }
+        Err(e) => eprintln!("deploy poll failed: {e}"),
+    }
 }
 
 /// One sync's fetch: the open PRs, any tracked PRs that turned out to have

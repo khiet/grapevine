@@ -1,8 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{github::PullRequest, unread};
+use crate::{github, github::PullRequest, unread};
 
 /// A PR that merged while tracked. Shown in the popover's Merged section
 /// until the user dismisses it; persisted so the section survives restarts.
@@ -23,6 +23,36 @@ pub struct MergedPr {
     pub owner_avatar_url: String,
     /// GitHub's mergedAt (ISO-8601 UTC); orders the section newest first.
     pub merged_at: String,
+    /// The production deploy of the merge commit. `None` until a deploy run
+    /// is found, which is forever for a repo that has none, and for entries
+    /// saved before this field existed.
+    #[serde(default)]
+    pub deploy: Option<Deploy>,
+}
+
+/// Where the deploy of a merge commit stands, folded from every deploy run on
+/// that commit.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Deploy {
+    pub state: DeployState,
+    /// When the run behind `state` finished (ISO-8601 UTC); `None` while
+    /// deploying.
+    pub completed_at: Option<String>,
+    /// The workflow run behind `state`.
+    pub url: String,
+}
+
+/// Every state but `Deploying` is final: the entry is not asked about again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployState {
+    Deploying,
+    Deployed,
+    Failed,
+    Cancelled,
 }
 
 /// Merged-but-not-dismissed PRs, newest merge first.
@@ -45,6 +75,7 @@ pub fn from_pr(pr: &PullRequest, merged_at: String) -> MergedPr {
         avatar_url: pr.avatar_url.clone(),
         owner_avatar_url: pr.owner_avatar_url.clone(),
         merged_at,
+        deploy: None,
     }
 }
 
@@ -65,6 +96,46 @@ pub fn apply(live: &[PullRequest], newly_merged: Vec<MergedPr>, state: &mut Merg
     }
     // ISO-8601 UTC timestamps sort lexically; newest merge first.
     state.sort_by(|a, b| b.merged_at.cmp(&a.merged_at));
+    changed
+}
+
+/// How long after its merge an entry is asked about. Past it, a repo with no
+/// deploy workflow stops costing a query, and a deploy that never finished
+/// keeps the last state it reported.
+const DEPLOY_WATCH_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// Keys of the entries whose deploy is worth asking GitHub about: no final
+/// status yet, and merged within the last day.
+pub fn awaiting_deploy(state: &MergedState, now_epoch_ms: u64) -> Vec<String> {
+    state
+        .iter()
+        .filter(|entry| {
+            entry
+                .deploy
+                .as_ref()
+                .is_none_or(|deploy| deploy.state == DeployState::Deploying)
+        })
+        .filter(|entry| {
+            github::rfc3339_utc_to_epoch_secs(&entry.merged_at)
+                .is_some_and(|merged| now_epoch_ms < merged * 1000 + DEPLOY_WATCH_MS)
+        })
+        .map(key)
+        .collect()
+}
+
+/// Records what GitHub answered, by entry key. An entry missing from `found`
+/// keeps what it had, and an answer for an entry that has left the section
+/// is dropped. Returns true when the state changed and needs persisting.
+pub fn apply_deploys(found: &HashMap<String, Deploy>, state: &mut MergedState) -> bool {
+    let mut changed = false;
+    for entry in state.iter_mut() {
+        if let Some(deploy) = found.get(&key(entry)) {
+            if entry.deploy.as_ref() != Some(deploy) {
+                entry.deploy = Some(deploy.clone());
+                changed = true;
+            }
+        }
+    }
     changed
 }
 
@@ -113,6 +184,70 @@ mod tests {
 
     fn entry(repo: &str, number: u64, merged_at: &str) -> MergedPr {
         from_pr(&pr(repo, number), merged_at.into())
+    }
+
+    fn deploy(state: DeployState) -> Deploy {
+        Deploy {
+            state,
+            completed_at: (state != DeployState::Deploying).then(|| "2026-07-12T10:09:00Z".into()),
+            url: "https://github.com/acme/widgets/actions/runs/2".into(),
+        }
+    }
+
+    /// 2026-07-12T10:00:00Z, the merge time the deploy tests use.
+    const MERGED_AT_MS: u64 = 1_783_850_400_000;
+    const HOUR_MS: u64 = 3_600_000;
+
+    #[test]
+    fn an_entry_is_asked_about_until_its_deploy_is_final() {
+        let with = |state: Option<DeployState>| MergedPr {
+            deploy: state.map(deploy),
+            ..entry("acme/widgets", 7, "2026-07-12T10:00:00Z")
+        };
+        let asked = |state| !awaiting_deploy(&vec![with(state)], MERGED_AT_MS + HOUR_MS).is_empty();
+
+        assert!(asked(None));
+        assert!(asked(Some(DeployState::Deploying)));
+        assert!(!asked(Some(DeployState::Deployed)));
+        assert!(!asked(Some(DeployState::Failed)));
+        assert!(!asked(Some(DeployState::Cancelled)));
+    }
+
+    #[test]
+    fn an_entry_stops_being_asked_about_a_day_after_it_merged() {
+        let state = vec![
+            entry("acme/widgets", 7, "2026-07-12T10:00:00Z"),
+            entry("acme/widgets", 8, "2026-07-12T11:00:00Z"),
+        ];
+        assert_eq!(
+            awaiting_deploy(&state, MERGED_AT_MS + 24 * HOUR_MS - 1),
+            ["acme/widgets#7", "acme/widgets#8"]
+        );
+        assert_eq!(
+            awaiting_deploy(&state, MERGED_AT_MS + 24 * HOUR_MS),
+            ["acme/widgets#8"]
+        );
+        assert!(awaiting_deploy(&state, MERGED_AT_MS + 25 * HOUR_MS).is_empty());
+    }
+
+    #[test]
+    fn a_found_deploy_lands_on_its_entry_only() {
+        let mut state = vec![
+            entry("acme/widgets", 8, "2026-07-12T11:00:00Z"),
+            entry("acme/widgets", 7, "2026-07-12T10:00:00Z"),
+        ];
+        let found = HashMap::from([
+            ("acme/widgets#7".to_string(), deploy(DeployState::Deploying)),
+            // Dismissed while the answer was on its way.
+            ("acme/widgets#9".to_string(), deploy(DeployState::Failed)),
+        ]);
+
+        assert!(apply_deploys(&found, &mut state));
+        assert_eq!(state[0].deploy, None);
+        assert_eq!(state[1].deploy, Some(deploy(DeployState::Deploying)));
+        assert_eq!(state.len(), 2);
+        // The same answer again changes nothing, so nothing needs saving.
+        assert!(!apply_deploys(&found, &mut state));
     }
 
     #[test]

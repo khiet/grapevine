@@ -63,6 +63,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     avatar_url: avatars[author],
     owner_avatar_url: avatars[repo.split("/")[0]],
     merged_at: at(mergedAt),
+    deploy: null,
   });
   const since = (time: string) => Date.parse(at(time));
   const mine = { section: "mine" } as const;
