@@ -27,6 +27,23 @@ pub fn forget_starts(starts: &mut Option<TurnStarts>) -> bool {
     changed
 }
 
+/// Records that the turn on `key` became the viewer's at `now_epoch_ms`,
+/// between syncs. Nothing is recorded, and false returned, while turns are
+/// not tracked at all.
+pub fn begin(starts: &mut Option<TurnStarts>, key: &str, now_epoch_ms: u64) -> bool {
+    let Some(known) = starts else { return false };
+    known.insert(key.to_string(), Some(now_epoch_ms));
+    true
+}
+
+/// Records that the turn on `key` stopped being the viewer's between syncs.
+/// Returns true when the state changed and needs persisting.
+pub fn end(starts: &mut Option<TurnStarts>, key: &str) -> bool {
+    starts
+        .as_mut()
+        .is_some_and(|known| known.remove(key).is_some())
+}
+
 /// How many PRs wait on the viewer and are not snoozed: the tray count.
 pub fn yours_count(prs: &[PullRequest], snoozes: &Snoozes) -> u64 {
     prs.iter()

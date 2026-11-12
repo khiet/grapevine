@@ -10,15 +10,14 @@ import { createFakeBackend } from "./backend/fake";
 import { tauriAdapter } from "./backend/tauri";
 import {
   clickFix,
-  fixRequests,
-  forgetCleared,
+  fixesPosting,
   requestFix,
-  resetFixRequests,
+  resetFixesPosting,
 } from "./fixConflict";
 
 afterEach(() => {
   setAdapter(tauriAdapter);
-  resetFixRequests();
+  resetFixesPosting();
 });
 
 const KEY = "acme/widgets#7";
@@ -50,19 +49,15 @@ const conflicted: PullRequest = {
   turn: "yours",
   turn_since: null,
   can_fix_conflict: true,
+  fix_requested: false,
   unread_count: 0,
   bot_unread_count: 0,
 };
 
-const synced = (prs: PullRequest[]): Snapshot => ({
-  ...EMPTY_SNAPSHOT,
-  prs,
-  has_synced: true,
-});
-
-/** Installs a backend holding one fixable PR and returns the keys the fix
- * was asked for, in order. `fail` makes the backend turn each request down. */
-function backend(fail: string | null = null): string[] {
+/** Installs a backend holding one fixable PR. `asked` collects the keys the
+ * fix was asked for, in order, and `pr` reads the PR back as the backend now
+ * has it. `fail` makes the backend turn each request down. */
+function backend(fail: string | null = null) {
   const fake = createFakeBackend({
     ...EMPTY_SNAPSHOT,
     prs: [conflicted],
@@ -80,7 +75,8 @@ function backend(fail: string | null = null): string[] {
     },
   };
   setAdapter(adapter);
-  return asked;
+  const pr = async () => (await fake.adapter.invoke<Snapshot>("get_prs")).prs[0];
+  return { asked, pr };
 }
 
 /** A control as the row holds it: the armed flag, carried from click to
@@ -97,40 +93,40 @@ function control(key: string) {
 }
 
 test("one click never posts", async () => {
-  const asked = backend();
+  const { asked, pr } = backend();
   await control(KEY).click();
   expect(asked).toEqual([]);
-  expect(fixRequests().has(KEY)).toBe(false);
+  expect((await pr()).fix_requested).toBe(false);
 });
 
-test("two clicks post exactly once, and the row reads as requested", async () => {
-  const asked = backend();
+test("two clicks post exactly once, and the PR then waits on Copilot", async () => {
+  const { asked, pr } = backend();
   const fix = control(KEY);
   await fix.click();
-  await fix.click();
+  expect(await fix.click()).toBeNull();
   expect(asked).toEqual([KEY]);
-  expect(fixRequests().get(KEY)).toBe("requested");
+  expect(await pr()).toMatchObject({ fix_requested: true, turn: "theirs" });
 });
 
-test("clicking on after the request is made posts nothing more", async () => {
-  const asked = backend();
-  const fix = control(KEY);
-  for (let clicks = 0; clicks < 6; clicks++) await fix.click();
-  expect(asked).toEqual([KEY]);
+test("a request reads as posting only while it is on its way", async () => {
+  backend();
+  const first = requestFix(KEY);
+  expect(fixesPosting().has(KEY)).toBe(true);
+  await first;
+  expect(fixesPosting().has(KEY)).toBe(false);
 });
 
 test("a second request made while the first is on its way posts nothing", async () => {
-  const asked = backend();
-  const first = requestFix(KEY);
-  expect(fixRequests().get(KEY)).toBe("posting");
-  await Promise.all([first, requestFix(KEY)]);
+  const { asked } = backend();
+  await Promise.all([requestFix(KEY), requestFix(KEY)]);
   expect(asked).toEqual([KEY]);
 });
 
 test("a failed post hands back the backend's message and leaves the row free to ask again", async () => {
-  const asked = backend("GitHub error: Resource not accessible.");
+  const { asked, pr } = backend("GitHub error: Resource not accessible.");
   expect(await requestFix(KEY)).toBe("GitHub error: Resource not accessible.");
-  expect(fixRequests().has(KEY)).toBe(false);
+  expect(fixesPosting().has(KEY)).toBe(false);
+  expect((await pr()).fix_requested).toBe(false);
   await requestFix(KEY);
   expect(asked).toEqual([KEY, KEY]);
 });
@@ -142,35 +138,10 @@ test("the backend refuses a PR that is not fixable", async () => {
   );
 });
 
-test("a request stands while a sync still shows the conflict", async () => {
+test("the backend refuses a second request for a PR that already waits on Copilot", async () => {
   backend();
   await requestFix(KEY);
-  forgetCleared(synced([conflicted]));
-  expect(fixRequests().get(KEY)).toBe("requested");
-});
-
-test("a request is forgotten once a sync shows the row no longer fixable, so a later conflict can ask again", async () => {
-  const asked = backend();
-  await requestFix(KEY);
-  forgetCleared(
-    synced([{ ...conflicted, blocked_reasons: [], can_fix_conflict: false }]),
+  expect(await requestFix(KEY)).toBe(
+    "Copilot has already been asked to fix this.",
   );
-  expect(fixRequests().has(KEY)).toBe(false);
-  await requestFix(KEY);
-  expect(asked).toEqual([KEY, KEY]);
-});
-
-test("a request is forgotten when its PR leaves the list", async () => {
-  backend();
-  await requestFix(KEY);
-  forgetCleared(synced([]));
-  expect(fixRequests().has(KEY)).toBe(false);
-});
-
-test("a request still on its way is not forgotten by a sync that lands meanwhile", async () => {
-  const asked = backend();
-  const posting = requestFix(KEY);
-  forgetCleared(synced([]));
-  await Promise.all([posting, requestFix(KEY)]);
-  expect(asked).toEqual([KEY]);
 });

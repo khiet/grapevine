@@ -41,6 +41,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   turn: null,
   turn_since: null,
   can_fix_conflict: false,
+  fix_requested: false,
   unread_count: 0,
   bot_unread_count: 0,
   ...overrides,
@@ -769,27 +770,60 @@ test("a snoozed row offers no Copilot fix", () => {
   expect(snoozedGroup(view, "mine").rows[0].fix).toBeNull();
 });
 
-test("a row whose fix is being asked for or was asked for shows that in place of the offer", () => {
-  const snapshot = synced({
-    prs: [fixable({ number: 1 }), fixable({ number: 2 }), fixable({ number: 3 })],
-  });
-  const requests = new Map([
-    ["acme/widgets#1", "posting"],
-    ["acme/widgets#2", "requested"],
-  ] as const);
-  const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, requests);
+test("a row whose fix is being posted shows that in place of the offer", () => {
+  const snapshot = synced({ prs: [fixable({ number: 1 }), fixable({ number: 2 })] });
+  const posting = new Set(["acme/widgets#1"]);
+  const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, posting);
   expect(rows(content as ListView, "mine").map((row) => row.fix)).toEqual([
     "posting",
-    "requested",
     "offer",
   ]);
 });
 
-test("a request made for a row says nothing once the row stops being fixable", () => {
-  const snapshot = synced({ prs: [pr({ number: 1 })] });
-  const requests = new Map([["acme/widgets#1", "requested"]] as const);
-  const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, requests);
-  expect(rows(content as ListView, "mine")[0].fix).toBeNull();
+// As the backend sends a PR it has handed to Copilot: still conflicting,
+// still fixable by GitHub's state, and no longer the viewer's turn.
+const fixing = (overrides: Partial<PullRequest> = {}) =>
+  fixable({ fix_requested: true, turn: "theirs", ...overrides });
+
+test("a row with a requested fix shows the Copilot fixing mark beside its conflict pill, and no fix control", () => {
+  const [row] = rows(list(synced({ prs: [fixing()] })), "mine");
+  expect(row.marks).toEqual([
+    {
+      kind: "copilot-fixing",
+      label: "Copilot fixing",
+      tip: "Copilot was asked to resolve the conflict",
+    },
+    { kind: "blocked", label: "Merge conflict", tip: null },
+  ]);
+  expect(row.fix).toBeNull();
+});
+
+test("a row with a requested fix gives up the head of Mine and the your-turn count", () => {
+  const snapshot = synced({
+    prs: [
+      fixing({ number: 1 }),
+      fixable({ number: 2, turn: "yours" }),
+      pr({ number: 3 }),
+    ],
+  });
+  expect(numbers(list(snapshot), "mine")).toEqual([2, 1, 3]);
+  expect(yourTurnCount(snapshot)).toBe(1);
+});
+
+test("a requested fix beside a review asked of you leaves the row yours, tinted on the review glyph", () => {
+  const [row] = rows(
+    list(synced({ prs: [fixing({ review_requested: true, turn: "yours" })] })),
+    "mine",
+  );
+  expect(row.marks).toEqual([
+    { kind: "review-requested", tip: "Review requested", yourTurn: true },
+    {
+      kind: "copilot-fixing",
+      label: "Copilot fixing",
+      tip: "Copilot was asked to resolve the conflict",
+    },
+    { kind: "blocked", label: "Merge conflict", tip: null },
+  ]);
 });
 
 test("a snoozed row's unread stays off its collapsed section's badge", () => {

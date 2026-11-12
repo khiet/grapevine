@@ -49,7 +49,8 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   it changes.
 - **Fix a conflict with Copilot.** On one of your own PRs with a merge
   conflict, ask Copilot to resolve it from the row. Two clicks, and only in
-  repos where Copilot's cloud agent is enabled.
+  repos where Copilot's cloud agent is enabled. The PR then waits on Copilot,
+  not on you, until the conflict clears or an hour passes.
 
 ## Install
 

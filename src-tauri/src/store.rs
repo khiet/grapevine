@@ -3,7 +3,8 @@ use std::{fs, marker::PhantomData, path::PathBuf};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    merged::MergedState, settings::Settings, snooze::Snoozes, turns::TurnStarts, unread::ReadState,
+    fix_requests::FixRequests, merged::MergedState, settings::Settings, snooze::Snoozes,
+    turns::TurnStarts, unread::ReadState,
 };
 
 /// What a load does when the file exists but cannot be read or parsed. A
@@ -69,6 +70,15 @@ pub const MERGED: Document<MergedState> = Document {
 pub const SNOOZES: Document<Snoozes> = Document {
     file: "snoozed.json",
     label: "snoozed state",
+    on_corrupt: OnCorrupt::StartEmpty,
+    holds: PhantomData,
+};
+
+/// A corrupt file starts over empty: every PR handed to Copilot reads as the
+/// viewer's again, which is noisy once but never hides a blocked PR.
+pub const FIX_REQUESTS: Document<FixRequests> = Document {
+    file: "fix_requests.json",
+    label: "fix requests",
     on_corrupt: OnCorrupt::StartEmpty,
     holds: PhantomData,
 };
@@ -149,7 +159,7 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::{testing::temp_store, *};
-    use crate::{merged::MergedPr, snooze::Snooze};
+    use crate::{fix_requests::FixRequest, merged::MergedPr, snooze::Snooze};
 
     fn merged_entry() -> MergedPr {
         MergedPr {
@@ -231,6 +241,26 @@ mod tests {
         )]);
         store.save(&SNOOZES, &state).unwrap();
         assert_eq!(store.load(&SNOOZES).unwrap(), state);
+    }
+
+    #[test]
+    fn the_fix_requests_round_trip() {
+        let (_dir, store) = temp_store();
+        let state = FixRequests::from([(
+            "acme/widgets#3".into(),
+            FixRequest {
+                requested_at: 1_784_205_296_000,
+            },
+        )]);
+        store.save(&FIX_REQUESTS, &state).unwrap();
+        assert_eq!(store.load(&FIX_REQUESTS).unwrap(), state);
+    }
+
+    #[test]
+    fn a_corrupt_fix_requests_file_loads_as_empty() {
+        let (dir, store) = temp_store();
+        fs::write(dir.path().join("fix_requests.json"), "{not json").unwrap();
+        assert!(store.load(&FIX_REQUESTS).unwrap().is_empty());
     }
 
     #[test]

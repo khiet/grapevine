@@ -386,8 +386,10 @@ function MarkView({ mark }: { mark: Mark }) {
     // Neutral pills for a merge that is under way without the viewer: grey
     // like the Draft pill, since neither is stuck nor a call to act. The
     // label is terse, so the tooltip carries the full phrase.
+    // Copilot at work on the conflict is the same kind of news.
     case "auto-merge":
     case "checks-running":
+    case "copilot-fixing":
       return (
         <span
           className="pr-neutral-pill pr-tip"
@@ -519,10 +521,10 @@ function useFixControl(row: RowView) {
         <Wrench />
       </button>
     );
-  } else if (row.fix !== null) {
+  } else if (row.fix === "posting") {
     control = (
       <span className="pr-fix is-settled" role="status">
-        {row.fix === "posting" ? "Asking" : "Requested"}
+        Asking
       </span>
     );
   }

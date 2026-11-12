@@ -12,6 +12,7 @@ use tauri::{
 use tauri_plugin_positioner::{Position, WindowExt};
 
 mod commands;
+mod fix_requests;
 mod github;
 mod keychain;
 mod launch_at_login;
@@ -56,9 +57,10 @@ fn request_popover(app: &tauri::AppHandle, request: popover::Request) {
         }
         popover::Action::Show => {
             // Before the window shows, so a row whose snooze ran out
-            // overnight is awake the moment the popover opens, whatever the
+            // overnight is awake, and a row whose fix request ran out is the
+            // viewer's again, the moment the popover opens, whatever the
             // sync loop is waiting on.
-            sync::wake_expired_snoozes(app);
+            sync::expire_by_clock(app);
             place_popover(&window);
             let _ = window.show();
             #[cfg(target_os = "linux")]
@@ -196,7 +198,7 @@ pub fn run() {
             // showing is repeated here.
             #[cfg(target_os = "linux")]
             if let WindowEvent::Focused(true) = event {
-                sync::wake_expired_snoozes(window.app_handle());
+                sync::expire_by_clock(window.app_handle());
                 place_popover(&popover);
             }
         })
