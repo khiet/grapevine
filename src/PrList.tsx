@@ -9,15 +9,16 @@ import {
   wake,
 } from "./backend";
 import { clickFix } from "./fixConflict";
-import type {
-  DeployView,
-  ListView,
-  Mark,
-  MergedRowView,
-  RowView,
-  SectionKey,
-  SectionView,
-  SnoozedGroupView,
+import {
+  YOUR_TURN_KEY,
+  type DeployView,
+  type ListView,
+  type Mark,
+  type MergedRowView,
+  type RowView,
+  type SectionKey,
+  type SectionView,
+  type SnoozedGroupView,
 } from "./popoverView";
 
 /* Mine and All start collapsed: they are ambient context, not act-now queues,
@@ -815,15 +816,40 @@ function SectionHeader({
   );
 }
 
+/* The heading of Todo: the same label and count as a SectionHeader,
+   with no button around them, since the section is always open. */
+function PinnedHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="pr-section-header">
+      <h2 className="pr-section-heading pr-section-pinned">
+        <span className="pr-section-label">{label}</span>
+        <span className="pr-section-count" aria-hidden="true">
+          {count}
+        </span>
+        <span className="visually-hidden">
+          {`${count} pull request${count === 1 ? "" : "s"}`}
+        </span>
+      </h2>
+    </div>
+  );
+}
+
 function SectionBodyView({ section }: { section: SectionView }) {
   const { body } = section;
   switch (body.kind) {
     case "empty":
       /* Inside the slab, not bare text, so an empty section keeps the shape
-         rows will appear in. */
+         rows will appear in. A grey dash, not a sentence: empty is the
+         ordinary state of a section and has nothing to announce. */
       return (
         <ul>
-          <li className="pr-empty">Nothing to wine about</li>
+          <li className="pr-empty">
+            <span role="img" aria-label="No pull requests">
+              <GlyphSvg strokeWidth={2}>
+                <path d="M7 12h10" />
+              </GlyphSvg>
+            </span>
+          </li>
         </ul>
       );
     case "rows":
@@ -871,29 +897,36 @@ function PrList({
 }) {
   return (
     <main className="pr-list">
-      {view.sections.map((section) => (
-        <section key={section.key} className="pr-section">
-          <SectionHeader
-            label={section.label}
-            count={section.count}
-            expanded={section.expanded}
-            onToggle={() => onToggle(section.key)}
-            disabled={!view.canToggle}
-            unread={section.collapsedUnread}
-          >
-            {section.offerClearAll && (
-              <button
-                type="button"
-                className="pr-section-clear"
-                onClick={() => clearMerged().catch(() => {})}
+      {view.sections.map((section) => {
+        const { key } = section;
+        return (
+          <section key={key} className="pr-section">
+            {key === YOUR_TURN_KEY ? (
+              <PinnedHeader label={section.label} count={section.count} />
+            ) : (
+              <SectionHeader
+                label={section.label}
+                count={section.count}
+                expanded={section.expanded}
+                onToggle={() => onToggle(key)}
+                disabled={!view.canToggle}
+                unread={section.collapsedUnread}
               >
-                Clear all
-              </button>
+                {section.offerClearAll && (
+                  <button
+                    type="button"
+                    className="pr-section-clear"
+                    onClick={() => clearMerged().catch(() => {})}
+                  >
+                    Clear all
+                  </button>
+                )}
+              </SectionHeader>
             )}
-          </SectionHeader>
-          {section.expanded && <SectionBodyView section={section} />}
-        </section>
-      ))}
+            {section.expanded && <SectionBodyView section={section} />}
+          </section>
+        );
+      })}
     </main>
   );
 }

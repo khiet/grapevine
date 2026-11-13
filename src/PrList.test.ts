@@ -184,3 +184,38 @@ test("each row carries its author's handle in its title and accessible name", ()
     expect(button).toContain(`aria-label="${handle}"`);
   }
 });
+
+test("Todo has a heading and no collapse toggle; the other sections keep theirs", () => {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [{ ...openPr, turn: "yours" }] },
+    "",
+    { ...DEFAULT_COLLAPSED },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  const [yours, mine] = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+  expect(yours).toMatch(/<h2[^>]*>.*Todo/);
+  expect(yours).not.toContain("aria-expanded");
+  expect(mine).toContain("aria-expanded");
+});
+
+test("an empty section shows a dash named for assistive tech, in Todo as elsewhere", () => {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true },
+    "",
+    { mine: false, participated: false, all: false, merged: false },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  const sections = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+  expect(sections).toHaveLength(4);
+  for (const section of sections) {
+    expect(section).toMatch(
+      /<li class="pr-empty"><span role="img" aria-label="No pull requests"><svg/,
+    );
+  }
+});

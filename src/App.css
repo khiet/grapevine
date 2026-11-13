@@ -252,8 +252,17 @@ body {
   text-align: left;
 }
 
-.pr-section:first-child .pr-section-toggle {
+.pr-section:first-child .pr-section-toggle,
+.pr-section:first-child .pr-section-pinned {
   padding-top: 18px;
+}
+
+/* The heading of Todo: the toggle's padding and gap without the button or
+   the chevron, so the header keeps the height of the sections below. */
+.pr-section-pinned {
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 6px;
 }
 
 .pr-section-chevron {
@@ -344,10 +353,12 @@ body {
 }
 
 /* Row-height padding so the empty slab matches a one-row section's shape. */
+/* Centred: the dash stands in for a line of text. */
 .pr-empty {
+  display: flex;
+  justify-content: center;
   padding: 13px 11px;
   color: var(--text-2);
-  font-size: var(--text-m);
 }
 
 .pr-row {
@@ -683,7 +694,7 @@ body {
   grid-template-columns: 1fr minmax(66px, max-content);
 }
 
-/* The your-turn cue ("waiting 3h", "your turn"): the accent the app uses for
+/* The your-turn cue ("waiting 3h", "waiting"): the accent the app uses for
    things to act on, and bold so it reads apart from a plain timestamp. */
 .pr-title-row.is-waiting .pr-updated {
   color: var(--accent);
