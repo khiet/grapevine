@@ -1038,8 +1038,8 @@ body {
 }
 
 /* The bubble sits above the button, flush with its right edge: the default
-   leftward one would cover the sync time, which is what a press changes. No
-   pointer, since the bubble touches its anchor. */
+   leftward one would cover the sync time, which is what a press changes. The
+   pointer goes, since it points sideways. */
 .sync-now.pr-tip::after {
   top: auto;
   right: 0;

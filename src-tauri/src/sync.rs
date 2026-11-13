@@ -163,8 +163,8 @@ pub fn sync_now(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<SyncState>();
     try_transition(app, |prs| {
         let claimed = prs.begin_sync()?;
-        // Sent before the claim can be seen refused, which is what lets the
-        // loop tell this wake is behind it; and sent whether or not the
+        // Sent inside the transition, so the loop, on finding its own claim
+        // refused, knows this wake is already out. Sent whether or not the
         // claim gets delivered, since only a sync releases it.
         state.wake.notify_one();
         Some(claimed)

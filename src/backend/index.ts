@@ -222,7 +222,7 @@ export function subscribeSnapshot(
   };
 }
 
-/** Starts a sync straight away, without touching the poll schedule. The
+/** Starts a sync straight away, without changing the poll interval. The
  * backend answers with a Snapshot that has `syncing` set, then with the
  * sync's result; it does nothing while a sync is already under way. */
 export const syncNow = () => adapter.invoke<void>("sync_now");
