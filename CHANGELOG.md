@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.14.0](https://github.com/khiet/grapevine/compare/grapevine-v0.13.0...grapevine-v0.14.0) (2026-11-13)
+
+
+### Features
+
+* appearance setting for System, Light or Dark ([#132](https://github.com/khiet/grapevine/issues/132)) ([0caf1c8](https://github.com/khiet/grapevine/commit/0caf1c891a752e418dceffcbfb78efc95b776696)), closes [#131](https://github.com/khiet/grapevine/issues/131)
+* design tokens, AA contrast and the grape accent ([#122](https://github.com/khiet/grapevine/issues/122)) ([6f99208](https://github.com/khiet/grapevine/commit/6f99208993b4a40aa72cadee2d19538efaa307ee)), closes [#115](https://github.com/khiet/grapevine/issues/115)
+* keyboard navigation for the PR list ([#129](https://github.com/khiet/grapevine/issues/129)) ([6029b87](https://github.com/khiet/grapevine/commit/6029b87efc2d1a963f22a0321315b9ab4992540d)), closes [#121](https://github.com/khiet/grapevine/issues/121)
+* labelled row action bar and right-click menu ([#127](https://github.com/khiet/grapevine/issues/127)) ([4e0c334](https://github.com/khiet/grapevine/commit/4e0c334202673be531104f8022dd2b1e25710ffe)), closes [#119](https://github.com/khiet/grapevine/issues/119)
+* one worded state per row in place of the glyph cluster ([#126](https://github.com/khiet/grapevine/issues/126)) ([b5f9b72](https://github.com/khiet/grapevine/commit/b5f9b7261d4708ee539ed2b5590cb7eadec3664a)), closes [#118](https://github.com/khiet/grapevine/issues/118)
+* pinned Todo section whose count equals the tray number ([#125](https://github.com/khiet/grapevine/issues/125)) ([03c88c3](https://github.com/khiet/grapevine/commit/03c88c344b22a46964a2ef5887026fb6d102d5f8)), closes [#117](https://github.com/khiet/grapevine/issues/117)
+* quieter PR rows ([#130](https://github.com/khiet/grapevine/issues/130)) ([4c03478](https://github.com/khiet/grapevine/commit/4c03478791b40157bdc128f3fa61054cf51b33b4))
+* row and chrome polish for the popover ([#124](https://github.com/khiet/grapevine/issues/124)) ([023ba33](https://github.com/khiet/grapevine/commit/023ba3314565e6ad857c5f30d5e20d9a674ee041)), closes [#116](https://github.com/khiet/grapevine/issues/116)
+* Sync now button and status-bar footer ([#128](https://github.com/khiet/grapevine/issues/128)) ([5532b9c](https://github.com/khiet/grapevine/commit/5532b9ce855f0985aa1574f9212bad4ebaad18c5)), closes [#120](https://github.com/khiet/grapevine/issues/120)
+
 ## [0.13.0](https://github.com/khiet/grapevine/compare/grapevine-v0.12.0...grapevine-v0.13.0) (2026-11-12)
 
 
