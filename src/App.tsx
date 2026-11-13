@@ -21,6 +21,63 @@ import {
   useUpdateState,
 } from "./updater";
 
+/** The header's buttons: Done inside Settings, otherwise the two icon
+ * buttons. `onShow` is handed the view a click asks for. */
+export function HeaderActions({
+  inSettings,
+  offerMarkAllRead,
+  onShow,
+}: {
+  inSettings: boolean;
+  offerMarkAllRead: boolean;
+  onShow: (view: "list" | "settings") => void;
+}) {
+  if (inSettings) {
+    return (
+      <button
+        type="button"
+        className="settings-link"
+        onClick={() => onShow("list")}
+      >
+        Done
+      </button>
+    );
+  }
+  return (
+    <>
+      {/* Always in the header, so the buttons never shift: the dot says
+          there is something to mark, and without it the button has nothing
+          to do. */}
+      <button
+        type="button"
+        className="header-icon pr-tip"
+        data-tip="Mark all read"
+        aria-label="Mark all read"
+        disabled={!offerMarkAllRead}
+        onClick={() => markAllRead().catch(() => {})}
+      >
+        <GlyphSvg strokeWidth={2} size={16}>
+          <path d="m2 13 4 4L15 7" />
+          <path d="m11 16 1.5 1.5L22 7" />
+        </GlyphSvg>
+        {offerMarkAllRead && <span className="header-dot" aria-hidden="true" />}
+      </button>
+      <button
+        type="button"
+        className="header-icon pr-tip"
+        data-tip="Settings"
+        aria-label="Settings"
+        onClick={() => onShow("settings")}
+      >
+        <GlyphSvg strokeWidth={2} size={16}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" />
+        </GlyphSvg>
+      </button>
+    </>
+  );
+}
+
 function App() {
   const [view, setView] = useState<"list" | "settings">("list");
   const [filter, setFilter] = useState("");
@@ -80,49 +137,11 @@ function App() {
           </div>
         )}
         <span className="header-actions">
-          {inSettings ? (
-            <button
-              type="button"
-              className="settings-link"
-              onClick={() => setView("list")}
-            >
-              Done
-            </button>
-          ) : (
-            <>
-              {/* Always in the header, so the buttons never shift: the dot
-                  says there is something to mark, and without it the button
-                  has nothing to do. */}
-              <button
-                type="button"
-                className="header-icon pr-tip"
-                data-tip="Mark all read"
-                aria-label="Mark all read"
-                disabled={!offerMarkAllRead}
-                onClick={() => markAllRead().catch(() => {})}
-              >
-                <GlyphSvg strokeWidth={2} size={16}>
-                  <path d="m2 13 4 4L15 7" />
-                  <path d="m11 16 1.5 1.5L22 7" />
-                </GlyphSvg>
-                {offerMarkAllRead && (
-                  <span className="header-dot" aria-hidden="true" />
-                )}
-              </button>
-              <button
-                type="button"
-                className="header-icon pr-tip"
-                data-tip="Settings"
-                aria-label="Settings"
-                onClick={() => setView("settings")}
-              >
-                <GlyphSvg strokeWidth={2} size={16}>
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" />
-                </GlyphSvg>
-              </button>
-            </>
-          )}
+          <HeaderActions
+            inSettings={inSettings}
+            offerMarkAllRead={offerMarkAllRead}
+            onShow={setView}
+          />
         </span>
       </header>
       {/* Above the body in both views: an update staged by a background check
