@@ -128,13 +128,13 @@ async function capture(baseUrl, dir) {
   await snap(1700);
   await label(row("#415").locator(".pr-updated"), "right", "Your turn first, and for how long", 112);
   await snap(1600);
-  await label(row("#415").locator(".pr-marks"), "right", "Only required checks count", 158);
+  await label(row("#415").locator(".pr-state"), "right", "Only required checks count", 158);
   await snap(1500);
-  await label(row("#1295").locator(".pr-marks"), "right", "Ready to merge", 208);
+  await label(row("#1295").locator(".pr-state"), "right", "Ready to merge", 208);
   await snap(1500);
-  await label(row("#2320").locator(".pr-glyph-count"), "right", "Merge queue position");
+  await label(row("#2320").locator(".pr-state"), "right", "Merge queue position");
   await snap(1500);
-  await label(row("#2317").locator(".pr-glyph-wide"), "right", "Your team was asked to review");
+  await label(row("#2317").locator(".pr-state"), "right", "Your team was asked to review");
   await snap(1500);
   await label(app.locator(".header-search"), "left", "Filter every repo");
   await snap(1500);

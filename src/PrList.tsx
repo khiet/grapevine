@@ -13,8 +13,8 @@ import {
   YOUR_TURN_KEY,
   type DeployView,
   type ListView,
-  type Mark,
   type MergedRowView,
+  type RowState,
   type RowView,
   type SectionKey,
   type SectionView,
@@ -150,7 +150,7 @@ const authorLabel = (author: string, bot: boolean) =>
   bot ? `@${author}, bot` : `@${author}`;
 
 /* A row's title names its author, and a native tooltip is inherited by
-   everything inside the row. A control or mark that says something of its
+   everything inside the row. A control or state that says something of its
    own takes an empty title, so the author never shows as its tooltip. */
 const NO_INHERITED_TITLE = { title: "" };
 
@@ -212,70 +212,18 @@ function PrAvatar({
   );
 }
 
-// The tint on the one mark that says why a row waits on the viewer.
-const YOUR_TURN = "pr-your-turn";
-
-const pillClass = (base: string, yourTurn?: boolean) =>
-  yourTurn ? `${base} ${YOUR_TURN}` : base;
-
-// A grey glyph in the row's right-edge marker cluster: a 13px stroke icon
-// whose meaning lives in the hover tooltip and aria-label, both fed by `tip`.
-// `wide` lets it hold a direction arrow beside the glasses; `ok` turns the
-// glyph green, the cluster's one positive colour; `count` styles a number set
-// beside the glyph (the merge queue position); `yourTurn` tints it as the
-// reason the row waits on the viewer. The draft and blocked pills are not
-// these: they carry their own styling, not a glyph.
-function RowMark({
-  tip,
-  wide,
-  ok,
-  count,
-  yourTurn,
-  children,
-}: {
-  tip: string;
-  wide?: boolean;
-  ok?: boolean;
-  count?: boolean;
-  yourTurn?: boolean;
-  children: ReactNode;
-}) {
-  const className = [
-    "pr-glyph",
-    ...(wide ? ["pr-glyph-wide"] : []),
-    ...(ok ? ["pr-glyph-ok"] : []),
-    ...(count ? ["pr-glyph-count"] : []),
-    ...(yourTurn ? [YOUR_TURN] : []),
-    "pr-tip",
-  ].join(" ");
-  return (
-    <span
-      className={className}
-      role="img"
-      data-tip={tip}
-      aria-label={tip}
-      {...NO_INHERITED_TITLE}
-    >
-      {children}
-    </span>
-  );
-}
-
 // The shared frame around every stroke glyph: shapes are drawn on a 24-unit
-// grid and scaled down to their rendered size. Square at `size` unless
-// `width` narrows it (the direction arrow). Hidden from assistive tech in
-// all uses: the enclosing element carries the label (RowMark's aria-label,
-// the section toggle's text, a header icon button's aria-label).
+// grid and scaled down to a square of `size`. Hidden from assistive tech in
+// all uses: the enclosing element carries the label (the section toggle's
+// text, a control's or header icon button's aria-label).
 export function GlyphSvg({
   strokeWidth,
   size = 13,
-  width = size,
   className,
   children,
 }: {
   strokeWidth: number;
   size?: number;
-  width?: number;
   className?: string;
   children: ReactNode;
 }) {
@@ -283,7 +231,7 @@ export function GlyphSvg({
     <svg
       className={className}
       viewBox="0 0 24 24"
-      width={width}
+      width={size}
       height={size}
       fill="none"
       stroke="currentColor"
@@ -297,171 +245,26 @@ export function GlyphSvg({
   );
 }
 
-// The review glasses, shared by both review-request directions.
-function Glasses() {
+/* The row's state in words: one reason in its tone, then "+N" when further
+   states are folded behind it. Which states a row has, and their order, is
+   decided by the popover view. Only a folded row gets the tooltip and the
+   label, each listing every state; a lone reason is its own label. */
+function StateView({ state }: { state: RowState }) {
+  const className = `pr-state is-${state.tone}`;
+  const reason = <span className="pr-state-reason">{state.reason}</span>;
+  if (state.more === null) return <span className={className}>{reason}</span>;
   return (
-    <GlyphSvg strokeWidth={2}>
-      <circle cx="6" cy="15" r="4" />
-      <circle cx="18" cy="15" r="4" />
-      <path d="M14 15a2 2 0 0 0-4 0" />
-      <path d="M2.5 13 5 7c.7-1.3 1.4-2 3-2" />
-      <path d="M21.5 13 19 7c-.7-1.3-1.5-2-3-2" />
-    </GlyphSvg>
+    <span
+      className={`${className} pr-tip`}
+      role="img"
+      data-tip={state.all.join("\n")}
+      aria-label={state.all.join(", ")}
+      {...NO_INHERITED_TITLE}
+    >
+      {reason}
+      <span className="pr-state-more">{state.more}</span>
+    </span>
   );
-}
-
-// The approved check, the marker cluster's one green mark. A hair heavier
-// stroke than the glasses so the short segments stay legible at 13px.
-function Check() {
-  return (
-    <GlyphSvg strokeWidth={2.5}>
-      <path d="M4 12.5l5 5L20 6.5" />
-    </GlyphSvg>
-  );
-}
-
-// The stack glyph of the merge queue mark.
-function Stack() {
-  return (
-    <GlyphSvg strokeWidth={2}>
-      <path d="M12 2 2 7l10 5 10-5-10-5z" />
-      <path d="M2 12l10 5 10-5" />
-      <path d="M2 17l10 5 10-5" />
-    </GlyphSvg>
-  );
-}
-
-// The direction arrow that pairs with the glasses. "in" points at the viewer
-// (someone requested their review); "out" points away (the viewer is waiting
-// on a reviewer). A hair heavier stroke than the glasses so it stays legible
-// at its narrow width.
-function DirectionArrow({ dir }: { dir: "in" | "out" }) {
-  return (
-    <GlyphSvg strokeWidth={2.4} width={9}>
-      {dir === "in" ? (
-        <>
-          <path d="M20 12H6" />
-          <path d="M11 6l-5 6 5 6" />
-        </>
-      ) : (
-        <>
-          <path d="M4 12h14" />
-          <path d="M13 6l5 6-5 6" />
-        </>
-      )}
-    </GlyphSvg>
-  );
-}
-
-// The team glyph that pairs with the glasses when the request went to one of
-// the viewer's teams: two heads where the personal request has its arrow, so
-// the two read apart at a glance. Narrower than the glasses, like the arrow.
-function TeamGlyph() {
-  return (
-    <GlyphSvg strokeWidth={2.4} width={11}>
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </GlyphSvg>
-  );
-}
-
-// One item of the marker cluster. Which marks a row has, and their order, is
-// decided by the popover view; this only draws the one it is handed.
-function MarkView({ mark }: { mark: Mark }) {
-  switch (mark.kind) {
-    // The green check: the required approvals are in.
-    case "approved":
-      return (
-        <RowMark tip={mark.tip} ok>
-          <Check />
-        </RowMark>
-      );
-    // Glasses with an incoming arrow: your review is requested. Not a blocked
-    // signal: an invitation to act, outside the blocked pill's "something is
-    // stuck" vocabulary. Grey unless it is why the row is your turn.
-    case "review-requested":
-      return (
-        <RowMark tip={mark.tip} wide yourTurn={mark.yourTurn}>
-          <DirectionArrow dir="in" />
-          <Glasses />
-        </RowMark>
-      );
-    // Glasses with the team glyph: a review is requested from one of your
-    // teams, not from you by name.
-    case "team-review-requested":
-      return (
-        <RowMark tip={mark.tip} wide>
-          <TeamGlyph />
-          <Glasses />
-        </RowMark>
-      );
-    // Glasses with an outgoing arrow: one of your PRs is waiting on a
-    // reviewer.
-    case "awaiting-review":
-      return (
-        <RowMark tip={mark.tip} wide>
-          <Glasses />
-          <DirectionArrow dir="out" />
-        </RowMark>
-      );
-    // The stack with the PR's place in the merge queue. A grey mark like the
-    // glasses, since being queued is neither stuck nor a call to act.
-    case "merge-queue":
-      return (
-        <RowMark tip={mark.tip} count>
-          <Stack />
-          {mark.position}
-        </RowMark>
-      );
-    // The one positive pill: nothing is left but pressing merge.
-    case "ready":
-      return (
-        <span className={pillClass("pr-ready-pill", mark.yourTurn)}>
-          {mark.label}
-        </span>
-      );
-    // Neutral pills for a merge that is under way without the viewer: grey
-    // like the Draft pill, since neither is stuck nor a call to act. The
-    // label is terse, so the tooltip carries the full phrase.
-    // Copilot at work on the conflict is the same kind of news.
-    case "auto-merge":
-    case "checks-running":
-    case "copilot-fixing":
-      return (
-        <span
-          className="pr-neutral-pill pr-tip"
-          role="img"
-          data-tip={mark.tip}
-          aria-label={mark.tip}
-          {...NO_INHERITED_TITLE}
-        >
-          {mark.label}
-        </span>
-      );
-    /* A blocked reason, spelled out in a pill (the Draft pill's shape in the
-       blocked orange) so "why is this stuck" reads without hovering. Only the
-       +N pill has a tooltip; the primary pill IS its own label. Distinct from
-       the red unread badge in hue and meaning: orange here says "this PR is
-       blocked", red there says "someone spoke". */
-    case "blocked":
-      return mark.tip === null ? (
-        <span className={pillClass("pr-blocked-pill", mark.yourTurn)}>
-          {mark.label}
-        </span>
-      ) : (
-        <span
-          className="pr-blocked-pill pr-tip"
-          role="img"
-          data-tip={mark.tip}
-          aria-label={mark.tip}
-          {...NO_INHERITED_TITLE}
-        >
-          {mark.label}
-        </span>
-      );
-  }
 }
 
 // The crescent of the snooze control.
@@ -583,7 +386,7 @@ function useFixControl(row: RowView) {
 
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
-  const { pr, draft, marks, botAuthor, botNote, waiting } = row;
+  const { pr, draft, state, botAuthor, botNote, waiting } = row;
   const unread = pr.unread_count > 0;
   const fix = useFixControl(row);
   const open = () => {
@@ -635,17 +438,8 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
             )}
             {/* A neutral state pill, never a signal. */}
             {draft && <span className="pr-draft">Draft</span>}
-            {/* The action markers cluster at the row's right edge as one group
-                instead of scattering through the metadata. A quiet row has no
-                cluster at all, so it keeps meaning "nothing is stuck". */}
-            {marks.length > 0 && (
-              <span className="pr-marks">
-                {marks.map((mark, index) => (
-                  // Marks have no identity beyond their slot in the cluster.
-                  <MarkView key={index} mark={mark} />
-                ))}
-              </span>
-            )}
+            {/* At the row's right edge, out of the metadata's way. */}
+            {state && <StateView state={state} />}
           </span>
         </span>
       </button>

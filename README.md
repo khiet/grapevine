@@ -34,11 +34,11 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
 
 - **Your turn first.** PRs where the next move is yours sit at the top, each
   with how long it has been waiting on you.
-- **What's blocking a PR.** A pill names the problem: merge conflict, CI
+- **What's blocking a PR.** Each row says it in words: merge conflict, CI
   failing, changes requested, unresolved threads, or behind base. Only
   required checks count as failing.
-- **What's ready.** A green check once required approvals are in, and the
-  position of a queued PR in the merge queue.
+- **What's ready.** Approved, ready to merge, or its position in the merge
+  queue.
 - **Team requests.** PRs where your team, not just you, was asked to review.
 - **Unread activity.** New comments and reviews from people since you last
   looked. Bots never badge.

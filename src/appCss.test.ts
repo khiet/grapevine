@@ -193,6 +193,18 @@ test("the waiting label is accent-coloured and bold", () => {
   expect(label.get("font-weight")).toBe("700");
 });
 
+// Each tone of a row's state is a text token the contrast pairs below cover
+// on the card, plain and hovered; the neutral tone and the "+N" are the
+// metadata grey.
+test("a row's state takes its tone from the text tokens", () => {
+  expect(ruleFor(".pr-state.is-accent").get("color")).toBe("var(--accent)");
+  expect(ruleFor(".pr-state.is-warn").get("color")).toBe("var(--warn)");
+  expect(ruleFor(".pr-state.is-ok").get("color")).toBe("var(--ok)");
+  expect(ruleFor(".pr-state").has("color")).toBe(false);
+  expect(ruleFor(".pr-origin").get("color")).toBe("var(--text-2)");
+  expect(ruleFor(".pr-state-more").get("color")).toBe("var(--text-2)");
+});
+
 // --- Contrast -------------------------------------------------------------
 
 type Rgba = [number, number, number, number];
@@ -272,8 +284,6 @@ const PAIRS: [string, string[]][] = [
   ...onRow("--ok"),
   ...onRow("--text", "--fill"),
   ...onRow("--text-2", "--fill-solid"),
-  ...onRow("--warn", "--warn-fill"),
-  ...onRow("--ok", "--ok-fill"),
 ];
 
 function ratios(theme: Map<string, string>): { pair: string; ratio: number }[] {

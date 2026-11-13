@@ -119,220 +119,182 @@ const rowFor = (only: PullRequest): RowView =>
 const numbers = (view: ListView, key: SectionView["key"]) =>
   rows(view, key).map((row) => row.pr.number);
 
-test("marks run approved check, review glyph, merge queue mark, blocked pills", () => {
-  const row = rowFor(
-    pr({
-      approved: true,
-      review_requested: true,
-      merge_queue_position: 3,
-      blocked_reasons: ["conflict", "ci", "review"],
-    }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "approved", tip: "Approved" },
-    { kind: "review-requested", tip: "Review requested" },
-    { kind: "merge-queue", position: 3, tip: "3rd in merge queue" },
-    { kind: "blocked", label: "Merge conflict", tip: null },
-    { kind: "blocked", label: "+2", tip: "CI failing; Changes requested" },
-  ]);
+const state = (overrides: Partial<PullRequest>) => rowFor(pr(overrides)).state;
+
+test("a row with one state shows it in words, with nothing folded", () => {
+  expect(state({ approved: true })).toEqual({
+    reason: "Approved",
+    tone: "ok",
+    more: null,
+    all: ["Approved"],
+  });
 });
 
-test("the outgoing review glyph takes the review slot on the viewer's own PR", () => {
-  const row = rowFor(
-    pr({ approved: true, awaiting_review: true, merge_queue_position: 1 }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "approved", tip: "Approved" },
-    { kind: "awaiting-review", tip: "Awaiting review" },
-    { kind: "merge-queue", position: 1, tip: "1st in merge queue" },
-  ]);
-});
-
-test("a team review request takes the review slot with its own mark", () => {
-  const row = rowFor(
-    pr({ approved: true, team_review_requested: true, merge_queue_position: 1 }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "approved", tip: "Approved" },
-    { kind: "team-review-requested", tip: "Review requested from your team" },
-    { kind: "merge-queue", position: 1, tip: "1st in merge queue" },
-  ]);
-});
-
-test("a request naming you shows alone, never beside the team mark", () => {
-  const row = rowFor(
-    pr({ review_requested: true, team_review_requested: true }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "review-requested", tip: "Review requested" },
-  ]);
-});
-
-test("a PR with no signals has no marks, so no marker cluster", () => {
+test("a row with no state shows no reason", () => {
   const row = rowFor(pr());
-  expect(row.marks).toEqual([]);
+  expect(row.state).toBeNull();
   expect(row.draft).toBe(false);
+});
+
+test("a row that is approved, running checks and blocked at once leads with the blocker", () => {
+  expect(
+    state({ approved: true, checks_running: true, blocked_reasons: ["threads"] }),
+  ).toEqual({
+    reason: "Unresolved threads",
+    tone: "warn",
+    more: "+2",
+    all: ["Unresolved threads", "Checks running", "Approved"],
+  });
+});
+
+test("states run blockers, queue, Copilot, checks, auto-merge, approved, awaiting review", () => {
+  expect(
+    state({
+      blocked_reasons: ["conflict", "behind"],
+      merge_queue_position: 2,
+      fix_requested: true,
+      checks_running: true,
+      auto_merge: true,
+      approved: true,
+      awaiting_review: true,
+    }),
+  ).toEqual({
+    reason: "Merge conflict",
+    tone: "warn",
+    more: "+7",
+    all: [
+      "Merge conflict",
+      "Behind base",
+      "In merge queue, 2nd",
+      "Copilot fixing",
+      "Checks running",
+      "Auto-merge armed",
+      "Approved",
+      "Awaiting review",
+    ],
+  });
+});
+
+test("a review requested from your team comes last", () => {
+  expect(state({ approved: true, team_review_requested: true })?.all).toEqual([
+    "Approved",
+    "Team review requested",
+  ]);
+});
+
+test("a request naming you is listed alone, never beside the team request", () => {
+  expect(
+    state({ review_requested: true, team_review_requested: true })?.all,
+  ).toEqual(["Review requested"]);
+});
+
+test("each state takes its tone: amber blocked, green ready and approved, neutral otherwise", () => {
+  const tone = (overrides: Partial<PullRequest>) => state(overrides)?.tone;
+  expect(tone({ blocked_reasons: ["ci"] })).toBe("warn");
+  expect(tone({ ready_to_merge: true })).toBe("ok");
+  expect(tone({ approved: true })).toBe("ok");
+  expect(tone({ merge_queue_position: 1 })).toBe("neutral");
+  expect(tone({ fix_requested: true })).toBe("neutral");
+  expect(tone({ checks_running: true })).toBe("neutral");
+  expect(tone({ auto_merge: true })).toBe("neutral");
+  expect(tone({ awaiting_review: true })).toBe("neutral");
+  expect(tone({ team_review_requested: true })).toBe("neutral");
 });
 
 test("a draft shows the Draft pill and nothing the backend did not send", () => {
   const row = rowFor(pr({ is_draft: true }));
   expect(row.draft).toBe(true);
-  expect(row.marks).toEqual([]);
+  expect(row.state).toBeNull();
 });
 
-test("a draft still shows a signal the backend sends for it", () => {
+test("a draft still shows a state the backend sends for it", () => {
   const row = rowFor(pr({ is_draft: true, merge_queue_position: 2 }));
   expect(row.draft).toBe(true);
-  expect(row.marks).toEqual([
-    { kind: "merge-queue", position: 2, tip: "2nd in merge queue" },
-  ]);
+  expect(row.state?.reason).toBe("In merge queue, 2nd");
 });
 
 // The keys are the wire contract with the Rust BlockedReason enum; the labels
-// are kept neutral (a PR property, never "you must act").
-test("a single blocked reason is one spelled-out pill with no tooltip", () => {
-  const label = (reason: PullRequest["blocked_reasons"][number]) =>
-    rowFor(pr({ blocked_reasons: [reason] })).marks;
-  expect(label("conflict")).toEqual([
-    { kind: "blocked", label: "Merge conflict", tip: null },
-  ]);
-  expect(label("ci")).toEqual([
-    { kind: "blocked", label: "CI failing", tip: null },
-  ]);
-  expect(label("review")).toEqual([
-    { kind: "blocked", label: "Changes requested", tip: null },
-  ]);
-  expect(label("threads")).toEqual([
-    { kind: "blocked", label: "Unresolved threads", tip: null },
-  ]);
-  expect(label("behind")).toEqual([
-    { kind: "blocked", label: "Behind base", tip: null },
-  ]);
+// name a PR property, never "you must act".
+test("each blocked reason is worded as a property of the PR", () => {
+  const reason = (blocked: PullRequest["blocked_reasons"][number]) =>
+    state({ blocked_reasons: [blocked] })?.reason;
+  expect(reason("conflict")).toBe("Merge conflict");
+  expect(reason("ci")).toBe("CI failing");
+  expect(reason("review")).toBe("Changes requested");
+  expect(reason("threads")).toBe("Unresolved threads");
+  expect(reason("behind")).toBe("Behind base");
 });
 
-test("extra reasons collapse into a +N pill whose tooltip names them", () => {
-  // The first reason leads because the backend orders by severity.
-  expect(rowFor(pr({ blocked_reasons: ["ci", "behind"] })).marks).toEqual([
-    { kind: "blocked", label: "CI failing", tip: null },
-    { kind: "blocked", label: "+1", tip: "Behind base" },
-  ]);
-  expect(rowFor(pr({ blocked_reasons: ["threads", "behind"] })).marks).toEqual([
-    { kind: "blocked", label: "Unresolved threads", tip: null },
-    { kind: "blocked", label: "+1", tip: "Behind base" },
-  ]);
+test("several blockers keep the backend's severity order", () => {
+  expect(state({ blocked_reasons: ["ci", "review", "behind"] })).toEqual({
+    reason: "CI failing",
+    tone: "warn",
+    more: "+2",
+    all: ["CI failing", "Changes requested", "Behind base"],
+  });
 });
 
-test("the CI pill names the failing check", () => {
-  const row = rowFor(
-    pr({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari"] }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "blocked", label: "CI: e2e-safari", tip: null },
-  ]);
+test("the CI reason names the failing check", () => {
+  expect(
+    state({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari"] })?.reason,
+  ).toBe("CI failing: e2e-safari");
 });
 
-test("with several checks failing the CI pill names the first and adds + more", () => {
-  const row = rowFor(
-    pr({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari", "lint"] }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "blocked", label: "CI: e2e-safari + more", tip: null },
-  ]);
+test("with several checks failing the CI reason names the first and says there are more", () => {
+  expect(
+    state({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari", "lint"] }),
+  ).toEqual({
+    reason: "CI failing: e2e-safari and more",
+    tone: "warn",
+    // Further failing checks are not further states.
+    more: null,
+    all: ["CI failing: e2e-safari and more"],
+  });
 });
 
 // A truncated page cannot say how many failed, or that the one it saw is the
 // only one.
-test("a truncated list of failing checks reads + more even with one name", () => {
-  const row = rowFor(
-    pr({
+test("a truncated list of failing checks says there are more even with one name", () => {
+  expect(
+    state({
       blocked_reasons: ["ci"],
       failing_checks: ["e2e-safari"],
       failing_checks_truncated: true,
-    }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "blocked", label: "CI: e2e-safari + more", tip: null },
-  ]);
+    })?.reason,
+  ).toBe("CI failing: e2e-safari and more");
 });
 
-test("the +N tooltip names the failing check too", () => {
-  const row = rowFor(
-    pr({
-      blocked_reasons: ["conflict", "ci"],
-      failing_checks: ["e2e-safari"],
-    }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "blocked", label: "Merge conflict", tip: null },
-    { kind: "blocked", label: "+1", tip: "CI: e2e-safari" },
-  ]);
+test("a folded CI blocker names the failing check too", () => {
+  expect(
+    state({ blocked_reasons: ["conflict", "ci"], failing_checks: ["e2e-safari"] })
+      ?.all,
+  ).toEqual(["Merge conflict", "CI failing: e2e-safari"]);
 });
 
-test("a ready PR shows the Ready to merge pill after the approved check", () => {
-  const row = rowFor(pr({ approved: true, ready_to_merge: true }));
-  expect(row.marks).toEqual([
-    { kind: "approved", tip: "Approved" },
-    { kind: "ready", label: "Ready to merge" },
+// Ready is the backend's call and does not imply an approval: a repo with no
+// required reviews is ready without one.
+test("a ready PR leads with Ready to merge, ahead of its approval", () => {
+  expect(state({ approved: true, ready_to_merge: true })?.all).toEqual([
+    "Ready to merge",
+    "Approved",
   ]);
-});
-
-// The check keeps meaning an explicit approval, which such a repo never
-// gives.
-test("a ready PR on a repo with no required reviews shows the pill alone", () => {
-  expect(rowFor(pr({ ready_to_merge: true })).marks).toEqual([
-    { kind: "ready", label: "Ready to merge" },
-  ]);
-});
-
-test("checks still running show the neutral Running mark", () => {
-  expect(rowFor(pr({ checks_running: true })).marks).toEqual([
-    { kind: "checks-running", label: "Running", tip: "Checks running" },
-  ]);
-});
-
-test("armed auto-merge shows the Auto mark", () => {
-  expect(rowFor(pr({ auto_merge: true })).marks).toEqual([
-    { kind: "auto-merge", label: "Auto", tip: "Auto-merge armed" },
-  ]);
-});
-
-test("the merge marks sit between the review glyph and the blocked pills", () => {
-  const row = rowFor(
-    pr({
-      approved: true,
-      awaiting_review: true,
-      merge_queue_position: 2,
-      auto_merge: true,
-      checks_running: true,
-      blocked_reasons: ["threads"],
-    }),
-  );
-  expect(row.marks.map((mark) => mark.kind)).toEqual([
-    "approved",
-    "awaiting-review",
-    "merge-queue",
-    "auto-merge",
-    "checks-running",
-    "blocked",
-  ]);
+  expect(state({ ready_to_merge: true })?.all).toEqual(["Ready to merge"]);
 });
 
 // The teens are the trap: 11, 12 and 13 take "th" although they end in 1, 2
 // and 3.
-test("the merge queue tooltip states the position as an English ordinal", () => {
-  const tip = (position: number) => {
-    const [mark] = rowFor(pr({ merge_queue_position: position })).marks;
-    return mark.kind === "merge-queue" ? mark.tip : null;
-  };
-  expect(tip(1)).toBe("1st in merge queue");
-  expect(tip(2)).toBe("2nd in merge queue");
-  expect(tip(3)).toBe("3rd in merge queue");
-  expect(tip(4)).toBe("4th in merge queue");
-  expect(tip(11)).toBe("11th in merge queue");
-  expect(tip(12)).toBe("12th in merge queue");
-  expect(tip(13)).toBe("13th in merge queue");
-  expect(tip(21)).toBe("21st in merge queue");
-  expect(tip(22)).toBe("22nd in merge queue");
+test("the merge queue reason states the position as an English ordinal", () => {
+  const reason = (position: number) =>
+    state({ merge_queue_position: position })?.reason;
+  expect(reason(1)).toBe("In merge queue, 1st");
+  expect(reason(2)).toBe("In merge queue, 2nd");
+  expect(reason(3)).toBe("In merge queue, 3rd");
+  expect(reason(4)).toBe("In merge queue, 4th");
+  expect(reason(11)).toBe("In merge queue, 11th");
+  expect(reason(12)).toBe("In merge queue, 12th");
+  expect(reason(13)).toBe("In merge queue, 13th");
+  expect(reason(21)).toBe("In merge queue, 21st");
+  expect(reason(22)).toBe("In merge queue, 22nd");
 });
 
 test("with no filter Todo, Mine, Participated and All are present even when empty", () => {
@@ -642,15 +604,13 @@ test("an unparseable timestamp sinks its group instead of throwing", () => {
   ).toEqual(["acme/widgets", "acme/broken"]);
 });
 
-test("rows in a repo group carry their marks like any other row", () => {
+test("rows in a repo group carry their state like any other row", () => {
   const { body } = section(
     list(synced({ prs: [pr({ section: "all", approved: true })] })),
     "all",
   );
   if (body.kind !== "groups") throw new Error(`All body is ${body.kind}`);
-  expect(body.groups[0].rows[0].marks).toEqual([
-    { kind: "approved", tip: "Approved" },
-  ]);
+  expect(body.groups[0].rows[0].state?.reason).toBe("Approved");
 });
 
 test("a row with new bot activity carries a note counting it", () => {
@@ -707,41 +667,55 @@ test("team-requested rows lead Mine and Participated, then the rest in the order
   expect(numbers(view, "participated")).toEqual([6, 5]);
 });
 
-test("a your-turn row asked for review tints the review glyph", () => {
-  const row = rowFor(
-    pr({ turn: "yours", review_requested: true, blocked_reasons: ["ci"] }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "review-requested", tip: "Review requested", yourTurn: true },
-    { kind: "blocked", label: "CI failing", tip: null },
-  ]);
+// The reason on a your-turn row is the one the backend decided the turn on:
+// a review asked of you, else the primary blocker, else ready to merge.
+test("a your-turn row asked for review leads with the request, in the accent", () => {
+  expect(
+    state({
+      turn: "yours",
+      review_requested: true,
+      approved: true,
+      blocked_reasons: ["ci"],
+    }),
+  ).toEqual({
+    reason: "Review requested",
+    tone: "accent",
+    more: "+2",
+    all: ["Review requested", "CI failing", "Approved"],
+  });
 });
 
-test("a blocked your-turn row tints the primary blocked pill only", () => {
-  const row = rowFor(
-    pr({ turn: "yours", approved: true, blocked_reasons: ["conflict", "threads"] }),
-  );
-  expect(row.marks).toEqual([
-    { kind: "approved", tip: "Approved" },
-    { kind: "blocked", label: "Merge conflict", tip: null, yourTurn: true },
-    { kind: "blocked", label: "+1", tip: "Unresolved threads" },
-  ]);
+test("a blocked your-turn row leads with its primary blocker", () => {
+  expect(
+    state({
+      turn: "yours",
+      approved: true,
+      merge_queue_position: 1,
+      blocked_reasons: ["conflict", "threads"],
+    }),
+  ).toEqual({
+    reason: "Merge conflict",
+    tone: "warn",
+    more: "+3",
+    all: ["Merge conflict", "Unresolved threads", "In merge queue, 1st", "Approved"],
+  });
 });
 
-test("a ready your-turn row tints the ready pill", () => {
-  const row = rowFor(pr({ turn: "yours", approved: true, ready_to_merge: true }));
-  expect(row.marks).toEqual([
-    { kind: "approved", tip: "Approved" },
-    { kind: "ready", label: "Ready to merge", yourTurn: true },
-  ]);
+test("a ready your-turn row leads with Ready to merge", () => {
+  expect(
+    state({ turn: "yours", approved: true, auto_merge: true, ready_to_merge: true }),
+  ).toEqual({
+    reason: "Ready to merge",
+    tone: "ok",
+    more: "+2",
+    all: ["Ready to merge", "Auto-merge armed", "Approved"],
+  });
 });
 
-test("a row that is not your turn carries no tint", () => {
-  const tinted = (overrides: Partial<PullRequest>) =>
-    rowFor(pr(overrides)).marks.filter((mark) => "yourTurn" in mark);
-  expect(tinted({ turn: "theirs", awaiting_review: true })).toEqual([]);
-  expect(tinted({ turn: null, blocked_reasons: ["ci"] })).toEqual([]);
-  expect(tinted({ turn: null, team_review_requested: true })).toEqual([]);
+// The accent says the row waits on the viewer; a request seen on a row that
+// does not wait on them is plain news.
+test("a review request on a row that is not your turn stays neutral", () => {
+  expect(state({ turn: null, review_requested: true })?.tone).toBe("neutral");
 });
 
 test("a your-turn row says how long it has waited: hours under a day, days from one day up", () => {
@@ -868,16 +842,9 @@ test("a row whose fix is being posted shows that in place of the offer", () => {
 const fixing = (overrides: Partial<PullRequest> = {}) =>
   fixable({ fix_requested: true, turn: "theirs", ...overrides });
 
-test("a row with a requested fix shows the Copilot fixing mark beside its conflict pill, and no fix control", () => {
+test("a row with a requested fix says Copilot is fixing after its conflict, and has no fix control", () => {
   const [row] = rows(list(synced({ prs: [fixing()] })), "mine");
-  expect(row.marks).toEqual([
-    {
-      kind: "copilot-fixing",
-      label: "Copilot fixing",
-      tip: "Copilot was asked to resolve the conflict",
-    },
-    { kind: "blocked", label: "Merge conflict", tip: null },
-  ]);
+  expect(row.state?.all).toEqual(["Merge conflict", "Copilot fixing"]);
   expect(row.fix).toBeNull();
 });
 
@@ -894,19 +861,15 @@ test("a row with a requested fix leaves Todo and the your-turn count", () => {
   expect(yourTurnCount(snapshot)).toBe(1);
 });
 
-test("a requested fix beside a review asked of you leaves the row yours, tinted on the review glyph", () => {
+test("a requested fix beside a review asked of you leaves the row yours, leading with the request", () => {
   const [row] = rows(
     list(synced({ prs: [fixing({ review_requested: true, turn: "yours" })] })),
     "yours",
   );
-  expect(row.marks).toEqual([
-    { kind: "review-requested", tip: "Review requested", yourTurn: true },
-    {
-      kind: "copilot-fixing",
-      label: "Copilot fixing",
-      tip: "Copilot was asked to resolve the conflict",
-    },
-    { kind: "blocked", label: "Merge conflict", tip: null },
+  expect(row.state?.all).toEqual([
+    "Review requested",
+    "Merge conflict",
+    "Copilot fixing",
   ]);
 });
 

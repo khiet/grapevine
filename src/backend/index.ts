@@ -22,53 +22,52 @@ export interface PullRequest {
   created_at: string;
   updated_at: string;
   section: Section;
-  /** Why the PR is blocked, already in severity order; empty means no pill.
-   * Composed at the Rust boundary; the row only maps keys to labels. */
+  /** Why the PR is blocked, already in severity order; empty means not blocked.
+   * Composed at the Rust boundary; the row only maps keys to words. */
   blocked_reasons: BlockedReason[];
   /** Drafts render a neutral pill; the backend suppresses their blocked
-   * reasons and review markers. */
+   * reasons and review states. */
   is_draft: boolean;
-  /** The viewer's review is requested and not yet acted on; renders the
-   * glasses glyph with an incoming arrow. Backend-computed, suppressed on
-   * drafts, and self-clearing once the viewer reviews. */
+  /** The viewer's review is requested and not yet acted on; reads "Review
+   * requested". Backend-computed, suppressed on drafts, and self-clearing
+   * once the viewer reviews. */
   review_requested: boolean;
   /** A review is outstanding from one of the viewer's teams, with no request
-   * naming the viewer; renders the glasses glyph with the team glyph. Never
-   * set beside review_requested or awaiting_review, suppressed on drafts,
+   * naming the viewer; reads "Team review requested". Never set
+   * beside review_requested or awaiting_review, suppressed on drafts,
    * self-clearing once a team member reviews, and never part of the unread
    * count. */
   team_review_requested: boolean;
-  /** One of the viewer's own PRs is waiting on a reviewer; renders the glasses
-   * glyph with an outgoing arrow. The Mine-only mirror of review_requested
+  /** One of the viewer's own PRs is waiting on a reviewer; reads "Awaiting
+   * review". The Mine-only mirror of review_requested
    * (the two never share a row), suppressed on drafts, and self-clearing as
    * reviewers submit. */
   awaiting_review: boolean;
-  /** The review decision is an explicit APPROVED; renders the green check in
-   * the marker cluster. Backend-computed and suppressed on drafts, like the
-   * review markers. */
+  /** The review decision is an explicit APPROVED; reads "Approved".
+   * Backend-computed and suppressed on drafts, like the review states. */
   approved: boolean;
   /** 1-based position in the repo's merge queue as GitHub reports it; null
-   * when the PR is not queued. Renders the stack mark with the number. */
+   * when the PR is not queued. Reads "In merge queue, 2nd". */
   merge_queue_position: number | null;
   /** Names of the failed checks behind the "ci" reason, GitHub's order; the
-   * CI pill names the first. Empty when "ci" is not raised, and when it is
+   * CI reason names the first. Empty when "ci" is not raised, and when it is
    * raised with no check to name. */
   failing_checks: string[];
   /** The PR has more checks than the backend read, so failing_checks may be
-   * short: say "+ more", never a count. */
+   * short: say "and more", never a count. */
   failing_checks_truncated: boolean;
   /** A check that gates the merge is still running and none has failed;
-   * renders the neutral Running mark. Suppressed on drafts. */
+   * reads "Checks running". Suppressed on drafts. */
   checks_running: boolean;
-  /** Auto-merge is armed; renders the Auto mark. Suppressed on drafts. */
+  /** Auto-merge is armed; reads "Auto-merge armed". Suppressed on drafts. */
   auto_merge: boolean;
-  /** Nothing is left but pressing merge; renders the Ready to merge pill.
+  /** Nothing is left but pressing merge; reads "Ready to merge".
    * Backend-computed and only ever set in Mine. */
   ready_to_merge: boolean;
   /** Whose move the PR waits on; null when there is no verdict, always so on
-   * a draft and in All. Backend-computed. A "yours" row sits in Todo
-   * and tints its mark, and the tray shows how many there are; "theirs" renders
-   * nothing of its own. Never part of the unread count. */
+   * a draft and in All. Backend-computed. A "yours" row sits in Todo and
+   * leads with the reason for the turn, and the tray shows how many there
+   * are; "theirs" renders nothing of its own. Never part of the unread count. */
   turn: Turn | null;
   /** Epoch ms of the sync that first saw the turn become yours; the row shows
    * it as "waiting 2d". Null when the turn is not yours, and when nobody
@@ -81,8 +80,8 @@ export interface PullRequest {
    * checks it again before posting, so this only decides what is offered. */
   can_fix_conflict: boolean;
   /** Copilot has been asked to resolve the conflict, within the last hour,
-   * and no sync has shown the conflict gone since; renders the Copilot fixing
-   * mark in place of the fix control. Backend-kept, so it survives a restart.
+   * and no sync has shown the conflict gone since; reads "Copilot fixing",
+   * in place of the fix control. Backend-kept, so it survives a restart.
    * Such a PR waits on Copilot: its turn is never "yours" unless a review is
    * asked of the viewer by name. */
   fix_requested: boolean;
