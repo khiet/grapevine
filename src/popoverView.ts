@@ -346,9 +346,9 @@ function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
 }
 
-// The one membership rule shared by the Your turn section and the tray
-// number, so the two cannot disagree: the row waits on the viewer and is not
-// snoozed.
+// The one membership rule shared by the Your turn section and yourTurnCount,
+// so the two cannot disagree: the row waits on the viewer and is not snoozed.
+// The backend counts the tray number by the same rule.
 const isYourTurn = (pr: PullRequest, snoozedKeys: ReadonlySet<string>) =>
   pr.turn === "yours" && !snoozedKeys.has(prKey(pr));
 
