@@ -1,3 +1,6 @@
+/* Every colour, radius and type size the popover uses is a token here. Rules
+   below take them through var() only, so a theme is a matter of redefining
+   colour tokens and nothing else. */
 :root {
   color-scheme: light dark;
   /* -webkit-system-font is the desktop's own UI font in both webviews: San
@@ -7,13 +10,123 @@
      such as the one the demo is captured in. */
   font-family: -webkit-system-font, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
-  font-size: 13px;
+  font-size: var(--text-l);
+
+  /* Type: titles and body, metadata, then the floor for pills, counts and
+     tags. Nothing goes under 11px; it is the smallest size that stays
+     legible on a 1x Linux display. */
+  --text-l: 13px;
+  --text-m: 12px;
+  --text-s: 11px;
+
+  /* Radii: tags and key caps, then cards, fields and buttons, then anything
+     fully round (pills, counts, avatars). */
+  --radius-s: 4px;
+  --radius-m: 8px;
+  --radius-full: 999px;
+
+  /* Surfaces. Rows sit on --card, which sits on --window. */
+  --window: #f2f2f7;
+  --card: #ffffff;
+  --line: rgba(0, 0, 0, 0.1);
+  /* Translucent neutral for pills and the filter field, and its opaque
+     sibling for counts and tags that must cover what is under them. */
+  --fill: rgba(120, 120, 128, 0.12);
+  --fill-solid: #e5e5ea;
+  /* An accent tint, not a grey darken: a grey hover on the white card lands
+     on the window colour and reads as a hole punched through the card. */
+  --hover: rgba(91, 63, 196, 0.08);
+
+  /* Text. Every text token holds 4.5:1 on every surface it is used on,
+     hovered rows included; appCss.test.ts lists the pairs. */
+  --text: #1c1c1e;
+  --text-2: #636366;
+
+  /* The app icon's grape: your-turn, links, primary buttons, focus, hover. */
+  --accent: #5b3fc4;
+  --on-accent: #ffffff;
+
+  /* Signal colours. Red says "someone spoke" or "this failed", amber says
+     "blocked" or "stale but retrying", green is the one positive signal. */
+  --unread: #d92d20;
+  --on-unread: #ffffff;
+  --danger: #d70015;
+  --warn: #8a4a00;
+  --warn-fill: rgba(255, 159, 10, 0.16);
+  --ok: #1a7431;
+  --ok-fill: rgba(52, 199, 89, 0.16);
+
+  /* The hover bubble is dark in both themes, like the native tooltip. */
+  --tip-bg: rgba(58, 58, 60, 0.96);
+  --tip-text: #f2f2f7;
+
+  /* Form controls. */
+  --field: #ffffff;
+  --field-line: rgba(0, 0, 0, 0.18);
+  --switch-on: #34c759;
+  --knob: #ffffff;
+  --knob-shadow: rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --window: #1e1e1e;
+    --card: #2c2c2e;
+    --line: rgba(255, 255, 255, 0.12);
+    /* The light-mode fills sink into the dark card; stronger ones keep a
+       pill legible without brightening its text into a signal. */
+    --fill: rgba(120, 120, 128, 0.32);
+    --fill-solid: #3a3a3c;
+    --hover: rgba(185, 166, 255, 0.1);
+
+    --text: #f2f2f7;
+    --text-2: #aeaeb2;
+
+    /* The accent brightens to read on the dark card, so what sits on an
+       accent fill turns dark. The unread count does the same. */
+    --accent: #b9a6ff;
+    --on-accent: #1b1726;
+
+    --unread: #ff453a;
+    --on-unread: #2b0705;
+    --danger: #ff8a80;
+    --warn: #ffc266;
+    --warn-fill: rgba(255, 159, 10, 0.22);
+    --ok: #6fe08e;
+    --ok-fill: rgba(48, 209, 88, 0.22);
+
+    /* Lifted a step above the card so the bubble does not melt into the
+       row it covers. */
+    --tip-bg: #48484a;
+
+    /* Recessed against the card, so a field reads as a well. */
+    --field: #1c1c1e;
+    --field-line: rgba(255, 255, 255, 0.16);
+    --switch-on: #30d158;
+  }
 }
 
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* The one focus ring, for every control reached by keyboard. Controls that
+   fill their container edge to edge set --focus-offset negative to draw it
+   inside, where a ring outside would be clipped. */
+:focus-visible,
+.header-search:has(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--focus-offset, 2px);
+}
+
+.pr-row,
+.pr-dismiss,
+.pr-section-toggle,
+.pr-snoozed-toggle,
+.update-banner {
+  --focus-offset: -2px;
 }
 
 html,
@@ -23,8 +136,8 @@ body,
 }
 
 body {
-  background-color: #f2f2f7;
-  color: #1c1c1e;
+  background-color: var(--window);
+  color: var(--text);
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
@@ -42,11 +155,11 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid var(--line);
 }
 
 .popover-title {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .popover-body {
@@ -61,12 +174,12 @@ body {
 }
 
 .placeholder-heading {
-  font-weight: 600;
-  color: #6e6e73;
+  font-weight: 500;
+  color: var(--text-2);
 }
 
 .placeholder-detail {
-  color: #8e8e93;
+  color: var(--text-2);
 }
 
 .pr-list {
@@ -85,7 +198,7 @@ body {
   align-items: center;
   gap: 6px;
   padding: 0 4px;
-  background-color: #f2f2f7;
+  background-color: var(--window);
 }
 
 /* Screen-reader-only text; the header pills are bare numbers whose meaning
@@ -128,7 +241,7 @@ body {
 
 .pr-section-chevron {
   flex: none;
-  color: #a1a1a6;
+  color: var(--text-2);
   transition: transform 0.15s ease;
 }
 
@@ -137,9 +250,9 @@ body {
 }
 
 .pr-section-label {
-  font-size: 12px;
+  font-size: var(--text-m);
   font-weight: 700;
-  color: #6e6e73;
+  color: var(--text-2);
 }
 
 /* The one header-pill shape (grey count, red unread), shared so a later
@@ -148,16 +261,16 @@ body {
 .pr-section-unread {
   min-width: 16px;
   padding: 0 5px;
-  border-radius: 8px;
-  font-size: 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-s);
   font-weight: 700;
-  line-height: 15px;
+  line-height: 16px;
   text-align: center;
 }
 
 .pr-section-count {
-  background-color: #d8d8dc;
-  color: #3a3a3c;
+  background-color: var(--fill-solid);
+  color: var(--text);
 }
 
 /* The unread red, declared once for the row badge and the collapsed-header
@@ -165,8 +278,8 @@ body {
    drift apart. */
 .pr-unread,
 .pr-section-unread {
-  background-color: #ff3b30;
-  color: #ffffff;
+  background-color: var(--unread);
+  color: var(--on-unread);
 }
 
 /* Repo sub-groups inside "All". Deliberately not sticky: .pr-section-header
@@ -183,20 +296,20 @@ body {
 }
 
 .pr-repo-name {
-  font-size: 11px;
-  font-weight: 600;
-  color: #8e8e93;
+  font-size: var(--text-s);
+  font-weight: 500;
+  color: var(--text-2);
 }
 
 .pr-repo-count {
-  min-width: 15px;
+  min-width: 16px;
   padding: 0 4px;
-  border-radius: 7px;
-  background-color: #e3e3e8;
-  color: #6e6e73;
-  font-size: 9px;
+  border-radius: var(--radius-full);
+  background-color: var(--fill-solid);
+  color: var(--text-2);
+  font-size: var(--text-s);
   font-weight: 700;
-  line-height: 14px;
+  line-height: 16px;
   text-align: center;
 }
 
@@ -204,20 +317,20 @@ body {
    section membership reads from the shape, not just the header. */
 .pr-section ul {
   list-style: none;
-  background-color: #ffffff;
-  border-radius: 8px;
+  background-color: var(--card);
+  border-radius: var(--radius-m);
   overflow: hidden;
 }
 
 .pr-section li + li .pr-row {
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-top: 1px solid var(--line);
 }
 
 /* Row-height padding so the empty slab matches a one-row section's shape. */
 .pr-empty {
   padding: 13px 11px;
-  color: #8e8e93;
-  font-size: 12px;
+  color: var(--text-2);
+  font-size: var(--text-m);
 }
 
 .pr-row {
@@ -234,11 +347,8 @@ body {
   text-align: left;
 }
 
-/* An accent tint, not a grey darken: the card is white on a #f2f2f7 window, so
-   a grey hover lands on the window colour and the row reads as a hole punched
-   through the card rather than as the highlight it is. */
 .pr-row:hover {
-  background-color: rgba(10, 132, 255, 0.12);
+  background-color: var(--hover);
 }
 
 /* A row with a second control (a merged row's dismiss, a PR row's snooze
@@ -257,7 +367,7 @@ body {
 }
 
 .pr-row-split:hover {
-  background-color: rgba(10, 132, 255, 0.12);
+  background-color: var(--hover);
 }
 
 .pr-row-split .pr-row:hover {
@@ -265,7 +375,7 @@ body {
 }
 
 .pr-section li + li.pr-row-split {
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-top: 1px solid var(--line);
 }
 
 .pr-section li + li.pr-row-split .pr-row {
@@ -278,9 +388,9 @@ body {
   border: none;
   background: none;
   padding: 0 12px;
-  color: #8e8e93;
+  color: var(--text-2);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--text-l);
   opacity: 0;
 }
 
@@ -310,8 +420,8 @@ body {
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 12px;
-  color: #8e8e93;
+  font-size: var(--text-m);
+  color: var(--text-2);
   white-space: nowrap;
 }
 
@@ -320,7 +430,7 @@ body {
 }
 
 .pr-deploy.is-failed {
-  color: #d70015;
+  color: var(--danger);
 }
 
 .pr-deploy-space {
@@ -339,13 +449,13 @@ body {
   position: absolute;
   top: 9px;
   right: 7px;
-  height: calc(13px * 1.35);
+  height: calc(var(--text-l) * 1.35);
   display: flex;
   align-items: center;
   border: none;
   background: none;
   padding: 0 4px;
-  color: #8e8e93;
+  color: var(--text-2);
   opacity: 0;
 }
 
@@ -363,7 +473,7 @@ body {
 }
 
 .pr-snooze:hover {
-  color: #0a84ff;
+  color: var(--accent);
 }
 
 /* The Fix with Copilot control: the snooze control's neighbour, in the same
@@ -376,16 +486,16 @@ body {
   position: absolute;
   top: 9px;
   right: 34px;
-  height: calc(13px * 1.35);
+  height: calc(var(--text-l) * 1.35);
   display: flex;
   align-items: center;
   border: none;
   background: none;
   padding: 0 4px;
-  color: #8e8e93;
+  color: var(--text-2);
   font: inherit;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--text-s);
+  font-weight: 500;
   white-space: nowrap;
   opacity: 0;
 }
@@ -396,27 +506,27 @@ body {
 }
 
 .pr-fix:hover {
-  color: #0a84ff;
+  color: var(--accent);
 }
 
 .pr-fix.is-armed,
 .pr-fix.is-settled {
   padding: 0 7px;
-  border-radius: 9px;
+  border-radius: var(--radius-full);
 }
 
 .pr-fix.is-armed,
 .pr-fix.is-armed:hover {
-  background-color: #0a84ff;
-  color: #fff;
+  background-color: var(--accent);
+  color: var(--on-accent);
 }
 
 .pr-fix.is-settled {
-  background-color: #e5e5ea;
-  color: #6e6e73;
+  background-color: var(--fill-solid);
+  color: var(--text-2);
 }
 
-/* A Copilot request that did not go out, in the sync error's orange. Clips
+/* A Copilot request that did not go out, in the sync error's amber. Clips
    like the bot note beside it. */
 .pr-fix-error {
   /* Gives way before the blocked pill beside it does, after the repo. */
@@ -424,11 +534,11 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #c76b00;
+  color: var(--warn);
 }
 
 .pr-section li + li.pr-snoozed-line {
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-top: 1px solid var(--line);
 }
 
 /* The folded line at a section's foot: quieter than a row, since what it
@@ -441,9 +551,9 @@ body {
   padding: 7px 11px;
   border: none;
   background: none;
-  color: #8e8e93;
+  color: var(--text-2);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--text-m);
   text-align: left;
 }
 
@@ -456,13 +566,12 @@ body {
   border: none;
   background: none;
   padding: 0;
-  color: #0a84ff;
-  font-size: 12px;
+  color: var(--accent);
+  font-size: var(--text-m);
   font-weight: 500;
 }
 
-/* macOS system red, the standard notification-counter colour — the only
-   colour in an otherwise greyscale list. Perched on the avatar's top-right
+/* The notification-counter red, the loudest colour in the list. Perched on the avatar's top-right
    corner, iOS app-icon style, rather than in a reserved gutter column that
    would cost every row title width. The card-colour ring is the org badge's
    notch trick, and the two badges own opposite corners so they never touch:
@@ -476,12 +585,12 @@ body {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 8px;
-  font-size: 9px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-s);
   font-weight: 700;
   line-height: 16px;
   text-align: center;
-  box-shadow: 0 0 0 2px #ffffff;
+  box-shadow: 0 0 0 2px var(--card);
 }
 
 /* Occupies the fixed 30px avatar column; the org badge overflows it via
@@ -496,7 +605,7 @@ body {
   display: block;
   width: 30px;
   height: 30px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
 }
 
 /* The repo owner's logo, square on the round author avatar's corner. Shape
@@ -509,28 +618,29 @@ body {
   bottom: -3px;
   width: 16px;
   height: 16px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   object-fit: cover;
-  background-color: #ffffff;
-  box-shadow: 0 0 0 2px #ffffff;
+  background-color: var(--card);
+  box-shadow: 0 0 0 2px var(--card);
 }
 
 /* Marks a machine author, on the one avatar corner the two badges leave free
    at the bottom. Grey like the Draft pill: a property of the PR, not a
-   signal. The card-colour ring is the org badge's notch trick. */
+   signal. The card-colour ring is the org badge's notch trick. Lowercase and
+   pulled left: at the 11px floor an uppercase tag would run under the org
+   badge on the opposite corner. */
 .pr-bot-tag {
   position: absolute;
-  left: -5px;
+  left: -7px;
   bottom: -3px;
-  padding: 0 3px;
-  border-radius: 4px;
-  font-size: 8px;
+  padding: 0 2px;
+  border-radius: var(--radius-s);
+  font-size: var(--text-s);
   font-weight: 700;
-  line-height: 11px;
-  text-transform: uppercase;
-  background-color: #e5e5ea;
-  color: #636366;
-  box-shadow: 0 0 0 2px #ffffff;
+  line-height: 13px;
+  background-color: var(--fill-solid);
+  color: var(--text-2);
+  box-shadow: 0 0 0 2px var(--card);
 }
 
 .pr-text {
@@ -562,7 +672,7 @@ body {
    land its tail, which is the part that identifies the PR. */
 .pr-title {
   min-width: 0;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -575,8 +685,8 @@ body {
 }
 
 .pr-updated {
-  font-size: 11px;
-  color: #8e8e93;
+  font-size: var(--text-s);
+  color: var(--text-2);
   white-space: nowrap;
   text-align: right;
 }
@@ -584,8 +694,8 @@ body {
 .pr-origin {
   display: flex;
   gap: 8px;
-  color: #8e8e93;
-  font-size: 12px;
+  color: var(--text-2);
+  font-size: var(--text-m);
 }
 
 /* Leads the metadata line and never shrinks: "PR 510" must be findable at a
@@ -642,26 +752,24 @@ body {
   flex: none;
   align-self: center;
   padding: 0 5px;
-  border-radius: 7px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 14px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-s);
+  font-weight: 500;
+  line-height: 17px;
   white-space: nowrap;
 }
 
 /* The blocked-reason pill: the shared pill shape in the blocked orange, so
    "Merge conflict" / "CI failing" / "Changes requested" reads without
    hovering. A tinted fill rather than solid orange keeps it in the metadata
-   line's register. The text amber is darker than .sync-error's: at this 10px
-   size WCAG AA wants 4.5:1, which #c76b00 misses on the tinted card (3.4:1);
-   this one holds 4.5:1 even over a hovered row's blue tint. Deliberately not
-   the unread badge's red so the two signals stay distinct: orange says "this
-   PR is blocked", red says "someone spoke". position: relative anchors the
-   +N pill's tooltip. */
+   line's register. The text amber holds 4.5:1 on that fill even over a
+   hovered row's tint. Deliberately not the unread badge's red so the two
+   signals stay distinct: orange says "this PR is blocked", red says "someone
+   spoke". position: relative anchors the +N pill's tooltip. */
 .pr-blocked-pill {
   position: relative;
-  background-color: rgba(255, 159, 10, 0.16);
-  color: #995200;
+  background-color: var(--warn-fill);
+  color: var(--warn);
 }
 
 /* The spelled-out pill can carry a check's name ("CI: e2e-safari"), which is
@@ -679,19 +787,21 @@ body {
 }
 
 /* The ready pill: the shared pill shape in the approved check's green, the
-   cluster's one positive colour. The text green is darker than the glyph's
-   for the same reason the blocked amber is: 10px text wants 4.5:1 on the
-   tinted fill. */
+   cluster's one positive colour. The text green holds 4.5:1 on the tinted fill,
+   as the blocked amber does. */
 .pr-ready-pill {
-  background-color: rgba(52, 199, 89, 0.16);
-  color: #1a7431;
+  background-color: var(--ok-fill);
+  color: var(--ok);
 }
 
 /* Auto-merge and running checks: the draft pill's grey, since a merge under
-   way is a state and not a signal. position: relative anchors the tooltip. */
+   way is a state and not a signal. The label takes the primary text colour
+   because the secondary grey cannot hold 4.5:1 on a grey fill over a hovered
+   row. position: relative anchors the tooltip. */
 .pr-neutral-pill {
   position: relative;
-  background-color: rgba(120, 120, 128, 0.16);
+  background-color: var(--fill);
+  color: var(--text);
 }
 
 /* The hover bubble, shared by every mark in the cluster (each carries
@@ -708,10 +818,10 @@ body {
   transform: translateY(-50%);
   z-index: 2;
   padding: 3px 8px;
-  border-radius: 5px;
-  background-color: rgba(58, 58, 60, 0.96);
-  color: #f2f2f7;
-  font-size: 11px;
+  border-radius: var(--radius-s);
+  background-color: var(--tip-bg);
+  color: var(--tip-text);
+  font-size: var(--text-s);
   line-height: 1.3;
   white-space: nowrap;
 }
@@ -727,7 +837,7 @@ body {
   z-index: 2;
   border: 4px solid transparent;
   border-right-width: 0;
-  border-left-color: rgba(58, 58, 60, 0.96);
+  border-left-color: var(--tip-bg);
 }
 
 .pr-tip::after,
@@ -758,7 +868,7 @@ body {
   border-right-width: 4px;
   border-left-width: 0;
   border-left-color: transparent;
-  border-right-color: rgba(58, 58, 60, 0.96);
+  border-right-color: var(--tip-bg);
 }
 
 /* A grey glyph mark in the cluster (the review glasses), deliberately never
@@ -773,7 +883,7 @@ body {
   align-items: center;
   padding: 4px;
   margin: -4px 0;
-  color: #8e8e93;
+  color: var(--text-2);
 }
 
 /* The directional review glyph: glasses plus an arrow svg beside it. A small
@@ -787,7 +897,7 @@ body {
    in the glyph's own grey because being queued is not a signal. */
 .pr-glyph-count {
   gap: 2px;
-  font-size: 11px;
+  font-size: var(--text-s);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -803,27 +913,26 @@ body {
   box-shadow: inset 0 0 0 1px currentColor;
 }
 
-/* Darker than the #0a84ff used on larger accents: a 13px stroke on the white
-   card needs the contrast. */
 .pr-glyph.pr-your-turn {
-  color: #0071e3;
+  color: var(--accent);
 }
 
-/* The approved check, the marker cluster's one green glyph: the system green
-   (matching .settings-ok) rather than a new hue, and a colour override only,
+/* The approved check, the marker cluster's one green glyph: the same green as
+   .settings-ok rather than a new hue, and a colour override only,
    so it stays a RowMark in every other respect. Green is reserved for this
    positive signal, keeping it apart from the blocked orange and unread red. */
 .pr-glyph-ok {
-  color: #248a3d;
+  color: var(--ok);
 }
 
-/* The draft pill: the shared pill shape in the metadata grey, never a signal
-   colour, since a draft is the author's own choice, not something stuck. The
+/* The draft pill: the shared pill shape on the neutral grey fill, never a
+   signal colour, since a draft is the author's own choice, not something stuck. The
    backend suppresses the action markers on a draft, so this pill sits alone at
    the right edge (hence `margin-left: auto`, matching the cluster). */
 .pr-draft {
   margin-left: auto;
-  background-color: rgba(120, 120, 128, 0.16);
+  background-color: var(--fill);
+  color: var(--text);
 }
 
 .header-actions {
@@ -841,15 +950,15 @@ body {
   min-width: 0;
   margin-right: 12px;
   padding: 4px 8px;
-  border-radius: 6px;
-  background-color: rgba(120, 120, 128, 0.16);
+  border-radius: var(--radius-m);
+  background-color: var(--fill);
 }
 
 .header-search-icon {
   flex: none;
   width: 13px;
   height: 13px;
-  color: #8e8e93;
+  color: var(--text-2);
 }
 
 .header-search-input {
@@ -860,14 +969,21 @@ body {
   font: inherit;
   color: inherit;
   cursor: text;
-  outline: none;
   /* The field is the one place the popover invites text entry. */
   user-select: text;
   -webkit-user-select: text;
 }
 
-.header-search-input::placeholder {
-  color: #8e8e93;
+/* The ring belongs on the rounded field (see the shared rule), not on the
+   bare input inside it. */
+.header-search-input:focus-visible {
+  outline: none;
+}
+
+/* Every field's placeholder, not only the filter's: the webview default grey
+   misses 4.5:1. */
+::placeholder {
+  color: var(--text-2);
 }
 
 /* Drop the native WebKit clear button; Escape already clears the field. */
@@ -883,9 +999,9 @@ body {
   align-items: baseline;
   gap: 10px;
   padding: 6px 14px;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
-  font-size: 11px;
-  color: #8e8e93;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-s);
+  color: var(--text-2);
 }
 
 .sync-time {
@@ -898,7 +1014,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #c76b00;
+  color: var(--warn);
 }
 
 .settings-field-row {
@@ -911,9 +1027,9 @@ body {
 .settings-field-row select,
 .settings-field-row button {
   padding: 3px 6px;
-  border: 1px solid rgba(0, 0, 0, 0.18);
-  border-radius: 6px;
-  background-color: #ffffff;
+  border: 1px solid var(--field-line);
+  border-radius: var(--radius-m);
+  background-color: var(--field);
   color: inherit;
   font: inherit;
 }
@@ -927,8 +1043,8 @@ body {
 .update-banner {
   border: none;
   padding: 6px 14px;
-  background-color: #0a84ff;
-  color: #ffffff;
+  background-color: var(--accent);
+  color: var(--on-accent);
   font: inherit;
   font-weight: 500;
   text-align: center;
@@ -950,11 +1066,11 @@ body {
 }
 
 .settings-label {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--text-s);
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  color: #6e6e73;
+  color: var(--text-2);
 }
 
 .settings-input-row {
@@ -966,26 +1082,22 @@ body {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid rgba(0, 0, 0, 0.18);
-  border-radius: 6px;
-  background-color: #ffffff;
+  border: 1px solid var(--field-line);
+  border-radius: var(--radius-m);
+  background-color: var(--field);
   color: inherit;
   font: inherit;
   user-select: text;
   -webkit-user-select: text;
 }
 
-.settings-input-row input:focus {
-  outline: 2px solid #0a84ff;
-  outline-offset: -1px;
-}
 
 .settings-input-row button {
   padding: 5px 10px;
   border: none;
-  border-radius: 6px;
-  background-color: #0a84ff;
-  color: #ffffff;
+  border-radius: var(--radius-m);
+  background-color: var(--accent);
+  color: var(--on-accent);
   font: inherit;
   font-weight: 500;
 }
@@ -998,20 +1110,20 @@ body {
   border: none;
   background: none;
   padding: 0;
-  color: #0a84ff;
+  color: var(--accent);
   font: inherit;
 }
 
 /* Sections render as the same white rounded slabs as the PR list, so the
    settings screen reads as part of the same app. */
 .settings-card {
-  background-color: #ffffff;
-  border-radius: 8px;
+  background-color: var(--card);
+  border-radius: var(--radius-m);
   overflow: hidden;
 }
 
 .settings-card > * + * {
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-top: 1px solid var(--line);
 }
 
 .settings-row {
@@ -1032,11 +1144,11 @@ body {
 /* Owner headers inside the browser, echoing .settings-label a size down. */
 .repo-group-label {
   padding: 8px 11px 2px;
-  font-size: 10px;
+  font-size: var(--text-s);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  color: #8e8e93;
+  color: var(--text-2);
 }
 
 /* Left-aligned override of .settings-row's space-between: the checkbox
@@ -1048,7 +1160,7 @@ body {
 }
 
 .repo-check-row:hover {
-  background-color: rgba(10, 132, 255, 0.12);
+  background-color: var(--hover);
 }
 
 /* An in-flight toggle: the row dims instead of spinning, since the round
@@ -1074,8 +1186,8 @@ body {
 }
 
 .manual-note {
-  font-size: 11px;
-  color: #6e6e73;
+  font-size: var(--text-s);
+  color: var(--text-2);
 }
 
 /* A macOS-style switch drawn on the bare checkbox: track via the input
@@ -1087,13 +1199,13 @@ body {
   position: relative;
   width: 34px;
   height: 20px;
-  border-radius: 10px;
-  background-color: #d8d8dc;
+  border-radius: var(--radius-full);
+  background-color: var(--fill-solid);
   transition: background-color 0.15s ease;
 }
 
 .settings-switch:checked {
-  background-color: #34c759;
+  background-color: var(--switch-on);
 }
 
 .settings-switch::before {
@@ -1103,9 +1215,9 @@ body {
   left: 2px;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
-  background-color: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-full);
+  background-color: var(--knob);
+  box-shadow: 0 1px 2px var(--knob-shadow);
   transition: left 0.15s ease;
 }
 
@@ -1120,284 +1232,25 @@ body {
 }
 
 .settings-ok {
-  color: #248a3d;
+  color: var(--ok);
 }
 
 .settings-error {
-  color: #d70015;
+  color: var(--danger);
 }
 
 /* Amber like .sync-error: the token saved and works for public repos, so
    this is a caution, not a failure. */
 .settings-warning {
-  color: #c76b00;
+  color: var(--warn);
 }
 
 .settings-empty {
-  color: #8e8e93;
+  color: var(--text-2);
 }
 
 .settings-note {
   padding: 9px 11px;
-  font-size: 11px;
-  color: #6e6e73;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: #1e1e1e;
-    color: #f2f2f7;
-  }
-
-  .popover-header {
-    border-bottom-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .header-search {
-    background-color: rgba(120, 120, 128, 0.28);
-  }
-
-  .header-search-icon,
-  .header-search-input::placeholder {
-    color: #98989d;
-  }
-
-  .placeholder-heading {
-    color: #98989d;
-  }
-
-  .placeholder-detail {
-    color: #7c7c80;
-  }
-
-  .settings-label {
-    color: #98989d;
-  }
-
-  .pr-section-header {
-    background-color: #1e1e1e;
-  }
-
-  .pr-section-chevron {
-    color: #7c7c80;
-  }
-
-  .pr-section-label {
-    color: #98989d;
-  }
-
-  .pr-section-count {
-    background-color: #3a3a3c;
-    color: #d8d8dc;
-  }
-
-  .pr-section ul {
-    background-color: #2c2c2e;
-  }
-
-  /* Ring matches the dark card so the badge notch reads correctly. */
-  .pr-org-badge {
-    background-color: #2c2c2e;
-    box-shadow: 0 0 0 2px #2c2c2e;
-  }
-
-  .pr-bot-tag {
-    background-color: #48484a;
-    color: #c7c7cc;
-    box-shadow: 0 0 0 2px #2c2c2e;
-  }
-
-  .pr-repo-name {
-    color: #98989d;
-  }
-
-  .pr-repo-count {
-    background-color: #3a3a3c;
-    color: #98989d;
-  }
-
-  .pr-section li + li .pr-row {
-    border-top-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .pr-row:hover {
-    background-color: rgba(10, 132, 255, 0.28);
-  }
-
-  .pr-row-split:hover {
-    background-color: rgba(10, 132, 255, 0.28);
-  }
-
-  .pr-row-split .pr-row:hover {
-    background-color: transparent;
-  }
-
-  .pr-section li + li.pr-row-split {
-    border-top-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .pr-dismiss,
-  .pr-snooze,
-  .pr-fix,
-  .pr-snoozed-toggle {
-    color: #7c7c80;
-  }
-
-  .pr-fix.is-settled {
-    background-color: #3a3a3c;
-    color: #aeaeb2;
-  }
-
-  .pr-section li + li.pr-snoozed-line {
-    border-top-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .pr-empty {
-    color: #7c7c80;
-  }
-
-  /* The shared unread red, as in light mode. */
-  .pr-unread,
-  .pr-section-unread {
-    background-color: #ff453a;
-  }
-
-  /* Ring matches the dark card, like the org badge's. */
-  .pr-unread {
-    box-shadow: 0 0 0 2px #2c2c2e;
-  }
-
-  .pr-updated,
-  .pr-origin,
-  .pr-deploy {
-    color: #7c7c80;
-  }
-
-  .pr-deploy.is-failed {
-    color: #ff453a;
-  }
-
-  /* A slightly lighter grey so the glyphs read on the dark card without
-     brightening into a signal colour. */
-  .pr-glyph {
-    color: #98989d;
-  }
-
-  /* The accent as the rest of the app uses it; it reads on the dark card. */
-  .pr-glyph.pr-your-turn {
-    color: #0a84ff;
-  }
-
-  /* The dark-mode system green, matching .settings-ok's dark value. */
-  .pr-glyph-ok {
-    color: #30d158;
-  }
-
-  /* The light-mode fill sinks into the dark card; a stronger fill keeps the
-     pill legible without brightening its text into a signal. */
-  .pr-draft,
-  .pr-neutral-pill {
-    background-color: rgba(120, 120, 128, 0.32);
-  }
-
-  /* The dark-mode system green, matching the approved check. */
-  .pr-ready-pill {
-    background-color: rgba(48, 209, 88, 0.22);
-    color: #30d158;
-  }
-
-  /* Same lift as the draft pill, and the brighter amber (matching
-     .sync-error's dark value) so the label reads on the dark card. */
-  .pr-blocked-pill {
-    background-color: rgba(255, 159, 10, 0.22);
-    color: #ffb340;
-  }
-
-  /* Lifted a step above the #2c2c2e card so the bubble does not melt into
-     the row it covers. */
-  .pr-tip::after {
-    background-color: #48484a;
-  }
-
-  .pr-tip::before {
-    border-left-color: #48484a;
-  }
-
-  /* The mirrored triangle needs the mirrored colour override, and this rule
-     must follow the .pr-tip one above so the transparent left edge wins. */
-  .pr-tip-right::before {
-    border-left-color: transparent;
-    border-right-color: #48484a;
-  }
-
-  /* Recessed against the #2c2c2e card, so the field reads as a well
-     rather than vanishing into it. */
-  .settings-input-row input {
-    background-color: #1c1c1e;
-    border-color: rgba(255, 255, 255, 0.16);
-  }
-
-  .settings-card {
-    background-color: #2c2c2e;
-  }
-
-  .settings-card > * + * {
-    border-top-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .repo-group-label {
-    color: #98989d;
-  }
-
-  .repo-check-row:hover {
-    background-color: rgba(10, 132, 255, 0.28);
-  }
-
-  .manual-note {
-    color: #98989d;
-  }
-
-  .settings-switch {
-    background-color: #3a3a3c;
-  }
-
-  .settings-switch:checked {
-    background-color: #30d158;
-  }
-
-  .settings-ok {
-    color: #30d158;
-  }
-
-  .settings-error {
-    color: #ff453a;
-  }
-
-  .settings-warning {
-    color: #ffb340;
-  }
-
-  .settings-empty {
-    color: #7c7c80;
-  }
-
-  .settings-note {
-    color: #98989d;
-  }
-
-  .sync-status {
-    border-top-color: rgba(255, 255, 255, 0.12);
-    color: #7c7c80;
-  }
-
-  .sync-error,
-  .pr-fix-error {
-    color: #ffb340;
-  }
-
-  .settings-field-row select,
-  .settings-field-row button {
-    background-color: #2c2c2e;
-    border-color: rgba(255, 255, 255, 0.16);
-  }
+  font-size: var(--text-s);
+  color: var(--text-2);
 }
