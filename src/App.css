@@ -1037,6 +1037,20 @@ body {
   color: var(--text-2);
 }
 
+/* The bubble sits above the button, flush with its right edge: the default
+   leftward one would cover the sync time, which is what a press changes. No
+   pointer, since the bubble touches its anchor. */
+.sync-now.pr-tip::after {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 2px);
+  transform: none;
+}
+
+.sync-now.pr-tip::before {
+  content: none;
+}
+
 .sync-retry {
   flex: none;
   min-width: 24px;

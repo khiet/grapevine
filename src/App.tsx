@@ -100,7 +100,7 @@ export function SyncStatus({
   // The backend ignores a press it should not act on, so nothing is guarded
   // here.
   const sync = () => syncNow().catch(() => {});
-  const busy = syncing ? true : undefined;
+  const unavailable = syncing ? true : undefined;
   const label = syncing ? "Syncing" : "Sync now";
   return (
     <footer className="sync-status">
@@ -113,7 +113,7 @@ export function SyncStatus({
           <button
             type="button"
             className="sync-retry"
-            aria-disabled={busy}
+            aria-disabled={unavailable}
             onClick={sync}
           >
             Retry
@@ -121,15 +121,13 @@ export function SyncStatus({
         </>
       )}
       <span className="sync-right">
-        <span className="sync-time" aria-live="polite">
-          {syncing ? "Syncing" : formatLastSync(lastSyncAt)}
-        </span>
+        <span>{syncing ? "Syncing" : formatLastSync(lastSyncAt)}</span>
         <button
           type="button"
           className="sync-now pr-tip"
           data-tip={label}
           aria-label={label}
-          aria-disabled={busy}
+          aria-disabled={unavailable}
           onClick={sync}
         >
           <GlyphSvg strokeWidth={2} size={14}>

@@ -76,10 +76,13 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut consecutive_failures: u32 = 0;
         loop {
-            // Refused when Sync now has already claimed this sync, which then
-            // has nothing new to publish.
-            if let Err(e) = try_transition(&app, PrState::begin_sync) {
-                eprintln!("cannot deliver the sync start: {e}");
+            match try_transition(&app, PrState::begin_sync) {
+                Ok(true) => {}
+                // Sync now has claimed this sync and sent its wake. If the
+                // wait ended for another reason that wake is still stored,
+                // and would start a second sync for the one press.
+                Ok(false) => drop_stored_wake(&app).await,
+                Err(e) => eprintln!("cannot deliver the sync start: {e}"),
             }
             let outcome = sync_once(&app).await;
             let now = github::now_epoch_secs();
@@ -154,16 +157,30 @@ pub fn expire_by_clock(app: &AppHandle) {
 }
 
 /// Starts a sync straight away, on top of the schedule: the sync loop's wait
-/// is cut short and nothing about the poll interval changes. Does nothing
-/// while a sync is under way or already asked for.
+/// is cut short, a failure backoff included, and the poll interval is left
+/// alone. Does nothing while a sync is under way or already asked for.
 pub fn sync_now(app: &AppHandle) -> Result<(), String> {
-    let claimed = try_transition(app, PrState::begin_sync);
-    // A claim holds the button busy until a sync ends, so the loop is woken
-    // even when delivering the claim failed.
-    if !matches!(claimed, Ok(false)) {
-        app.state::<SyncState>().wake.notify_one();
+    let state = app.state::<SyncState>();
+    try_transition(app, |prs| {
+        let claimed = prs.begin_sync()?;
+        // Sent before the claim can be seen refused, which is what lets the
+        // loop tell this wake is behind it; and sent whether or not the
+        // claim gets delivered, since only a sync releases it.
+        state.wake.notify_one();
+        Some(claimed)
+    })
+    .map(|_| ())
+}
+
+/// Takes back a wake nobody is waiting on. Only for the moment a sync is
+/// about to start anyway: that sync answers whatever the wake was for.
+async fn drop_stored_wake(app: &AppHandle) {
+    let state = app.state::<SyncState>();
+    tokio::select! {
+        biased;
+        _ = state.wake.notified() => {}
+        _ = std::future::ready(()) => {}
     }
-    claimed.map(|_| ())
 }
 
 /// Reads the poll interval fresh each round, so a settings change takes
