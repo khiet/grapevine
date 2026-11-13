@@ -30,6 +30,7 @@ import {
   moveSelection,
   rowCommand,
   selectionAfter,
+  strayKeyHome,
   type KeyHint,
   type Zone,
 } from "./listKeys";
@@ -209,6 +210,30 @@ export function useListKeys(view: ListView | null): {
   useEffect(() => {
     if (selected) rowItem(selected)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
+
+  // A click on something that takes no focus (in WebKit, any button) drops
+  // focus to the body, where neither zone's handler hears a key, while the
+  // footer goes on showing the hints of the zone focus was last in. A key
+  // pressed there is sent to that zone: focus returns to it and the press is
+  // replayed on it. Focus moves before the key's default action, so a
+  // character typed this way still lands in the filter.
+  useEffect(() => {
+    const stray = (event: globalThis.KeyboardEvent) => {
+      if (event.target !== document.body) return;
+      // An open row menu has keys of its own.
+      if (document.querySelector(".pr-menu")) return;
+      const home = strayKeyHome(zone, event);
+      if (home === null) return;
+      const element =
+        (home === "row" && selected && rowButton(selected)) || filter.current;
+      if (!element) return;
+      element.focus();
+      const replay = new window.KeyboardEvent("keydown", event);
+      if (!element.dispatchEvent(replay)) event.preventDefault();
+    };
+    document.addEventListener("keydown", stray);
+    return () => document.removeEventListener("keydown", stray);
+  });
 
   const move = (step: 1 | -1) => {
     const next = moveSelection(order.current, selected, step);
