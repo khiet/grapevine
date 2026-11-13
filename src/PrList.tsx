@@ -120,7 +120,6 @@ export function useCollapsedSections(): [
 /** What the list and its rows take from the keyboard model. */
 export interface ListKeys {
   ref: RefObject<HTMLElement | null>;
-  /** The key of the selected row; null when none is. */
   selected: string | null;
   select: (key: string) => void;
   /** A row calls this before running an action by key: if the row leaves

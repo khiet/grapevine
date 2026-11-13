@@ -36,8 +36,8 @@
   --fill: rgba(120, 120, 128, 0.12);
   --fill-solid: #e5e5ea;
   --fill-strong: #d8d8dc;
-  /* Under the pointer: a neutral tint, a step darker than the window so a
-     hovered row does not read as a hole punched through the card. */
+  /* Under the pointer: a neutral tint, so the accent's tint is left to the
+     keyboard selection. */
   --hover: rgba(60, 60, 67, 0.1);
   /* The keyboard selection: the accent's tint, so it is never mistaken for
      the row the pointer happens to rest on. */
