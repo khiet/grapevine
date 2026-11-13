@@ -94,3 +94,36 @@ test("a first sync that failed can be retried, with no sync time to show", () =>
   expect(buttonNamed(html, "Sync now")).toBeDefined();
   expect(html).not.toContain("Synced");
 });
+
+const HINTS = [
+  { keys: "S", label: "Snooze" },
+  { keys: "Esc", label: "Filter" },
+];
+
+const footerWithHints = (error: string | null) =>
+  renderToStaticMarkup(
+    createElement(SyncStatus, {
+      lastSyncAt: SYNCED_AT,
+      error,
+      syncing: false,
+      hints: HINTS,
+    }),
+  );
+
+test("the footer's left side shows the keys that apply", () => {
+  const html = footerWithHints(null);
+  expect(html).toContain("<kbd>S</kbd>Snooze");
+  expect(html).toContain("<kbd>Esc</kbd>Filter");
+  // Left of the sync time.
+  expect(html.indexOf("<kbd>")).toBeLessThan(html.indexOf("Synced "));
+});
+
+test("a sync error takes the hints' place", () => {
+  const html = footerWithHints("Could not reach GitHub.");
+  expect(html).not.toContain("<kbd>");
+  expect(retryButton(html)).toBeDefined();
+});
+
+test("with no keys to hint at, the footer's left side is empty", () => {
+  expect(footer(null)).not.toContain("key-hint");
+});

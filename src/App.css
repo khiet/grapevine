@@ -36,9 +36,12 @@
   --fill: rgba(120, 120, 128, 0.12);
   --fill-solid: #e5e5ea;
   --fill-strong: #d8d8dc;
-  /* An accent tint, not a grey darken: a grey hover on the white card lands
-     on the window colour and reads as a hole punched through the card. */
-  --hover: rgba(91, 63, 196, 0.08);
+  /* Under the pointer: a neutral tint, a step darker than the window so a
+     hovered row does not read as a hole punched through the card. */
+  --hover: rgba(60, 60, 67, 0.1);
+  /* The keyboard selection: the accent's tint, so it is never mistaken for
+     the row the pointer happens to rest on. */
+  --selected: rgba(91, 63, 196, 0.1);
 
   /* Text. Every text token holds 4.5:1 on every surface it is used on,
      hovered rows included; appCss.test.ts lists the pairs. */
@@ -79,7 +82,8 @@
     --fill: rgba(120, 120, 128, 0.32);
     --fill-solid: #3a3a3c;
     --fill-strong: #3a3a3c;
-    --hover: rgba(185, 166, 255, 0.1);
+    --hover: rgba(235, 235, 245, 0.08);
+    --selected: rgba(185, 166, 255, 0.13);
 
     --text: #f2f2f7;
     --text-2: #aeaeb2;
@@ -371,6 +375,14 @@ body {
 .pr-row-split:hover,
 .pr-row-split.has-menu {
   background-color: var(--hover);
+}
+
+/* After the hover rule, so the selection keeps its tint under the pointer.
+   The scroll margin is the sticky section header's height: a row scrolled
+   into view from above stops below the header, not under it. */
+.pr-row-split.is-selected {
+  background-color: var(--selected);
+  scroll-margin-top: 40px;
 }
 
 .pr-section li + li.pr-row-split {
@@ -1000,7 +1012,7 @@ body {
 }
 
 /* The status bar pinned under the list. Deliberately muted: status, not
-   content. The left is free unless a sync error takes it. */
+   content. The left holds the key hints, or a sync error in their place. */
 .sync-status {
   display: flex;
   align-items: center;
@@ -1009,6 +1021,34 @@ body {
   border-top: 1px solid var(--line);
   font-size: var(--text-s);
   color: var(--text-2);
+}
+
+/* The keys that apply where focus is. They clip rather than push the sync
+   time off the bar. */
+.key-hints {
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.key-hint {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.key-hint kbd {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-s);
+  background-color: var(--fill);
+  font: inherit;
+  font-weight: 500;
+  line-height: 16px;
+  text-align: center;
 }
 
 /* The sync time and Sync now, held at the right edge with or without an

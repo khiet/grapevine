@@ -222,6 +222,21 @@ test("the action bar shows on hover and on keyboard focus", () => {
   expect(ruleFor(".pr-row-split:has(:focus-visible) .pr-actions").get("opacity")).toBe("1");
 });
 
+// Order matters: the selection's rule comes after the hover rule, so a
+// selected row keeps its tint with the pointer on it.
+test("the selected row takes the accent's tint and a hovered row a neutral one", () => {
+  expect(ruleFor(".pr-row-split.is-selected").get("background-color")).toBe("var(--selected)");
+  const selectors = styleRules.map((r) => r.selector);
+  expect(selectors.indexOf(".pr-row-split.is-selected")).toBeGreaterThan(
+    selectors.findIndex((selector) => selector.includes(".pr-row-split:hover")),
+  );
+  const [r, g, b] = parseColour(light.get("--accent") as string);
+  expect(light.get("--selected")).toMatch(new RegExp(`^rgba\\(${r}, ${g}, ${b}, `));
+  const [hr, hg, hb] = parseColour(light.get("--hover") as string);
+  // Neutral: no channel far from the others.
+  expect(Math.max(hr, hg, hb) - Math.min(hr, hg, hb)).toBeLessThan(16);
+});
+
 test("Sync now and Retry are targets at least 24px tall and wide", () => {
   const icon = ruleFor(".sync-now");
   expect(px(icon.get("width"))).toBeGreaterThanOrEqual(24);
@@ -299,14 +314,16 @@ test("the contrast maths matches WCAG's worked values", () => {
 
 // Every text colour against every surface it is drawn on, bottom layer first.
 // Hand-kept: a rule that puts a text token on a new surface adds its pair here.
-// Surfaces under a row are listed plain and hovered, since the hover tint
-// sits under everything in the row.
+// Surfaces under a row are listed plain, hovered and selected, since those
+// tints sit under everything in the row.
 const CARD = ["--card"];
 const HOVERED = ["--card", "--hover"];
+const SELECTED = ["--card", "--selected"];
 const WINDOW = ["--window"];
 const onRow = (text: string, ...fills: string[]): [string, string[]][] => [
   [text, [...CARD, ...fills]],
   [text, [...HOVERED, ...fills]],
+  [text, [...SELECTED, ...fills]],
 ];
 const PAIRS: [string, string[]][] = [
   // Window-level text: section and repo headers, empty states, the footer.
