@@ -63,7 +63,6 @@
   --tip-bg: rgba(58, 58, 60, 0.96);
   --tip-text: #f2f2f7;
 
-  /* Form controls. */
   --field: #ffffff;
   --field-line: rgba(0, 0, 0, 0.18);
   --switch-on: #34c759;
@@ -583,12 +582,12 @@ body {
 }
 
 /* The notification-counter red, the loudest colour in the list. Perched on
-   the avatar's top-right corner, iOS app-icon style, rather than in a reserved gutter column that
-   would cost every row title width. The card-colour ring is the org badge's
-   notch trick, and the two badges own opposite corners so they never touch:
-   top-right says "new activity", bottom-right says "which org". Smaller than
-   a free-standing badge could be, which is fine — the bold title carries the
-   unread signal too. */
+   the avatar's top-right corner, iOS app-icon style, rather than in a
+   reserved gutter column that would cost every row title width. The
+   card-colour ring is the org badge's notch trick, and the two badges own
+   opposite corners so they never touch: top-right says "new activity",
+   bottom-right says "which org". Smaller than a free-standing badge could
+   be, which is fine: the bold title carries the unread signal too. */
 .pr-unread {
   position: absolute;
   top: -5px;
