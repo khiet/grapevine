@@ -24,12 +24,15 @@ function parseRules(text: string, dark = false): Rule[] {
     let depth = 1;
     let close = open + 1;
     for (; depth > 0; close++) {
+      if (close >= text.length) throw new Error(`unclosed block: ${selector}`);
       if (text[close] === "{") depth++;
       else if (text[close] === "}") depth--;
     }
     const body = text.slice(open + 1, close - 1);
     if (selector.startsWith("@media")) {
-      expect(selector).toContain("prefers-color-scheme: dark");
+      if (!selector.includes("prefers-color-scheme: dark")) {
+        throw new Error(`unexpected at-rule: ${selector}`);
+      }
       rules.push(...parseRules(body, true));
     } else {
       rules.push({ selector, body, dark });
@@ -134,7 +137,7 @@ test("one focus ring serves every control", () => {
   const [ring] = outlined;
   expect(ring.selector.split(",").map((s) => s.trim())).toContain(":focus-visible");
   const ringDeclarations = new Map(declarations(ring.body));
-  expect(ringDeclarations.get("outline")).toBe("2px solid var(--accent)");
+  expect(ringDeclarations.get("outline")).toBe("2px solid var(--focus-colour, var(--accent))");
   expect(ringDeclarations.get("outline-offset")).toBe("var(--focus-offset, 2px)");
   // Rows fill their card edge to edge, so their ring draws inside.
   const inset = styleRules.filter((r) =>
@@ -143,7 +146,15 @@ test("one focus ring serves every control", () => {
   expect(inset.flatMap((r) => r.selector.split(",").map((s) => s.trim()))).toContain(".pr-row");
   // The filter field shows the ring on its rounded box, not on the bare
   // input inside it.
-  expect(ring.selector).toContain(".header-search:has(:focus-visible)");
+  expect(ring.selector).toContain(".header-search:focus-within");
+  // The update banner is an accent fill with an inset ring, so its ring
+  // takes the colour that reads on the accent.
+  const recoloured = styleRules.filter((r) =>
+    declarations(r.body).some(
+      ([name, value]) => name === "--focus-colour" && value === "var(--on-accent)",
+    ),
+  );
+  expect(recoloured.map((r) => r.selector)).toEqual([".update-banner"]);
 });
 
 // --- Contrast -------------------------------------------------------------
@@ -184,11 +195,12 @@ function contrast(text: Rgba, background: Rgba): number {
 
 test("the contrast maths matches WCAG's worked values", () => {
   expect(contrast([0, 0, 0, 1], [255, 255, 255, 1])).toBeCloseTo(21, 5);
-  // The design review's measured figure for the old secondary grey on a card.
-  expect(contrast(parseColour("#8e8e93"), parseColour("#ffffff"))).toBeCloseTo(3.26, 2);
+  // The lightest grey that passes AA on white, a figure WCAG tooling agrees on.
+  expect(contrast(parseColour("#767676"), parseColour("#ffffff"))).toBeCloseTo(4.54, 2);
 });
 
 // Every text colour against every surface it is drawn on, bottom layer first.
+// Hand-kept: a rule that puts a text token on a new surface adds its pair here.
 // Surfaces under a row are listed plain and hovered, since the hover tint
 // sits under everything in the row.
 const CARD = ["--card"];
@@ -206,7 +218,7 @@ const PAIRS: [string, string[]][] = [
   ["--warn", WINDOW],
   ["--danger", WINDOW],
   ["--ok", WINDOW],
-  ["--text", ["--window", "--fill-solid"]],
+  ["--text", ["--window", "--fill-strong"]],
   ["--text-2", ["--window", "--fill-solid"]],
   ["--text", ["--window", "--fill"]],
   ["--text-2", ["--window", "--fill"]],
@@ -250,12 +262,18 @@ test.each([
   expect(ratios(theme).filter((r) => r.ratio < 4.5)).toEqual([]);
 });
 
-test("every colour a rule uses is a defined token", () => {
-  const used = new Set(
-    styleRules.flatMap((r) => [...r.body.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1])),
-  );
-  used.delete("--focus-offset");
-  expect([...used].filter((name) => !light.has(name))).toEqual([]);
-  // And none is defined but unused, so the token list stays the real palette.
-  expect([...light.keys()].filter((name) => !used.has(name))).toEqual([]);
+const usedTokens = new Set(
+  styleRules.flatMap((r) => [...r.body.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1])),
+);
+// Set per control, never defined on :root.
+usedTokens.delete("--focus-offset");
+usedTokens.delete("--focus-colour");
+
+test("every token a rule reads is defined", () => {
+  expect([...usedTokens].filter((name) => !light.has(name))).toEqual([]);
+});
+
+// So the token list stays the real palette rather than a superset of it.
+test("every defined token is read by a rule", () => {
+  expect([...light.keys()].filter((name) => !usedTokens.has(name))).toEqual([]);
 });
