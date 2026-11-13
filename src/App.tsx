@@ -8,11 +8,13 @@ import {
   type Snapshot,
 } from "./backend";
 import { useFixesPosting } from "./fixConflict";
+import type { KeyHint } from "./listKeys";
 import { derivePopover } from "./popoverView";
 import PrList, {
   GlyphSvg,
   formatLastSync,
   useCollapsedSections,
+  useListKeys,
 } from "./PrList";
 import SettingsView from "./SettingsView";
 import {
@@ -83,17 +85,19 @@ export function HeaderActions({
   );
 }
 
-/** The footer as a status bar: the sync time and Sync now on the right, and a
- * sync error with its Retry on the left, which is otherwise left free. Both
- * buttons ask for the same sync. */
+/** The footer as a status bar: the sync time and Sync now on the right, and
+ * on the left the keys that apply, which give way to a sync error and its
+ * Retry. Both buttons ask for the same sync. */
 export function SyncStatus({
   lastSyncAt,
   error,
   syncing,
+  hints = [],
 }: {
   lastSyncAt: number | null;
   error: string | null;
   syncing: boolean;
+  hints?: KeyHint[];
 }) {
   // aria-disabled, not disabled: a disabled button drops keyboard focus, and
   // the one that started the sync should still hold it when the sync ends.
@@ -104,6 +108,16 @@ export function SyncStatus({
   const label = syncing ? "Syncing" : "Sync now";
   return (
     <footer className="sync-status">
+      {!error && hints.length > 0 && (
+        <span className="key-hints">
+          {hints.map(({ keys, label }) => (
+            <span key={keys} className="key-hint">
+              <kbd>{keys}</kbd>
+              {label}
+            </span>
+          ))}
+        </span>
+      )}
       {error && (
         <>
           {/* title carries the full message; the footer line clips it. */}
@@ -165,13 +179,17 @@ function App() {
     fixesPosting,
   );
 
+  const listKeys = useListKeys(
+    !inSettings && content.kind === "list" ? content : null,
+  );
+
   useEffect(() => {
     startUpdateChecks();
     return subscribeSnapshot(setSnapshot);
   }, []);
 
   return (
-    <div className="popover">
+    <div className="popover" {...listKeys.around}>
       <header className="popover-header">
         {inSettings ? (
           <span className="popover-title">Settings</span>
@@ -193,8 +211,10 @@ function App() {
               placeholder="Filter"
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
+              ref={listKeys.filter.ref}
               onKeyDown={(event) => {
                 if (event.key === "Escape") setFilter("");
+                listKeys.filter.onKeyDown(event);
               }}
               autoFocus
             />
@@ -236,13 +256,19 @@ function App() {
           </p>
         </main>
       ) : (
-        <PrList view={content} onToggle={toggleSection} />
+        <PrList view={content} onToggle={toggleSection} keys={listKeys.list} />
       )}
+      {/* Says the selected row when the arrows move the selection from the
+          filter: focus stays in the field, so nothing else would. */}
+      <p className="visually-hidden" role="status">
+        {listKeys.announcement}
+      </p>
       {!inSettings && (snapshot.last_sync_at !== null || snapshot.sync_error) && (
         <SyncStatus
           lastSyncAt={snapshot.last_sync_at}
           error={snapshot.sync_error}
           syncing={snapshot.syncing}
+          hints={listKeys.hints}
         />
       )}
     </div>

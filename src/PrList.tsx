@@ -1,10 +1,15 @@
 import {
+  createContext,
+  useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -17,6 +22,17 @@ import {
   wake,
 } from "./backend";
 import { clickFix } from "./fixConflict";
+import {
+  filterCommand,
+  findRow,
+  keyHints,
+  listCommand,
+  moveSelection,
+  rowCommand,
+  selectionAfter,
+  type KeyHint,
+  type Zone,
+} from "./listKeys";
 import RowMenu, { opensMenu, type Point } from "./RowMenu";
 import {
   YOUR_TURN_KEY,
@@ -99,6 +115,207 @@ export function useCollapsedSections(): [
     saveCollapsed(next);
   };
   return [collapsed, toggle];
+}
+
+/** What the list and its rows take from the keyboard model. */
+export interface ListKeys {
+  ref: RefObject<HTMLElement | null>;
+  selected: string | null;
+  select: (key: string) => void;
+  /** A row calls this before running an action by key: if the row leaves
+   * the list while it holds focus, focus follows the selection instead of
+   * being dropped. */
+  acted: () => void;
+  onKeyDown: (event: KeyboardEvent) => void;
+}
+
+const NO_LIST_KEYS: ListKeys = {
+  ref: { current: null },
+  selected: null,
+  select: () => {},
+  acted: () => {},
+  onKeyDown: () => {},
+};
+
+const ListKeysContext = createContext(NO_LIST_KEYS);
+
+/** The list's keyboard model, applied: a selection the arrows move from the
+ * filter without taking focus out of it, and the keys of the list itself.
+ * Call it beside the filter field and hand `list` to PrList. `view` is the
+ * list as shown, null while something else is.
+ *
+ * Which rows are shown, and in what order, is read from the rendered list
+ * (each row's li carries data-row-key): a snoozed fold opened by hand is
+ * state of the list, not of the view. */
+export function useListKeys(view: ListView | null): {
+  filter: {
+    ref: RefObject<HTMLInputElement | null>;
+    onKeyDown: (event: KeyboardEvent) => void;
+  };
+  list: ListKeys;
+  /** For an element around both the filter and the list. */
+  around: {
+    onFocus: (event: FocusEvent) => void;
+    onPointerDown: () => void;
+  };
+  hints: KeyHint[];
+  /** The selected row in words, set when the arrows move the selection
+   * from the filter; a row that takes focus announces itself. */
+  announcement: string;
+} {
+  const list = useRef<HTMLElement>(null);
+  const filter = useRef<HTMLInputElement>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [zone, setZone] = useState<Zone>(null);
+  const [announcement, setAnnouncement] = useState("");
+  // The rows as last rendered, in order.
+  const order = useRef<string[]>([]);
+  const refocus = useRef(false);
+
+  const zoneOf = (element: Node | null): Zone => {
+    if (element !== null && element === filter.current) return "filter";
+    return list.current?.contains(element) ? "list" : null;
+  };
+  const rowItems = () => [
+    ...(list.current?.querySelectorAll<HTMLElement>("[data-row-key]") ?? []),
+  ];
+  const rowItem = (key: string) =>
+    rowItems().find((item) => item.dataset.rowKey === key) ?? null;
+  const rowButton = (key: string) =>
+    rowItem(key)?.querySelector<HTMLElement>(".pr-row") ?? null;
+
+  // After every render, since anything can change the rows: a sync, the
+  // filter, a section or a fold toggled.
+  useLayoutEffect(() => {
+    const keys = rowItems().map((item) => item.dataset.rowKey as string);
+    const next = selectionAfter(order.current, keys, selected);
+    order.current = keys;
+    if (next !== selected) {
+      setSelected(next);
+      return;
+    }
+    // Read here as well as in onFocus: the filter's autofocus on mount can
+    // land before the window has focus, and then no focus event says so.
+    // Focus on the body is focus dropped, which leaves the zone as it was.
+    const active = document.activeElement;
+    if (active !== document.body) setZone(zoneOf(active));
+    // A row removed while focused leaves focus on the body.
+    if (refocus.current && document.activeElement === document.body) {
+      refocus.current = false;
+      ((selected && rowButton(selected)) || filter.current)?.focus();
+    }
+  });
+
+  useEffect(() => {
+    if (selected) rowItem(selected)?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+
+  const move = (step: 1 | -1) => {
+    const next = moveSelection(order.current, selected, step);
+    setSelected(next);
+    return next;
+  };
+
+  return {
+    filter: {
+      ref: filter,
+      onKeyDown: (event) => {
+        // Enter and the arrows belong to an input method while it composes.
+        if (event.nativeEvent.isComposing) return;
+        const command = filterCommand(event);
+        if (command === null) return;
+        if (command === "list") {
+          const target = selected ?? order.current[0];
+          // With no rows, Tab goes where it always did.
+          if (target === undefined) return;
+          event.preventDefault();
+          rowButton(target)?.focus();
+          return;
+        }
+        // Also keeps the arrows from moving the caret.
+        event.preventDefault();
+        if (command === "open") {
+          // A click, so the row opens exactly as it does under the pointer.
+          if (selected) rowButton(selected)?.click();
+          return;
+        }
+        const next = move(command === "next" ? 1 : -1);
+        setAnnouncement((next && view && findRow(view, next)?.label) || "");
+      },
+    },
+    list: {
+      ref: list,
+      selected,
+      select: setSelected,
+      acted: () => {
+        refocus.current = true;
+      },
+      onKeyDown: (event) => {
+        // An open row menu has keys of its own, and its events bubble here.
+        if ((event.target as Element).closest(".pr-menu")) return;
+        const command = listCommand(event);
+        if (command === null) return;
+        event.preventDefault();
+        if (command === "filter") {
+          filter.current?.focus();
+          return;
+        }
+        const next = move(command === "next" ? 1 : -1);
+        if (next) rowButton(next)?.focus();
+      },
+    },
+    around: {
+      onFocus: (event) => {
+        // Focus moved by hand: nothing is owed a refocus any more.
+        refocus.current = false;
+        const zone = zoneOf(event.target as Node);
+        setZone(zone);
+        // Emptied once focus leaves the filter, so coming back to the same
+        // row is a change the live region speaks again.
+        if (zone !== "filter") setAnnouncement("");
+      },
+      // A click on nothing focusable drops focus to the body by choice;
+      // an action that removed no row must not pull it back later.
+      onPointerDown: () => {
+        refocus.current = false;
+      },
+    },
+    hints: keyHints(
+      zone,
+      (selected && view && findRow(view, selected)?.actions) || null,
+    ),
+    announcement,
+  };
+}
+
+/* What a row's li takes to join the keyboard model: the key the selection
+   knows it by, selection following focus into it, and the row's own keys.
+   `run` is the row's action runner. Spread after the menu's handlers: its
+   onKeyDown includes theirs. */
+function useRowKeys(
+  key: string,
+  actions: RowAction[],
+  run: (id: RowActionId) => void,
+  menu: ReturnType<typeof useRowMenu>,
+) {
+  const keys = useContext(ListKeysContext);
+  return {
+    selected: keys.selected === key,
+    item: {
+      "data-row-key": key,
+      onFocus: () => keys.select(key),
+      onKeyDown: (event: KeyboardEvent) => {
+        menu.item.onKeyDown(event);
+        // While the menu is open its keys are its own.
+        if (menu.at !== null) return;
+        const id = rowCommand(event, actions);
+        if (id === null) return;
+        event.preventDefault();
+        keys.acted();
+        run(id);
+      },
+    },
+  };
 }
 
 // Neutral grey silhouette shown while an avatar loads and when it fails.
@@ -361,9 +578,11 @@ function MenuLayer(props: Parameters<typeof RowMenu>[0]) {
 }
 
 // The li of a row: lit while its menu is open, so the menu's row is plain
-// even with the pointer on the menu.
-const rowClass = (menuOpen: boolean) =>
-  menuOpen ? "pr-row-split has-menu" : "pr-row-split";
+// even with the pointer on the menu, and tinted while it is the selection.
+const rowClass = (menuOpen: boolean, selected: boolean) =>
+  "pr-row-split" +
+  (menuOpen ? " has-menu" : "") +
+  (selected ? " is-selected" : "");
 
 /* The row's actions as worded buttons. Siblings of the row button rather than
    children (nested buttons are invalid HTML), floated over the end of the
@@ -460,14 +679,16 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
         break;
     }
   };
+  const rowKeys = useRowKeys(key, row.actions, run, menu);
   return (
     <li
-      className={rowClass(menu.at !== null)}
+      className={rowClass(menu.at !== null, rowKeys.selected)}
       title={authorLabel(pr.author, botAuthor)}
       // Not while the menu is open: the pointer may be nowhere near a menu
       // opened by key, and the armed item must wait there for its confirm.
       onPointerLeave={menu.at === null ? fix.standDown : undefined}
       {...menu.item}
+      {...rowKeys.item}
     >
       <button
         ref={menu.row}
@@ -586,11 +807,13 @@ function MergedRow({ row }: { row: MergedRowView }) {
     if (id === "open") openUrl(pr.url).catch(() => {});
     if (id === "dismiss") dismissMerged(prKey(pr)).catch(() => {});
   };
+  const rowKeys = useRowKeys(prKey(pr), row.actions, run, menu);
   return (
     <li
-      className={rowClass(menu.at !== null)}
+      className={rowClass(menu.at !== null, rowKeys.selected)}
       title={authorLabel(pr.author, false)}
       {...menu.item}
+      {...rowKeys.item}
     >
       <button
         ref={menu.row}
@@ -783,46 +1006,51 @@ function SectionBodyView({ section }: { section: SectionView }) {
 }
 
 // Renders the sections it is given: which exist, what they hold and whether
-// they are open is the popover view's call.
+// they are open is the popover view's call. `keys` is useListKeys' `list`;
+// without it the list has no selection and no keys of its own.
 function PrList({
   view,
   onToggle,
+  keys = NO_LIST_KEYS,
 }: {
   view: ListView;
   onToggle: (key: SectionKey) => void;
+  keys?: ListKeys;
 }) {
   return (
-    <main className="pr-list">
-      {view.sections.map((section) => {
-        const { key } = section;
-        return (
-          <section key={key} className="pr-section">
-            {key === YOUR_TURN_KEY ? (
-              <PinnedHeader label={section.label} count={section.count} />
-            ) : (
-              <SectionHeader
-                label={section.label}
-                count={section.count}
-                expanded={section.expanded}
-                onToggle={() => onToggle(key)}
-                disabled={!view.canToggle}
-                unread={section.collapsedUnread}
-              >
-                {section.offerClearAll && (
-                  <button
-                    type="button"
-                    className="pr-section-clear"
-                    onClick={() => clearMerged().catch(() => {})}
-                  >
-                    Clear all
-                  </button>
-                )}
-              </SectionHeader>
-            )}
-            {section.expanded && <SectionBodyView section={section} />}
-          </section>
-        );
-      })}
+    <main className="pr-list" ref={keys.ref} onKeyDown={keys.onKeyDown}>
+      <ListKeysContext.Provider value={keys}>
+        {view.sections.map((section) => {
+          const { key } = section;
+          return (
+            <section key={key} className="pr-section">
+              {key === YOUR_TURN_KEY ? (
+                <PinnedHeader label={section.label} count={section.count} />
+              ) : (
+                <SectionHeader
+                  label={section.label}
+                  count={section.count}
+                  expanded={section.expanded}
+                  onToggle={() => onToggle(key)}
+                  disabled={!view.canToggle}
+                  unread={section.collapsedUnread}
+                >
+                  {section.offerClearAll && (
+                    <button
+                      type="button"
+                      className="pr-section-clear"
+                      onClick={() => clearMerged().catch(() => {})}
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </SectionHeader>
+              )}
+              {section.expanded && <SectionBodyView section={section} />}
+            </section>
+          );
+        })}
+      </ListKeysContext.Provider>
     </main>
   );
 }

@@ -331,3 +331,33 @@ test("a row whose Copilot fix is being posted says Asking in place of the fix", 
   expect(li).toContain('<span class="pr-action-status" role="status">Asking</span>');
   expect(barOf(li)).toEqual(["Snooze", "Open"]);
 });
+
+test("the selected row, and only that row, is marked as the selection", () => {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [openPr], merged: [mergedPr] },
+    "",
+    { ...DEFAULT_COLLAPSED },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, {
+      view: content as ListView,
+      onToggle: () => {},
+      keys: {
+        ref: { current: null },
+        selected: "acme/widgets#90",
+        select: () => {},
+        acted: () => {},
+        onKeyDown: () => {},
+      },
+    }),
+  );
+  const selected = (html.match(/<li[^>]*>/g) ?? [])
+    .filter((li) => li.includes("is-selected"))
+    .map((li) => li.match(/data-row-key="([^"]*)"/)?.[1]);
+  expect(selected).toEqual(["acme/widgets#90"]);
+});
+
+test("with no selection no row is marked", () => {
+  expect(renderRows().join("")).not.toContain("is-selected");
+});
