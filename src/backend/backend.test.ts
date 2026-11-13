@@ -8,6 +8,7 @@ import {
   setAdapter,
   snooze,
   subscribeSnapshot,
+  syncNow,
   wake,
   type PullRequest,
   type Snapshot,
@@ -59,6 +60,7 @@ function snapshot(prs: PullRequest[]): Snapshot {
     has_synced: true,
     last_sync_at: 1_790_000_000_000,
     sync_error: null,
+    syncing: false,
   };
 }
 
@@ -201,4 +203,17 @@ test("a command the fake does not implement rejects", async () => {
   setAdapter(createFakeBackend(snapshot([])).adapter);
 
   await expect(listRepos()).rejects.toThrow("unhandled command list_repos");
+});
+
+test("Sync now marks the Snapshot as syncing, and a second press starts no second sync", async () => {
+  const idle = snapshot([pr("acme/api", 1, 0)]);
+  const published: Snapshot[] = [];
+  const fake = createFakeBackend(idle, (next) => published.push(next));
+  setAdapter(fake.adapter);
+
+  await syncNow();
+  expect(published).toEqual([{ ...idle, syncing: true }]);
+
+  await syncNow();
+  expect(published).toHaveLength(1);
 });

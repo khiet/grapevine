@@ -75,6 +75,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     has_synced: true,
     last_sync_at: Date.parse(at("30T15:41:00")),
     sync_error: null,
+    syncing: false,
     snoozed: [],
     prs: [
       pr("teampave/checkout-api", 1284, "Retry failed webhook deliveries with exponential backoff", "doutatsu", "30T15:31:00", { unread_count: 3, review_requested: true, turn: "yours", turn_since: since("30T12:31:00") }),

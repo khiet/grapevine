@@ -69,6 +69,9 @@ pub struct Snapshot {
     pub last_sync_at: Option<u64>,
     /// User-facing message of the most recent failure; cleared by a success.
     pub sync_error: Option<String>,
+    /// A sync is under way or has been asked for; see [`PrState::begin_sync`].
+    /// The popover holds its Sync now button busy while this is set.
+    pub syncing: bool,
 }
 
 /// What the caller must do after a transition. `snapshot` is always published
@@ -207,6 +210,21 @@ impl PrState {
         self.inner.lock().unwrap().fixes_posting.remove(key);
     }
 
+    /// Claims the next sync. `None` means one is already under way or asked
+    /// for, and the caller must not ask for another: this is what keeps a
+    /// second press of Sync now from starting a second sync. On `Some` a sync
+    /// must follow, since only its end ([`PrState::sync_succeeded`],
+    /// [`PrState::sync_failed`] or [`PrState::unconfigured`]) releases the
+    /// claim.
+    pub fn begin_sync(&self) -> Option<Effects> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.snapshot.syncing {
+            return None;
+        }
+        inner.snapshot.syncing = true;
+        Some(inner.no_effects())
+    }
+
     /// A sync fetched `prs`, and `newly_merged` are the departed PRs GitHub
     /// confirmed as merged. Unread counts are computed against the watermarks
     /// as they are now, not as they were when the fetch started.
@@ -242,6 +260,7 @@ impl PrState {
             has_synced: true,
             last_sync_at: Some(now_epoch_ms),
             sync_error: None,
+            syncing: false,
         };
         inner.mirror_snoozes();
         Effects {
@@ -261,6 +280,7 @@ impl PrState {
     pub fn sync_failed(&self, message: String) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         inner.snapshot.sync_error = Some(message);
+        inner.snapshot.syncing = false;
         inner.no_effects()
     }
 
@@ -646,6 +666,46 @@ mod tests {
 
     fn unread_counts(snapshot: &Snapshot) -> Vec<u64> {
         snapshot.prs.iter().map(|pr| pr.unread_count).collect()
+    }
+
+    #[test]
+    fn a_sync_asked_for_while_one_is_in_flight_is_refused() {
+        let state = state_with_one_unread();
+
+        let begun = state.begin_sync().expect("no sync is in flight yet");
+        assert!(begun.snapshot.syncing);
+        assert_eq!(begun.tray_count, None);
+
+        assert!(state.begin_sync().is_none());
+        assert!(state.snapshot().syncing);
+    }
+
+    #[test]
+    fn a_sync_can_be_asked_for_again_once_the_last_one_has_ended() {
+        let state = PrState::default();
+
+        state.begin_sync();
+        let succeeded = state.sync_succeeded(vec![pr("acme/widgets", 7, &[])], vec![], NOW_MS);
+        assert!(!succeeded.snapshot.syncing);
+
+        assert!(state.begin_sync().is_some());
+        let failed = state.sync_failed("Could not reach GitHub.".into());
+        assert!(!failed.snapshot.syncing);
+
+        assert!(state.begin_sync().is_some());
+        let unconfigured = state.unconfigured();
+        assert!(!unconfigured.snapshot.syncing);
+        assert!(state.begin_sync().is_some());
+    }
+
+    /// A command landing mid-sync republishes the Snapshot, and the button
+    /// must stay busy through it.
+    #[test]
+    fn a_command_during_a_sync_leaves_it_in_flight() {
+        let state = state_with_one_unread();
+        state.begin_sync();
+        assert!(state.mark_all_read().snapshot.syncing);
+        assert!(state.begin_sync().is_none());
     }
 
     #[test]
@@ -1961,6 +2021,7 @@ mod tests {
             has_synced: true,
             last_sync_at: Some(1_784_205_296_000),
             sync_error: Some("Could not reach GitHub.".into()),
+            syncing: true,
         };
         assert_eq!(
             serde_json::to_value(&snapshot).unwrap(),
@@ -2014,7 +2075,8 @@ mod tests {
                 "snoozed": ["acme/widgets#7"],
                 "has_synced": true,
                 "last_sync_at": 1_784_205_296_000u64,
-                "sync_error": "Could not reach GitHub."
+                "sync_error": "Could not reach GitHub.",
+                "syncing": true
             })
         );
     }

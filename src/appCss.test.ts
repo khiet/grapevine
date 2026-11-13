@@ -222,6 +222,15 @@ test("the action bar shows on hover and on keyboard focus", () => {
   expect(ruleFor(".pr-row-split:has(:focus-visible) .pr-actions").get("opacity")).toBe("1");
 });
 
+test("Sync now and Retry are targets at least 24px tall and wide", () => {
+  const icon = ruleFor(".sync-now");
+  expect(px(icon.get("width"))).toBeGreaterThanOrEqual(24);
+  expect(px(icon.get("height"))).toBeGreaterThanOrEqual(24);
+  const retry = ruleFor(".sync-retry");
+  expect(px(retry.get("height"))).toBeGreaterThanOrEqual(24);
+  expect(px(retry.get("min-width"))).toBeGreaterThanOrEqual(24);
+});
+
 test("the header icon buttons are 28px square", () => {
   const icon = ruleFor(".header-icon");
   expect(icon.get("width")).toBe("28px");

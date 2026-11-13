@@ -999,20 +999,78 @@ body {
   appearance: none;
 }
 
-/* One quiet line pinned under the list. Deliberately muted: status, not
-   content. */
+/* The status bar pinned under the list. Deliberately muted: status, not
+   content. The left is free unless a sync error takes it. */
 .sync-status {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 6px 14px;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 14px;
   border-top: 1px solid var(--line);
   font-size: var(--text-s);
   color: var(--text-2);
 }
 
-.sync-time {
+/* The sync time and Sync now, held at the right edge with or without an
+   error beside them. */
+.sync-right {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* The glyph's meaning is in the tooltip and aria-label. position: relative
+   anchors the tooltip. */
+.sync-now {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-m);
+  background: none;
+  padding: 0;
+  color: var(--text-2);
+}
+
+.sync-retry {
+  flex: none;
+  min-width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-m);
+  background: none;
+  padding: 0 8px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+}
+
+.sync-now:hover,
+.sync-retry:hover {
+  background-color: var(--fill);
+  color: var(--text);
+}
+
+/* A sync is running: the buttons stay focusable and stop inviting a press.
+   On Sync now the glyph dims, not the button, so its tooltip stays at full
+   strength. */
+.sync-now[aria-disabled="true"],
+.sync-retry[aria-disabled="true"] {
+  background: none;
+}
+
+.sync-now[aria-disabled="true"] {
+  color: var(--text-2);
+}
+
+.sync-now[aria-disabled="true"] svg,
+.sync-retry[aria-disabled="true"] {
+  opacity: 0.45;
 }
 
 /* Amber, not red: a failed poll retries by itself and the list is merely

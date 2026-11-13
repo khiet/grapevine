@@ -138,6 +138,9 @@ export interface Snapshot {
   last_sync_at: number | null;
   /** User-facing message of the most recent failure; cleared by a success. */
   sync_error: string | null;
+  /** A sync is under way or has been asked for; Sync now is busy and
+   * sync_now does nothing while this is set. */
+  syncing: boolean;
 }
 
 export interface TokenStatus {
@@ -160,6 +163,7 @@ export const EMPTY_SNAPSHOT: Snapshot = {
   has_synced: false,
   last_sync_at: null,
   sync_error: null,
+  syncing: false,
 };
 
 /** The key the backend files unread, snoozed and merged state under. The Rust
@@ -217,6 +221,11 @@ export function subscribeSnapshot(
     stop.then((unlisten) => unlisten()).catch(() => {});
   };
 }
+
+/** Starts a sync straight away, without touching the poll schedule. The
+ * backend answers with a Snapshot that has `syncing` set, then with the
+ * sync's result; it does nothing while a sync is already under way. */
+export const syncNow = () => adapter.invoke<void>("sync_now");
 
 // The backend answers each of these by pushing a fresh Snapshot.
 export const markRead = (key: string) => adapter.invoke<void>("mark_read", { key });

@@ -76,6 +76,11 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut consecutive_failures: u32 = 0;
         loop {
+            // Refused when Sync now has already claimed this sync, which then
+            // has nothing new to publish.
+            if let Err(e) = try_transition(&app, PrState::begin_sync) {
+                eprintln!("cannot deliver the sync start: {e}");
+            }
             let outcome = sync_once(&app).await;
             let now = github::now_epoch_secs();
             let delay = match outcome {
@@ -146,6 +151,19 @@ pub fn expire_by_clock(app: &AppHandle) {
     if let Err(e) = transition(app, |state| state.expire(now_epoch_ms())) {
         eprintln!("cannot deliver expiries: {e}");
     }
+}
+
+/// Starts a sync straight away, on top of the schedule: the sync loop's wait
+/// is cut short and nothing about the poll interval changes. Does nothing
+/// while a sync is under way or already asked for.
+pub fn sync_now(app: &AppHandle) -> Result<(), String> {
+    let claimed = try_transition(app, PrState::begin_sync);
+    // A claim holds the button busy until a sync ends, so the loop is woken
+    // even when delivering the claim failed.
+    if !matches!(claimed, Ok(false)) {
+        app.state::<SyncState>().wake.notify_one();
+    }
+    claimed.map(|_| ())
 }
 
 /// Reads the poll interval fresh each round, so a settings change takes
@@ -230,9 +248,21 @@ fn tray_title(total: u64) -> String {
 /// agreeing with the state in memory; the first failure is returned once
 /// everything has been attempted.
 pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> Result<(), String> {
+    try_transition(app, |state| Some(apply(state))).map(|_| ())
+}
+
+/// [`transition`] for one the state may refuse: `None` from `apply` delivers
+/// nothing and yields `Ok(false)`. An `Err` means the transition ran and its
+/// effects were not all delivered.
+fn try_transition(
+    app: &AppHandle,
+    apply: impl FnOnce(&PrState) -> Option<Effects>,
+) -> Result<bool, String> {
     let state = app.state::<SyncState>();
     let _delivering = state.delivery.lock().unwrap();
-    let effects = apply(&state.pr_state);
+    let Some(effects) = apply(&state.pr_state) else {
+        return Ok(false);
+    };
     let store = app.state::<Store>();
     let saved_read = effects.save_read.map_or(Ok(()), |read_state| {
         store.save(&store::READ_STATE, &read_state)
@@ -266,6 +296,7 @@ pub fn transition(app: &AppHandle, apply: impl FnOnce(&PrState) -> Effects) -> R
         .and(saved_snoozes)
         .and(saved_fix_requests)
         .and(emitted)
+        .map(|()| true)
 }
 
 /// What one sync attempt means for scheduling the next one.

@@ -25,6 +25,11 @@ export function createFakeBackend(
 
   const commands: Record<string, (args: Record<string, unknown>) => unknown> = {
     get_prs: () => snapshot,
+    // Claims the sync as the backend does and leaves it running: the fake
+    // has no GitHub to ask, so whoever drives it publishes the result.
+    sync_now: () => {
+      if (!snapshot.syncing) publish({ ...snapshot, syncing: true });
+    },
     mark_read: ({ key }) =>
       publish({
         ...snapshot,
