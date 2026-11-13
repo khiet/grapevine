@@ -142,13 +142,13 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 
 .ma, .mb, .mc { --r-s: 4px; --r-m: 8px; --r-full: 999px; }
 .ma { --m-win: #f2f2f7; --m-card: #fff; --m-text: #1c1c1e; --m-2: #636366; --m-line: rgba(0,0,0,.1); --m-fill: rgba(118,118,128,.14);
-  --m-acc: #0064d2; --m-acc-fg: #fff; --m-hover: rgba(0,100,210,.1); --m-red: #d92d20; --m-ok: #1a7431; --m-ok-bg: rgba(52,199,89,.16); --m-warn: #8a4a00; --m-warn-bg: rgba(255,159,10,.18); }
+  --m-acc: #0064d2; --m-acc-fg: #fff; --m-hover: rgba(0,100,210,.1); --m-red: #d92d20; --m-red-fg: #fff; --m-ok: #1a7431; --m-ok-bg: rgba(52,199,89,.16); --m-warn: #8a4a00; --m-warn-bg: rgba(255,159,10,.18); }
 .ma[data-mode="dark"] { --m-win: #1e1e1e; --m-card: #2c2c2e; --m-text: #f2f2f7; --m-2: #aeaeb2; --m-line: rgba(255,255,255,.12); --m-fill: rgba(118,118,128,.3);
-  --m-acc: #4da3ff; --m-acc-fg: #06203d; --m-hover: rgba(77,163,255,.2); --m-red: #ff453a; --m-ok: #30d158; --m-ok-bg: rgba(48,209,88,.2); --m-warn: #ffb340; --m-warn-bg: rgba(255,159,10,.22); }
+  --m-acc: #4da3ff; --m-acc-fg: #06203d; --m-hover: rgba(77,163,255,.12); --m-red: #ff453a; --m-red-fg: #2b0705; --m-ok: #6fe08e; --m-ok-bg: rgba(48,209,88,.2); --m-warn: #ffc266; --m-warn-bg: rgba(255,159,10,.22); }
 .mb { --m-win: #f4f3f8; --m-card: #fff; --m-text: #1b1726; --m-2: #5f5d6b; --m-line: rgba(27,23,38,.1); --m-fill: rgba(91,63,196,.08);
-  --m-acc: #5b3fc4; --m-acc-fg: #fff; --m-hover: rgba(91,63,196,.08); --m-red: #d92d20; --m-ok: #1a7431; --m-ok-bg: rgba(52,199,89,.16); --m-warn: #8a4a00; --m-warn-bg: rgba(255,159,10,.18); --m-acc-bg: rgba(91,63,196,.12); }
+  --m-acc: #5b3fc4; --m-acc-fg: #fff; --m-hover: rgba(91,63,196,.08); --m-red: #d92d20; --m-red-fg: #fff; --m-ok: #1a7431; --m-ok-bg: rgba(52,199,89,.16); --m-warn: #8a4a00; --m-warn-bg: rgba(255,159,10,.18); --m-acc-bg: rgba(91,63,196,.12); }
 .mb[data-mode="dark"] { --m-win: #1d1b24; --m-card: #2a2733; --m-text: #f1eff7; --m-2: #a6a3b3; --m-line: rgba(255,255,255,.1); --m-fill: rgba(185,166,255,.12);
-  --m-acc: #b9a6ff; --m-acc-fg: #1b1726; --m-hover: rgba(185,166,255,.1); --m-red: #ff6b61; --m-ok: #4cd471; --m-ok-bg: rgba(48,209,88,.18); --m-warn: #ffb340; --m-warn-bg: rgba(255,159,10,.2); --m-acc-bg: rgba(185,166,255,.18); }
+  --m-acc: #b9a6ff; --m-acc-fg: #1b1726; --m-hover: rgba(185,166,255,.1); --m-red: #ff6b61; --m-red-fg: #2b0705; --m-ok: #4cd471; --m-ok-bg: rgba(48,209,88,.18); --m-warn: #ffb340; --m-warn-bg: rgba(255,159,10,.2); --m-acc-bg: rgba(185,166,255,.18); }
 .mc { --m-win: #fff; --m-card: #fff; --m-text: #1b1726; --m-2: #5f5d6b; --m-line: rgba(27,23,38,.09); --m-fill: rgba(27,23,38,.06);
   --m-acc: #5b3fc4; --m-acc-fg: #fff; --m-hover: rgba(27,23,38,.045); --m-red: #b3261e; --m-ok: #1a7431; --m-warn: #8a4a00; --m-acc-bg: rgba(91,63,196,.1); }
 .mc[data-mode="dark"] { --m-win: #1d1b24; --m-card: #1d1b24; --m-text: #f1eff7; --m-2: #a6a3b3; --m-line: rgba(255,255,255,.09); --m-fill: rgba(255,255,255,.08);
@@ -167,14 +167,14 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 .m-sh { display: flex; align-items: center; gap: 6px; padding: 14px 4px 6px; position: sticky; top: 0; z-index: 1; background: var(--m-win); font-size: 12px; font-weight: 700; color: var(--m-2); }
 .m-sh .chev { transition: transform .15s; } .m-sh.open .chev { transform: rotate(90deg); }
 .m-count { min-width: 18px; padding: 0 6px; border-radius: var(--r-full); background: var(--m-fill); font-size: 11px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
-.m-count.red { background: var(--m-red); color: #fff; }
+.m-count.red { background: var(--m-red); color: var(--m-red-fg); }
 .m-sh .end { margin-left: auto; font-weight: 500; color: var(--m-acc); }
 .m-card { background: var(--m-card); border-radius: var(--r-m); overflow: hidden; }
 .m-card > * + * { border-top: 1px solid var(--m-line); }
 .av { border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; flex: none; position: relative; }
-.av.kl { background: #e8912d; } .av.dt { background: #47624f; } .av.ml { background: #3c6f8f; } .av.bot { background: #c96a3e; }
+.av.kl { background: #a85a0a; } .av.dt { background: #47624f; } .av.ml { background: #3c6f8f; } .av.bot { background: #c96a3e; }
 .org { position: absolute; right: -4px; bottom: -3px; width: 14px; height: 14px; border-radius: var(--r-s); box-shadow: 0 0 0 2px var(--m-card); }
-.org.tp { background: linear-gradient(135deg, #ff5a7d, #2f6bff); } .org.fi { background: #a78bfa; } .org.kh { background: #e8912d; border-radius: 50%; }
+.org.tp { background: linear-gradient(135deg, #ff5a7d, #2f6bff); } .org.fi { background: #a78bfa; } .org.kh { background: #a85a0a; border-radius: 50%; }
 .pill { padding: 0 7px; border-radius: var(--r-full); font-size: 11px; font-weight: 600; line-height: 17px; white-space: nowrap; }
 .pill.warn { background: var(--m-warn-bg); color: var(--m-warn); } .pill.ok { background: var(--m-ok-bg); color: var(--m-ok); } .pill.mute { background: var(--m-fill); color: var(--m-2); }
 .pill.turn { box-shadow: inset 0 0 0 1px currentColor; }
@@ -185,9 +185,9 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 .ma .row { display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center; padding: 9px 12px; }
 .ma .row.hov { background: var(--m-hover); }
 .ma .av { width: 30px; height: 30px; font-size: 11px; }
-.ma .unread { position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--r-full); background: var(--m-red); color: #fff; font-size: 11px; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px var(--m-card); }
+.ma .unread { position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--r-full); background: var(--m-red); color: var(--m-red-fg); font-size: 11px; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px var(--m-card); }
 .ma .l1 { display: flex; align-items: baseline; gap: 8px; }
-.ma .ttl { flex: 1; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ma .ttl { flex: 1; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .ma .row.un .ttl { font-weight: 700; }
 .ma .time { font-size: 11px; color: var(--m-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ma .time.turn { color: var(--m-acc); font-weight: 600; }
@@ -213,12 +213,13 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 .mb .tile.ok { background: var(--m-ok-bg); color: var(--m-ok); } .mb .tile.warn { background: var(--m-warn-bg); color: var(--m-warn); }
 .mb .tile.acc { background: var(--m-acc-bg); color: var(--m-acc); } .mb .tile.mute { background: var(--m-fill); color: var(--m-2); }
 .mb .l1 { display: flex; align-items: baseline; gap: 8px; }
-.mb .ttl { flex: 1; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mb .ttl { flex: 1; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .mb .row.un .ttl { font-weight: 700; }
 .mb .time { font-size: 11px; color: var(--m-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.mb .time.late { color: var(--m-warn); font-weight: 600; }
+.mb .time.late { color: var(--m-text); font-weight: 700; }
 .mb .l2 { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 12px; color: var(--m-2); }
 .mb .why { font-weight: 600; white-space: nowrap; }
+.mock .num { flex: none; }
 .mb .new { color: var(--m-red); font-weight: 600; white-space: nowrap; }
 .mb .av { width: 16px; height: 16px; font-size: 0; margin-left: auto; }
 .mb .bar { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; gap: 2px; padding: 3px; border-radius: var(--r-m); background: var(--m-card); box-shadow: 0 0 0 1px var(--m-line), 0 4px 12px -4px rgba(0,0,0,.3); }
@@ -235,7 +236,8 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 .mc .div { padding: 10px 14px 4px; font-size: 11px; font-weight: 700; color: var(--m-2); position: sticky; top: 0; background: var(--m-win); z-index: 1; }
 .mc .div.turn { color: var(--m-acc); }
 .mc .row { display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: center; height: 46px; padding: 0 14px; border-bottom: 1px solid var(--m-line); position: relative; }
-.mc .row.sel { background: var(--m-acc-bg); box-shadow: inset 2px 0 0 var(--m-acc); }
+.mc .row.sel { background: var(--m-acc-bg); box-shadow: inset 2px 0 0 var(--m-acc); height: auto; padding-block: 6px; }
+.mc .row.sel .ttl { white-space: normal; }
 .mc .av { width: 20px; height: 20px; font-size: 8.5px; }
 .mc .undot { position: absolute; left: 4px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--m-acc); }
 .mc .l1, .mc .l2 { display: flex; align-items: baseline; gap: 8px; }
@@ -254,7 +256,7 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 
 <header class="col">
   <h1>Grapevine UI review</h1>
-  <p class="lede">An audit of the popover and settings as they render today, then three directions drawn as live mocks. Every suggested change has an ID and a checkbox, so you can take A's tokens, B's sections and C's keyboard and leave the rest.</p>
+  <p class="lede">An audit of the popover and settings as they render today, then three directions drawn as live mocks. Every suggested change has an ID and a checkbox, so you can take A's tokens, B's sections and C's keyboard and leave the rest. Treat a set of picks as a shortlist to discuss, not a finished spec: the page flags picks that conflict or depend on each other, and lists the decisions the bigger ones still need.</p>
   <nav class="toc" aria-label="Sections">
     <a href="#today">Today</a><a href="#audit">Audit</a><a href="#a">A: Tidy</a><a href="#b">B: Your turn</a><a href="#c">C: Compact</a><a href="#mix">Suggested mix</a>
   </nav>
@@ -281,34 +283,36 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 <section id="audit" class="col">
   <h2>Audit</h2>
   <h3>Worth keeping</h3>
-  <p>The grouped-card list, the right-pinned timestamp column, the marker cluster at one edge, the two-click confirm on Fix with Copilot, real <code>&lt;button&gt;</code> elements with aria labels, the amber-not-red sync error, and the deadpan copy. None of the designs below throws these away.</p>
+  <p>The grouped-card list, the right-pinned timestamp column, the marker cluster at one edge, the two-click confirm on Fix with Copilot, real <code>&lt;button&gt;</code> elements with aria labels, the amber-not-red sync error, and the deadpan copy. A and B keep all of these. C gives up the cards and three-line titles for density, and says so.</p>
 
   <h3>Findings</h3>
   <div class="tablewrap"><table>
     <thead><tr><th>ID</th><th>Finding</th><th>Impact</th><th>Fixed by</th></tr></thead>
     <tbody>
-      <tr><td class="id">F1</td><td>No design tokens. Colours are literals repeated across <code>App.css</code>; dark mode is a second copy of every rule (lines 1146-1403).<small>Each new component needs two hand-matched colour sets; drift is already visible (three greys for "secondary").</small></td><td><span class="sev md">Medium</span></td><td class="fixby">A1</td></tr>
-      <tr><td class="id">F2</td><td>Secondary text fails WCAG AA. <code>#8e8e93</code> on the card is 3.26:1, on the window 2.92:1; dark <code>#7c7c80</code> is 3.35:1. Used at 11-12px for the number, repo, timestamp and deploy status.<small>AA needs 4.5:1 at these sizes. This is the text people scan to find a PR.</small></td><td><span class="sev hi">High</span></td><td class="fixby">A4</td></tr>
+      <tr><td class="id">F1</td><td>No design tokens. Colours are literals repeated across <code>App.css</code>; dark mode is a separate 250-line block of colour overrides (lines 1146-1403).<small>Each new component needs two hand-matched colour sets; drift is already visible (three greys for "secondary").</small></td><td><span class="sev md">Medium</span></td><td class="fixby">A1</td></tr>
+      <tr><td class="id">F2</td><td>Secondary text fails WCAG AA. <code>#8e8e93</code> on the card is 3.26:1, on the window 2.92:1; dark <code>#7c7c80</code> is 3.35:1. Used at 11-12px for the number, repo, timestamp and deploy status. The amber <code>#c76b00</code> of the sync error and settings warning is 3.40:1 on the window.<small>AA needs 4.5:1 at these sizes. This is the text people scan to find a PR.</small></td><td><span class="sev hi">High</span></td><td class="fixby">A4</td></tr>
       <tr><td class="id">F3</td><td>Accent blue fails as text and as a button fill in light mode. <code>#0a84ff</code> is the dark-mode system blue: 3.27:1 as "Mark all read" / "Settings" / "Clear all", 3.65:1 under white on Save and the update banner.</td><td><span class="sev hi">High</span></td><td class="fixby">A4 B4</td></tr>
-      <tr><td class="id">F4</td><td>"Your turn" has no single visual form. It is a grey "waiting 3h" in the timestamp slot, plus either a 1px ring on a pill or a blue tint on the glasses.<small>It is the product's headline signal (the tray count) and the least visible thing on the row.</small></td><td><span class="sev hi">High</span></td><td class="fixby">A5 B1 C6</td></tr>
+      <tr><td class="id">F4</td><td>"Your turn" has no single visual form. It is a grey "waiting 3h" in the timestamp slot, plus either a 1px ring on a pill or a blue tint on the glasses. A your-turn row whose start time is unknown has no label at all and keeps a plain timestamp.<small>It is the product's headline signal (the tray count) and the least visible thing on the row.</small></td><td><span class="sev hi">High</span></td><td class="fixby">A5 B1 C6</td></tr>
       <tr><td class="id">F5</td><td>Read and unread titles are 600 vs 700. The difference is nearly invisible; the list reads as a wall of bold.</td><td><span class="sev md">Medium</span></td><td class="fixby">A5</td></tr>
-      <tr><td class="id">F6</td><td>Seven corner radii (4, 5, 6, 7, 8, 9, 10px) and three separately declared "pill" shapes that are all fully round at their height.</td><td><span class="sev lo">Low</span></td><td class="fixby">A2</td></tr>
-      <tr><td class="id">F7</td><td>Six type sizes (13, 12, 11, 10, 9, 8px). The pills are 10px, the unread and repo counts 9px, the bot tag 8px uppercase.<small>macOS's smallest text style is 10pt; 11px is the practical floor on a 1x Linux display.</small></td><td><span class="sev md">Medium</span></td><td class="fixby">A3</td></tr>
-      <tr><td class="id">F8</td><td>Row actions exist only on hover (snooze, Fix with Copilot, dismiss), in 21 x 18px targets, and snooze replaces the timestamp, so a click on the time snoozes instead of opening.<small>WCAG 2.2 asks for 24 x 24px. There is no keyboard route beyond tabbing through every row.</small></td><td><span class="sev md">Medium</span></td><td class="fixby">A8 B5 C5</td></tr>
+      <tr><td class="id">F6</td><td>Seven pixel radii (4, 5, 6, 7, 8, 9, 10px) beside the round avatar, and three separately declared "pill" shapes that are all fully round at their height.</td><td><span class="sev lo">Low</span></td><td class="fixby">A2</td></tr>
+      <tr><td class="id">F7</td><td>Seven type sizes (15, 13, 12, 11, 10, 9, 8px). The pills are 10px, the unread and repo counts 9px, the bot tag 8px uppercase; 15px is the dismiss cross.<small>macOS's smallest text style is 10pt; 11px is the practical floor on a 1x Linux display.</small></td><td><span class="sev md">Medium</span></td><td class="fixby">A3</td></tr>
+      <tr><td class="id">F8</td><td>Row actions stay hidden until the row is hovered or the control is focused. Snooze and Fix with Copilot are about 21 x 18px and take the timestamp's place, so a click on the time snoozes instead of opening (the CSS comment accepts this cost).<small>WCAG 2.2 asks for 24 x 24px or equivalent spacing. The only keyboard route is tabbing through every row and control.</small></td><td><span class="sev md">Medium</span></td><td class="fixby">A8 B5 C5</td></tr>
       <tr><td class="id">F9</td><td>No shared focus style. Buttons fall back to the webview default and the filter field sets <code>outline: none</code>.</td><td><span class="sev md">Medium</span></td><td class="fixby">A7</td></tr>
       <tr><td class="id">F10</td><td>Sticky header gap. <code>.pr-list</code> has 4px top padding, so scrolled rows show through above the sticky section header.</td><td><span class="sev lo">Low</span></td><td class="fixby">A9</td></tr>
       <tr><td class="id">F11</td><td>Merged rows break the right edge: the invisible dismiss button reserves ~34px, so their timestamps and deploy status do not line up with other sections.</td><td><span class="sev lo">Low</span></td><td class="fixby">A9</td></tr>
       <tr><td class="id">F12</td><td>Two status vocabularies. Some states are words in pills (Ready to merge, CI: unit, Draft), others are glyphs you must hover (approved, review in/out, team, queue).</td><td><span class="sev md">Medium</span></td><td class="fixby">B2 C4</td></tr>
       <tr><td class="id">F13</td><td>The avatar carries up to three corner badges (unread count, org logo, bot tag) on 30px, and the org badge repeats the repo text beside it.</td><td><span class="sev lo">Low</span></td><td class="fixby">B3 C3</td></tr>
       <tr><td class="id">F14</td><td>Header actions are text links ("Mark all read", "Settings") taking about 40% of the header; the setup empty state says "Configure a token" but offers no button.</td><td><span class="sev lo">Low</span></td><td class="fixby">A6 B7</td></tr>
-      <tr><td class="id">F15</td><td>Settings uses different conventions from the list: uppercase labels, three unranked button styles, a checkbox list beside a custom switch.</td><td><span class="sev lo">Low</span></td><td class="fixby">A10</td></tr>
+      <tr><td class="id">F15</td><td>Settings uses different conventions from the list: uppercase labels, and three button styles with no clear primary.</td><td><span class="sev lo">Low</span></td><td class="fixby">A10</td></tr>
       <tr><td class="id">F16</td><td>The brand is absent. The icon is lilac grapes on aubergine; the UI is system blue throughout, which also looks borrowed on Ubuntu.</td><td><span class="sev lo">Low</span></td><td class="fixby">B4</td></tr>
+      <tr><td class="id">F17</td><td>Settings says "Grapevine only ever reads", but Fix with Copilot posts a comment under the user's name.<small>The note is what people rely on when choosing a token scope.</small></td><td><span class="sev md">Medium</span></td><td class="fixby">A12</td></tr>
+      <tr><td class="id">F18</td><td>The author's name is a hover tooltip on a span that cannot take focus, so it is mouse-only (screen readers do get it from the aria label).</td><td><span class="sev lo">Low</span></td><td class="fixby">A12 B3</td></tr>
     </tbody>
   </table></div>
 
   <h3>Evidence</h3>
   <div class="spec">
-    <h4>Shapes: seven radii in use</h4>
+    <h4>Shapes: seven pixel radii in use</h4>
     <p>Proposed scale is three steps: 4 (tags, keys), 8 (cards, fields, buttons), full (pills, counts, avatars).</p>
     <div class="radii">
       <div><i style="border-radius:4px"></i><b>4px</b>bot tag</div>
@@ -321,11 +325,12 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
     </div>
   </div>
   <div class="spec">
-    <h4>Type: six sizes inside 440px</h4>
+    <h4>Type: seven sizes inside 440px</h4>
     <p>Proposed scale is 13 / 12 / 11 with weights 400, 500 and 700.</p>
     <div class="types">
+      <span>15 / 400</span><span style="font-size:15px">&times; (dismiss on merged rows)</span>
       <span>13 / 600</span><span style="font-size:13px;font-weight:600">Retry failed webhook deliveries (every title)</span>
-      <span>12 / 400</span><span style="font-size:12px">#1284 teampave/checkout-api, section labels, deploy status</span>
+      <span>12 / 400, 700</span><span style="font-size:12px">#1284 teampave/checkout-api, deploy status; section labels in bold</span>
       <span>11 / 400</span><span style="font-size:11px">waiting 3h, repo headers, tooltips, sync line, settings notes</span>
       <span>10 / 600</span><span style="font-size:10px;font-weight:600">Ready to merge, CI: unit, Draft, section counts</span>
       <span>9 / 700</span><span style="font-size:9px;font-weight:700">3 (unread badge), repo counts</span>
@@ -342,6 +347,8 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
       <div class="con"><i style="background:#0a84ff;color:#fff">Save</i><span><b class="f">3.65</b>primary button</span></div>
       <div class="con"><i style="background:#2c2c2e;color:#7c7c80">#1284</i><span><b class="f">3.35</b>dark metadata</span></div>
       <div class="con"><i style="background:#ff3b30;color:#fff;font-size:9px">3</i><span><b class="f">3.55</b>unread count at 9px</span></div>
+      <div class="con"><i style="background:#f2f2f7;color:#c76b00">Offline</i><span><b class="f">3.40</b>sync error on window</span></div>
+      <div class="con"><i style="background:#f2f2f7;color:#8a4a00">Offline</i><span><b class="p">6.15</b>sync error, new</span></div>
       <div class="con"><i style="background:#fff;color:#636366">#1284</i><span><b class="p">5.99</b>metadata, new</span></div>
       <div class="con"><i style="background:#f2f2f7;color:#636366">web-app</i><span><b class="p">5.37</b>repo header, new</span></div>
       <div class="con"><i style="background:#f2f2f7;color:#0064d2">Settings</i><span><b class="p">5.01</b>blue link, new (A)</span></div>
@@ -354,7 +361,7 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 
 <section class="col">
   <h2>Three directions</h2>
-  <p>They are ordered by how much they change. A fixes the system and keeps the layout. B reorganises the list around what waits on you. C trades cards and avatars for density and the keyboard. The mocks show the same fixture PRs and scroll like the real list.</p>
+  <p>They are ordered by how much they change. A fixes the system and keeps the layout. B reorganises the list around what waits on you. C trades cards and avatars for density and the keyboard. The mocks show the same fixture PRs and scroll like the real list. Avatars are initials standing in for photos, and effort figures are rough guesses.</p>
   <div class="modebar">Mock theme
     <span class="seg" role="group" aria-label="Mock theme">
       <button type="button" data-setmode="light" aria-pressed="true">Light</button>
@@ -391,7 +398,7 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
   <div class="design">
     <div class="stick">
       <div class="mock mb" data-mode="light" id="mock-b"></div>
-      <p class="caption">The second row is shown hovered, with its action bar.</p>
+      <p class="caption">The second row is shown hovered. The action bar covers the end of that row while it is up.</p>
     </div>
     <div class="changes" id="changes-b"></div>
   </div>
@@ -402,12 +409,12 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
     <p class="eyebrow">Design C</p>
     <h2 style="margin-top:4px">Compact</h2>
     <p>Tabs replace the four collapsible sections, rows drop to a fixed 46px with one-line titles, and the cards go away. Ten PRs fit where six or seven do today. Every action has a key, and the footer shows the keys.</p>
-    <div class="fit"><div><b>Best if</b>you watch many repos and open the popover with a global shortcut.</div><div><b>Trade-off</b>long titles truncate (full title on hover); the look is plainer and less Mac-like.</div><div><b>Size</b>new tab and selection state plus key handling; about a week and a half.</div></div>
+    <div class="fit"><div><b>Best if</b>you watch many repos and open the popover with a global shortcut.</div><div><b>Trade-off</b>long titles truncate until the row is hovered or selected; the look is plainer and less Mac-like.</div><div><b>Size</b>new tab and selection state plus key handling; about a week and a half.</div></div>
   </div>
   <div class="design">
     <div class="stick">
       <div class="mock mc" data-mode="light" id="mock-c"></div>
-      <p class="caption">The second row is the keyboard selection.</p>
+      <p class="caption">The second row is the keyboard selection; a selected row shows its full title.</p>
     </div>
     <div class="changes" id="changes-c"></div>
   </div>
@@ -415,10 +422,18 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 
 <section id="mix" class="col">
   <h2>Suggested mix</h2>
-  <p>If you want a default: take all of A as the foundation, then B1, B2, B4 and B5 for the attention model and the brand, then C5 and C7 for the keyboard and the footer. That leaves cards and two-line titles in place and skips C's tabs.</p>
+  <p>If you want a default: take A except A8 as the foundation, then B1, B2, B4 and B5 for the attention model and the brand, then C5 and C7 for the keyboard and the footer. That leaves cards and three-line titles in place and skips C's tabs. B4's grape replaces the blue values in A4; the contrast work in A4 still applies.</p>
   <p><button type="button" class="btn" id="usemix">Tick the suggested mix</button></p>
   <h3>Picks that conflict</h3>
-  <p><b>B1 and C1</b> both restructure the sections; choose one. <b>B3 and C3</b> both demote the avatar in different ways. <b>B2 and C4</b> are two spellings of the same idea (states in words); B2 keeps pills and tiles, C4 is dot plus text. Everything in A combines with anything.</p>
+  <p><b>Choose one of each pair:</b> B1 or C1 (both restructure the sections; C6 also assumes C1's single list, so it clashes with B1). B3 or C3 (two ways to demote the avatar). B2 or C4 (two spellings of states in words). A8 or B5 (two homes for the row actions).</p>
+  <p><b>Needs another pick first:</b> B4 and C8 need A1's tokens. C8 needs C3. C6 needs C1. C7 needs C5 for its hints and A11 for its button. C5's tab keys only exist with C1.</p>
+  <p>The bar at the bottom warns when your ticks hit one of these.</p>
+  <h3>Decisions the big picks still need</h3>
+  <p><b>B1 and C1.</b> While filtering, do matches still show under their original sections (today a filter opens every section and reveals snoozed matches), and does the Your turn count stay equal to the tray number or become the number of visible matches? Where does a row go the moment you act on it, and where does a snoozed your-turn row live?</p>
+  <p><b>B2 and C4.</b> The priority order when a PR is approved, running checks and blocked at once.</p>
+  <p><b>C5.</b> The mock states one keyboard model; it has not been tried against the filter's autofocus or a screen reader.</p>
+  <h3>Not covered</h3>
+  <p>The mocks do not draw the repository browser, manual repo entry, token errors, the refresh interval, the update banner, snoozed groups, the Fix with Copilot confirm and failure states, or deploy links. A's changes restyle them through tokens; B and C would each need those states designed before building. Nothing here was tested with enlarged system text or on Ubuntu's font.</p>
 </section>
 
 </div>
@@ -426,6 +441,7 @@ td small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px
 <div class="pickbar"><div class="in">
   <strong id="pickcount">0 picked</strong>
   <output id="picklist">Tick changes to build a list</output>
+  <span id="pickwarn" style="flex-basis:100%;order:9;font-size:12.5px;color:var(--warn)" hidden></span>
   <button type="button" class="btn" id="clear">Clear</button>
   <button type="button" class="btn pri" id="copy">Copy picks</button>
   <textarea id="copyout" hidden readonly aria-label="Picked changes"></textarea>
@@ -469,7 +485,7 @@ const PRS = [
   { n: 88, t: "Rename the spacing scale to t-shirt sizes", r: "khiet/design-tokens", o: "kh", a: "ml", sec: "part", st: "review", turn: 1, time: "2d" },
   { n: 2317, t: "Add saved payment methods to the checkout form", r: "teampave/web-app", o: "tp", a: "ml", sec: "part", st: "team", un: 1, time: "14:58" },
   { n: 412, t: "Stream podcast RSS imports instead of buffering them", r: "fuseinsight/ingest", o: "fi", a: "dt", sec: "part", st: "approved", time: "12:10" },
-  { n: 1279, t: "Fix rounding in multi-currency refunds", r: "teampave/checkout-api", o: "tp", a: "dt", sec: "part", st: "conflict", un: 2, time: "28 Sep" },
+  { n: 1279, t: "Fix rounding in multi-currency refunds", r: "teampave/checkout-api", o: "tp", a: "dt", sec: "part", st: "conflict", un: 2, time: "28 Sep", note: "8 new from bots" },
 ];
 const INIT = { kl: "KL", dt: "DT", ml: "ML" };
 // words: the spelled-out state used by B and C. tone picks the colour.
@@ -506,12 +522,12 @@ function marksA(p) {
 function rowA(p, i) {
   const hov = i === 0;
   const time = hov
-    ? `<span class="acts"><span title="Fix with Copilot">${ic("wrench", 14)}</span><span title="Snooze until it changes">${ic("moon", 14)}</span></span>`
+    ? `<span class="acts"><span title="Snooze until it changes">${ic("moon", 14)}</span></span>`
     : `<span class="time ${p.turn ? "turn" : ""}">${p.turn ? "waiting " : ""}${p.time}</span>`;
   return `<div class="row ${p.un ? "un" : ""} ${hov ? "hov" : ""}">
     <span class="av ${p.a}">${INIT[p.a]}<span class="org ${p.o}"></span>${p.un ? `<span class="unread">${p.un}</span>` : ""}</span>
     <span style="min-width:0"><span class="l1"><span class="ttl">${p.t}</span>${time}</span>
-    <span class="l2"><span>#${p.n}</span><span class="trunc">${p.r}</span><span class="marks">${marksA(p)}</span></span></span></div>`;
+    <span class="l2"><span class="num">#${p.n}</span><span class="trunc">${p.r}</span>${p.note ? `<span class="trunc">${p.note}</span>` : ""}<span class="marks">${marksA(p)}</span></span></span></div>`;
 }
 function mergedA() {
   return `<div class="row"><span class="av ml">ML<span class="org tp"></span></span><span style="min-width:0"><span class="l1"><span class="ttl">Show delivery ETA on the order confirmation</span><span class="time">15:36</span></span><span class="l2"><span>#2309</span><span class="trunc">teampave/web-app</span><span class="marks">Deploying</span></span></span></div>
@@ -538,7 +554,7 @@ function rowB(p, i, hov) {
   return `<div class="row ${p.un ? "un" : ""} ${hov ? "hov" : ""}">
     <span class="tile ${s.tone}">${ic(s.icon, 15)}</span>
     <span style="min-width:0"><span class="l1"><span class="ttl">${p.t}</span><span class="time ${late ? "late" : ""}">${p.turn ? "waiting " : ""}${p.time}</span></span>
-    <span class="l2"><span class="why t-${s.tone}">${s.words}</span><span class="trunc">${short(p.r)} #${p.n}</span>${p.un ? `<span class="new">${p.un} new</span>` : ""}<span class="av ${p.a}" title="@${p.a}"></span></span></span>
+    <span class="l2"><span class="why t-${s.tone}">${s.words}</span><span class="num">#${p.n}</span><span class="trunc">${p.r}</span>${p.un ? `<span class="new">${p.un} new</span>` : ""}<span class="av ${p.a}" title="@${p.a}"></span></span></span>
     ${hov ? `<span class="bar"><span>${ic("moon", 13)}Snooze</span><span class="p">Open</span></span>` : ""}</div>`;
 }
 const turn = PRS.filter((p) => p.turn), rest = (sec) => PRS.filter((p) => !p.turn && p.sec === sec);
@@ -548,7 +564,7 @@ document.getElementById("mock-b").innerHTML = head() +
   ${sh("Participated", 3, true, "", '<span class="m-count red" style="margin-left:0">3</span>')}<div class="m-card">${rest("part").map((p) => rowB(p)).join("")}</div>
   ${sh("All", 3, false)}${sh("Merged", 2, false)}
   <div class="m-sh" style="position:static;font-weight:500">Zero state for Your turn:</div>
-  <div class="m-card"><div class="zero"><span class="t-acc">${ic("grape", 18)}</span>Nothing to wine about. 6 open PRs are waiting on others.</div></div></div>
+  <div class="m-card"><div class="zero"><span class="t-acc">${ic("grape", 18)}</span>Nothing to wine about. 6 other PRs are open.</div></div></div>
   <div class="m-foot">Synced 15:41<span class="sp">${ic("refresh", 13)}</span></div>`;
 
 // ---------- C: Compact ----------
@@ -557,14 +573,14 @@ function rowC(p, sel) {
   return `<div class="row ${p.un ? "un" : ""} ${sel ? "sel" : ""}">${p.un ? '<span class="undot"></span>' : ""}
     <span class="av ${p.a}">${INIT[p.a]}</span>
     <span style="min-width:0"><span class="l1"><span class="ttl trunc">${p.t}</span><span class="time">${p.time}</span></span>
-    <span class="l2"><span class="ref trunc">${short(p.r)} #${p.n}${p.un ? ` &middot; ${p.un} new` : ""}</span><span class="st t-${s.tone}"><i></i>${s.words}</span></span></span></div>`;
+    <span class="l2"><span class="num">#${p.n}</span><span class="ref trunc">${p.r}${p.un ? ` &middot; ${p.un} new` : ""}</span><span class="st t-${s.tone}"><i></i>${s.words}</span></span></span></div>`;
 }
 const tab = (l, c, on) => `<span class="tab ${on ? "on" : ""}">${l}<span class="m-count">${c}</span></span>`;
-document.getElementById("mock-c").innerHTML = head("<kbd>/</kbd>") +
+document.getElementById("mock-c").innerHTML = head() +
   `<div class="tabs">${tab("Inbox", 10, true)}${tab("All", 3)}${tab("Merged", 2)}</div>
   <div class="m-list"><div class="div turn">Waiting on you &middot; 4</div>${turn.map((p, i) => rowC(p, i === 1)).join("")}
-  <div class="div">Waiting on others &middot; 6</div>${PRS.filter((p) => !p.turn).map((p) => rowC(p)).join("")}</div>
-  <div class="m-foot"><span class="keys"><span><kbd>J</kbd> <kbd>K</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>S</kbd> snooze</span></span><span class="sp">Synced 15:41 ${ic("refresh", 13)}</span></div>`;
+  <div class="div">Everything else &middot; 6</div>${PRS.filter((p) => !p.turn).map((p) => rowC(p)).join("")}</div>
+  <div class="m-foot"><span class="keys"><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>Tab</kbd> then <kbd>S</kbd> snooze</span></span><span class="sp">Synced 15:41 ${ic("refresh", 13)}</span></div>`;
 
 // ---------- changes ----------
 // [id, title, what and why, effort, touches, findings]
@@ -573,34 +589,35 @@ const CH = {
     ["A1", "Design tokens", "Move every colour, radius and type size into CSS custom properties on :root, and make dark mode a single block that redefines the colour tokens. Deletes most of the 250-line dark override section and makes B4 a one-line change later.", "M", "App.css", "F1"],
     ["A2", "Three-step radius scale", "4px for tags and key caps, 8px for cards, fields and buttons, full for pills, counts and avatars. Replaces 4, 5, 6, 7, 8, 9 and 10px.", "S", "App.css", "F6"],
     ["A3", "Three-size type scale", "13 / 12 / 11px with weights 400, 500 and 700. Pills, counts and the bot tag move up to 11px; pill height goes from 14 to 17px to hold it.", "S", "App.css", "F7"],
-    ["A4", "AA contrast for text and fills", "Secondary text #8e8e93 becomes #636366 (dark: #aeaeb2). Accent text and fills move from #0a84ff to #0064d2 in light mode (dark: #4da3ff with dark text on fills). Unread red darkens to #d92d20 so the count passes at 11px.", "S", "App.css", "F2 F3"],
-    ["A5", "Weight and colour carry state", "Read titles drop to 500 and unread stay 700, so unread is visible at a glance. The 'waiting 3h' label turns accent-coloured and semibold, giving your-turn one consistent form on every row.", "S", "App.css", "F4 F5"],
+    ["A4", "AA contrast for text and fills", "Secondary text #8e8e93 becomes #636366 (dark: #aeaeb2). Accent text and fills move from #0a84ff to #0064d2 in light mode (dark: #4da3ff with dark text on fills). Unread red darkens to #d92d20 so the count passes at 11px; in dark mode the count uses dark numerals on the bright red. The amber of the sync error and settings warning becomes #8a4a00. Done properly this means checking every text and fill pair in both themes, hovered rows included.", "M", "App.css", "F2 F3"],
+    ["A5", "Weight and colour carry state", "Read titles drop to 500 and unread stay 700, so unread is visible at a glance. The 'waiting 3h' label turns accent-coloured and semibold. A your-turn row with no known start shows 'your turn' in the same style instead of a bare timestamp, so every your-turn row carries the cue.", "S", "popoverView.ts, PrList.tsx, App.css", "F4 F5"],
     ["A6", "Icon buttons in the header", "Mark all read and Settings become 28px icon buttons with tooltips and aria labels; a red dot on the first shows there is something to mark. The filter field gains about 110px.", "S", "App.tsx, App.css", "F14"],
     ["A7", "One focus ring", "A single :focus-visible rule (2px accent, 2px offset, inset on rows) for every control, and the filter field gets its ring back.", "S", "App.css", "F9"],
-    ["A8", "24px action targets in a fixed slot", "Snooze and Fix become 24 x 24px buttons that swap in for the timestamp as a pair, so the pointer never lands on a control it did not see. Dismiss on merged rows uses the same slot.", "M", "PrList.tsx, App.css", "F8"],
+    ["A8", "24px action targets", "Snooze, Fix and dismiss grow to 24 x 24px. This fixes target size only: the controls still take the timestamp's place on hover or focus, so the time is still not a safe place to click. B5 moves them out of that slot, and C5 gives them keys.", "S", "PrList.tsx, App.css", "F8 in part"],
     ["A9", "Fix the two layout glitches", "Move the list's 4px top padding into the first section header so rows no longer show above the sticky header, and float the merged dismiss button so merged timestamps align with every other row.", "S", "App.css", "F10 F11"],
-    ["A10", "Settings matches the list", "Sentence-case bold labels like the list's section headers, and one button ranking: filled for the single primary action in a card, bordered for secondary, text for destructive or minor.", "S", "SettingsView.tsx, App.css", "F15"],
+    ["A10", "Settings matches the list", "Sentence-case bold labels like the list's section headers, and one button ranking: filled for the single primary action in a card, bordered for secondary, text for destructive or minor. The repo checkboxes and the launch switch stay as they are: a pick-many list and an on/off setting are different controls.", "S", "SettingsView.tsx, App.css", "F15"],
     ["A11", "Sync now in the footer", "A refresh icon button beside 'Synced 15:41', which also turns the amber error line into something you can act on. New capability, small.", "M", "App.tsx, backend", ""],
+    ["A12", "Two small truths", "Reword the token note: Grapevine reads, except that Fix with Copilot posts one comment when you confirm it. Put the author's handle in the row's accessible name and title so it is reachable without a mouse.", "S", "SettingsView.tsx, PrList.tsx", "F17 F18"],
   ],
   b: [
     ["B1", "A pinned Your turn section", "The PRs waiting on you leave Mine and Participated and sit in one section at the top, always open, whose count equals the tray number. The other sections show what is left.", "L", "popoverView.ts, PrList.tsx, tests", "F4"],
-    ["B2", "Every state in words", "One reason per row, coloured by tone: 'Review requested', 'CI failing: unit', 'Ready to merge', 'In merge queue, 2nd'. Replaces the glyph cluster and the tooltips needed to decode it; secondary reasons fold into '+1'.", "M", "popoverView.ts, PrList.tsx", "F12"],
-    ["B3", "State tile leads, avatar supports", "A 28px tinted tile with the state icon replaces the avatar as the row's lead; the author becomes a 16px avatar at the end of the metadata line. Unread becomes '3 new' in red plus the bold title, and the org badge goes (the repo is already in text).", "M", "PrList.tsx, App.css", "F13"],
+    ["B2", "Every state in words", "One reason per row, coloured by tone: 'Review requested', 'CI failing: unit', 'Ready to merge', 'In merge queue, 2nd'. Replaces the glyph cluster. A PR can hold several states at once (approved, checks running, blocked), so this needs an explicit priority order: the mock shows the top one, and the rest fold into '+1' with the full list in a tooltip and the aria label, as the blocked pill does today. The mock does not show a row with several.", "M", "popoverView.ts, PrList.tsx, App.css", "F12"],
+    ["B3", "State tile leads, avatar supports", "A 28px tinted tile with the state icon replaces the avatar as the row's lead; the author becomes a 16px avatar at the end of the metadata line. Unread becomes '3 new' in red plus the bold title, and the org badge goes; the full owner/repo stays in text with the number first at a fixed position.", "M", "PrList.tsx, App.css", "F13 F18"],
     ["B4", "Grape accent", "The icon's violet (#5b3fc4 light, #b9a6ff dark) replaces system blue for your-turn, links, primary buttons, focus and hover. 7.1:1 as text on white; looks native to neither macOS nor GNOME, which is the point on two platforms.", "S", "App.css (after A1)", "F3 F16"],
-    ["B5", "Labelled hover action bar", "Hover or focus shows a small bar at the row's right with worded 24px buttons (Snooze, Fix with Copilot, Open). The timestamp no longer turns into a control. The same actions go in a right-click menu.", "M", "PrList.tsx, App.css", "F8"],
-    ["B6", "Waiting age escalates", "'waiting 3h' stays neutral; from one day it turns amber and semibold. Stale reviews stand out without another badge.", "S", "popoverView.ts, App.css", "F4"],
-    ["B7", "Empty states that do something", "Setup gets an 'Open Settings' button. An empty Your turn shows the grape mark with 'Nothing to wine about' and how many PRs wait on others.", "S", "App.tsx, PrList.tsx", "F14"],
+    ["B5", "Labelled hover action bar", "Hover or focus shows a small bar at the row's right with worded 24px buttons (Snooze, Fix with Copilot, Open). The timestamp no longer turns into a control. The bar covers the end of the row's text while it is up, so the same actions also go in a right-click menu, which is the stable route.", "M", "PrList.tsx, App.css", "F8"],
+    ["B6", "Waiting age escalates", "'waiting 3h' stays quiet; from one day it turns bold in the primary text colour. Stale reviews stand out without borrowing amber, which stays reserved for blocked.", "S", "popoverView.ts, PrList.tsx, App.css", "F4"],
+    ["B7", "Empty states that do something", "Setup gets an 'Open Settings' button. An empty Your turn shows the grape mark with 'Nothing to wine about' and how many other PRs are open.", "S", "App.tsx, PrList.tsx", "F14"],
     ["B8", "Collapsed headers summarise", "A collapsed header adds a short phrase for what is inside ('1 blocked', '1 deploying') beside its counts, so All and Merged can stay shut by default without hiding news.", "S", "PrList.tsx", ""],
   ],
   c: [
     ["C1", "Tabs instead of four sections", "Inbox (Mine plus Participated), All and Merged as tabs with counts. One list is visible at a time, so there are no sticky headers or collapse state to manage.", "L", "App.tsx, popoverView.ts, PrList.tsx, tests", ""],
-    ["C2", "Fixed 46px rows", "One-line titles with the full title in a tooltip; a second line holds repo, number and state. Ten rows fit in the popover instead of six or seven, and every row is the same height.", "M", "PrList.tsx, App.css", ""],
+    ["C2", "Fixed 46px rows", "One-line titles; the hovered or keyboard-selected row shows its full title. A second line holds number, repo and state. About ten rows fit in the mock where the current design shows six or seven; untested with enlarged system text.", "M", "PrList.tsx, App.css", ""],
     ["C3", "Flat list, small avatars", "No cards: full-width rows with hairlines on a single surface. Avatars shrink to 20px with no corner badges; unread is a dot in the gutter plus the bold title and '3 new' in the metadata.", "M", "PrList.tsx, App.css", "F13"],
-    ["C4", "State as dot plus text", "A 6px dot and coloured words at the right of the second line, in place of pills. Same tones as today; less chrome per row.", "M", "popoverView.ts, PrList.tsx", "F12"],
-    ["C5", "Keyboard navigation", "J/K or arrows move a visible selection, Enter opens, S snoozes, E marks read or dismisses, / focuses the filter, 1-3 switch tabs. Works with cards too, so it can be taken alone.", "M", "PrList.tsx, App.tsx", "F8"],
-    ["C6", "Waiting on you divider", "Inside the Inbox tab, a labelled divider splits 'Waiting on you' from 'Waiting on others'. A lighter alternative to B1 that keeps one list.", "S", "popoverView.ts, PrList.tsx", "F4"],
-    ["C7", "Footer as a status bar", "Key hints on the left, sync time and a Sync now button on the right; a sync error replaces the hints with the message and Retry.", "S", "App.tsx, App.css", ""],
-    ["C8", "One surface colour", "Window and row share one background (white, or aubergine-black in dark); hover is a neutral tint and the accent tint is reserved for the keyboard selection.", "S", "App.css (after A1)", ""],
+    ["C4", "State as dot plus text", "A 6px dot and coloured words at the right of the second line, in place of pills. Same tones as today; less chrome per row. Needs the same priority order and '+1' overflow as B2.", "M", "popoverView.ts, PrList.tsx, App.css", "F12"],
+    ["C5", "Keyboard navigation", "The filter keeps focus when the popover opens, as now, so letters always type. Down and Up move a visible selection from the filter (the Spotlight model) and Enter opens it. Tab moves focus into the list, where S snoozes or wakes and Delete dismisses a merged row; Escape returns to the filter. After a row leaves, selection moves to the next one. Works with cards too, so it can be taken alone.", "M", "PrList.tsx, App.tsx", "F8"],
+    ["C6", "Waiting on you divider", "Inside the Inbox tab, a labelled divider splits 'Waiting on you' from 'Waiting on others'. A lighter alternative to B1 that keeps one list. Needs C1's Inbox.", "S", "popoverView.ts, PrList.tsx", "F4"],
+    ["C7", "Footer as a status bar", "Key hints on the left, sync time and a Sync now button on the right; a sync error replaces the hints with the message and Retry. The hints need C5 and the button needs A11.", "S", "App.tsx, App.css", ""],
+    ["C8", "One surface colour", "Window and row share one background (white, or aubergine-black in dark); hover is a neutral tint and the accent tint is reserved for the keyboard selection. Only works without cards (C3): on a white card over a grey window a neutral hover reads as a hole, which is why the current hover is tinted.", "S", "App.css (after A1)", ""],
   ],
 };
 const EFF = { S: "Small, under half a day", M: "Medium, about a day", L: "Large, several days" };
@@ -616,11 +633,18 @@ const boxes = [...document.querySelectorAll(".chg input")];
 const KEY = "grapevine-ui-review-picks";
 const store = { get() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }, set(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch {} } };
 const picked = () => boxes.filter((b) => b.checked);
+const CONFLICTS = [["B1", "C1"], ["B1", "C6"], ["B3", "C3"], ["B2", "C4"], ["A8", "B5"]];
+const NEEDS = { B4: ["A1"], C8: ["A1", "C3"], C6: ["C1"], C7: ["C5", "A11"] };
 function sync() {
   const p = picked();
   document.getElementById("pickcount").textContent = `${p.length} picked`;
   document.getElementById("picklist").textContent = p.length ? p.map((b) => b.value).join(", ") : "Tick changes to build a list";
   store.set(p.map((b) => b.value));
+  const has = new Set(p.map((b) => b.value)), w = [];
+  for (const [a, b] of CONFLICTS) if (has.has(a) && has.has(b)) w.push(`${a} and ${b} conflict`);
+  for (const [id, needs] of Object.entries(NEEDS)) if (has.has(id)) for (const n of needs) if (!has.has(n)) w.push(`${id} needs ${n}`);
+  const warn = document.getElementById("pickwarn");
+  warn.hidden = !w.length; warn.textContent = w.join("; ");
 }
 const saved = store.get();
 boxes.forEach((b) => { b.checked = saved.includes(b.value); b.addEventListener("change", sync); });
@@ -628,7 +652,7 @@ sync();
 document.getElementById("clear").onclick = () => { boxes.forEach((b) => (b.checked = false)); sync(); };
 document.getElementById("usemix").onclick = () => {
   const mix = ["B1", "B2", "B4", "B5", "C5", "C7"];
-  boxes.forEach((b) => (b.checked = b.value.startsWith("A") || mix.includes(b.value)));
+  boxes.forEach((b) => (b.checked = (b.value.startsWith("A") && b.value !== "A8") || mix.includes(b.value)));
   sync();
 };
 document.getElementById("copy").onclick = async (e) => {
