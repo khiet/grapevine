@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { appearance as popoverAppearance } from "./appearance";
 import * as backend from "./backend";
-import type { TokenStatus } from "./backend";
+import type { Appearance, TokenStatus } from "./backend";
 import { checkForUpdates, updateStatusLabel, useUpdateState } from "./updater";
 
 // The query parameters pre-tick the scope and fill the description. This is
@@ -19,6 +20,40 @@ export function pollLabel(secs: number): string {
   if (secs < 60 || secs % 60 !== 0) return `${secs} seconds`;
   const minutes = secs / 60;
   return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
+const APPEARANCES: [Appearance, string][] = [
+  ["system", "System"],
+  ["light", "Light"],
+  ["dark", "Dark"],
+];
+
+/** The General card's appearance picker. `value` is null until the stored
+ * choice arrives, so the select never shows a default the user did not pick. */
+export function AppearanceRow({
+  value,
+  onChange,
+}: {
+  value: Appearance | null;
+  onChange: (appearance: Appearance) => void;
+}) {
+  return (
+    <label className="settings-row settings-field-row">
+      <span>Appearance</span>
+      <select
+        value={value ?? ""}
+        disabled={value === null}
+        onChange={(event) => onChange(event.target.value as Appearance)}
+      >
+        {value === null && <option value="" />}
+        {APPEARANCES.map(([appearance, label]) => (
+          <option key={appearance} value={appearance}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 export interface RepoEntry {
@@ -119,6 +154,7 @@ function SettingsView() {
   // null until the stored value arrives, so the select never flashes a
   // default the user did not pick.
   const [pollSecs, setPollSecs] = useState<number | null>(null);
+  const [appearance, setAppearance] = useState<Appearance | null>(null);
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [generalError, setGeneralError] = useState("");
 
@@ -129,6 +165,7 @@ function SettingsView() {
     backend.tokenStatus().then(setTokenStatus).catch(() => {});
     backend.listRepos().then(setRepos).catch(() => {});
     backend.getPollInterval().then(setPollSecs).catch(() => {});
+    backend.getAppearance().then(setAppearance).catch(() => {});
     backend.getLaunchAtLogin().then(setLaunchAtLogin).catch(() => {});
     backend.appVersion().then(setAppVersion).catch(() => {});
   }, []);
@@ -152,6 +189,15 @@ function SettingsView() {
     setGeneralError("");
     try {
       setPollSecs(await backend.setPollInterval(secs));
+    } catch (error) {
+      setGeneralError(String(error));
+    }
+  }
+
+  async function changeAppearance(next: Appearance) {
+    setGeneralError("");
+    try {
+      setAppearance(await popoverAppearance.choose(next));
     } catch (error) {
       setGeneralError(String(error));
     }
@@ -412,6 +458,7 @@ function SettingsView() {
               ))}
             </select>
           </label>
+          <AppearanceRow value={appearance} onChange={changeAppearance} />
           <label className="settings-row settings-field-row">
             <span>Launch at login</span>
             <input

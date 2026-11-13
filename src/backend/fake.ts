@@ -15,6 +15,7 @@ export function createFakeBackend(
   onPublish: (snapshot: Snapshot) => void = () => {},
 ): FakeBackend {
   let snapshot = initial;
+  let appearance = "system";
   const subscribers = new Set<(snapshot: Snapshot) => void>();
 
   const publish = (next: Snapshot) => {
@@ -25,6 +26,8 @@ export function createFakeBackend(
 
   const commands: Record<string, (args: Record<string, unknown>) => unknown> = {
     get_prs: () => snapshot,
+    get_appearance: () => appearance,
+    set_appearance: (args) => (appearance = args.appearance as string),
     // Claims the sync as the backend does and leaves it running: the fake
     // has no GitHub to ask, so whoever drives it publishes the result.
     sync_now: () => {

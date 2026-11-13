@@ -1,7 +1,12 @@
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-use crate::{github, keychain, launch_at_login, pr_state, settings, store::Store, sync};
+use crate::{
+    github, keychain, launch_at_login, pr_state,
+    settings::{self, Appearance},
+    store::Store,
+    sync,
+};
 
 /// Settings changes should show up in the PR list right away, not after the
 /// remainder of the current poll interval.
@@ -206,6 +211,21 @@ pub async fn set_poll_interval(app: AppHandle, secs: u64) -> Result<u64, String>
     })?;
     request_sync(&app);
     Ok(secs)
+}
+
+#[tauri::command]
+pub async fn get_appearance(app: AppHandle) -> Result<Appearance, String> {
+    Ok(settings::load(&app.state::<Store>())?.appearance)
+}
+
+/// Stores the choice only. Applying it is the frontend's job.
+#[tauri::command]
+pub async fn set_appearance(app: AppHandle, appearance: Appearance) -> Result<Appearance, String> {
+    settings::update(&app.state::<Store>(), |settings| {
+        settings.appearance = appearance;
+        Ok(())
+    })?;
+    Ok(appearance)
 }
 
 #[tauri::command]

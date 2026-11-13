@@ -162,6 +162,7 @@ mod tests {
     use crate::{
         fix_requests::FixRequest,
         merged::{Deploy, DeployState, MergedPr},
+        settings::Appearance,
         snooze::Snooze,
     };
 
@@ -190,12 +191,14 @@ mod tests {
             repos: vec!["acme/widgets".into()],
             github_login: Some("someone".into()),
             poll_interval_secs: 300,
+            appearance: Appearance::Dark,
         };
         store.save(&SETTINGS, &settings).unwrap();
         let loaded = store.load(&SETTINGS).unwrap();
         assert_eq!(loaded.repos, ["acme/widgets"]);
         assert_eq!(loaded.github_login.as_deref(), Some("someone"));
         assert_eq!(loaded.poll_interval_secs, 300);
+        assert_eq!(loaded.appearance, Appearance::Dark);
     }
 
     #[test]

@@ -167,10 +167,20 @@ request.
     it.
 13. Choose "Create one on GitHub". **Expect:** GitHub's new token page opens
     in the browser from step 1.
-14. Switch the desktop to the dark style (Settings, Appearance) and open the
-    popover, then Settings. **Expect:** both views switch to the dark palette
-    with no light-on-light or dark-on-dark text. **Screenshot** both.
-15. Run `gsettings set org.gnome.desktop.interface font-name 'DejaVu Serif 11'`,
+14. With Appearance in Grapevine's Settings on "System", switch the desktop
+    to the dark style (Settings, Appearance) while the popover is open, then
+    open Grapevine's Settings. **Expect:** both views switch to the dark
+    palette without a restart, with no light-on-light or dark-on-dark text.
+    **Screenshot** both.
+15. With the desktop still dark, set Appearance to "Light". **Expect:** both
+    views switch to the light palette at once, the menus included.
+    **Screenshot** Settings.
+16. Switch the desktop back to the light style and set Appearance to "Dark".
+    **Expect:** both views switch to the dark palette at once.
+17. Quit Grapevine and start it again. **Expect:** the popover opens dark and
+    Appearance still says "Dark". Set it back to "System". **Expect:** the
+    popover turns light, matching the desktop.
+18. Run `gsettings set org.gnome.desktop.interface font-name 'DejaVu Serif 11'`,
     quit Grapevine and start it again. **Expect:** the popover text is set in
     the serif font, like the top panel. Run
     `gsettings reset org.gnome.desktop.interface font-name` afterwards.

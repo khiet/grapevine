@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import "./App.css";
+import { appearance } from "./appearance";
 import {
   EMPTY_SNAPSHOT,
   markAllRead,
@@ -182,6 +183,11 @@ function App() {
   const listKeys = useListKeys(
     !inSettings && content.kind === "list" ? content : null,
   );
+
+  // A layout effect, so the first paint is already in the right palette.
+  useLayoutEffect(() => {
+    void appearance.start();
+  }, []);
 
   useEffect(() => {
     startUpdateChecks();

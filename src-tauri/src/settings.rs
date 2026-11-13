@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::store::{self, Store};
 
@@ -12,6 +12,25 @@ pub const DEFAULT_POLL_SECS: u64 = 180;
 
 fn default_poll_secs() -> u64 {
     DEFAULT_POLL_SECS
+}
+
+/// Which palette the popover draws in. `System` follows the desktop's light
+/// or dark style; the frontend resolves it, since only the webview can see
+/// that style on both platforms.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// Reads an appearance of any shape, so that a hand-edited value this build
+/// does not know falls back to `System` instead of failing the whole file.
+fn lenient_appearance<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Appearance, D::Error> {
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(raw).unwrap_or_default())
 }
 
 /// App state persisted to `settings.json` in the app data directory. The
@@ -26,6 +45,8 @@ pub struct Settings {
     /// clamped on read, so a hand-edited file cannot break the loop.
     #[serde(default = "default_poll_secs")]
     pub poll_interval_secs: u64,
+    #[serde(deserialize_with = "lenient_appearance")]
+    pub appearance: Appearance,
 }
 
 impl Default for Settings {
@@ -34,6 +55,7 @@ impl Default for Settings {
             repos: Vec::new(),
             github_login: None,
             poll_interval_secs: DEFAULT_POLL_SECS,
+            appearance: Appearance::default(),
         }
     }
 }
@@ -100,6 +122,49 @@ mod tests {
 
         let (_dir, store) = store_with_settings_file(r#"{"poll_interval_secs": 86400}"#);
         assert_eq!(load(&store).unwrap().poll_interval_secs, 3600);
+    }
+
+    /// Settings files written before the appearance setting have no such
+    /// field.
+    #[test]
+    fn a_settings_file_without_an_appearance_follows_the_system() {
+        let (_dir, store) = store_with_settings_file(r#"{"repos": ["acme/widgets"]}"#);
+        assert_eq!(load(&store).unwrap().appearance, Appearance::System);
+    }
+
+    #[test]
+    fn a_stored_appearance_is_read_back() {
+        let (_dir, store) = store_with_settings_file(r#"{"appearance": "dark"}"#);
+        assert_eq!(load(&store).unwrap().appearance, Appearance::Dark);
+        let (_dir, store) = store_with_settings_file(r#"{"appearance": "light"}"#);
+        assert_eq!(load(&store).unwrap().appearance, Appearance::Light);
+    }
+
+    /// A hand-edited value must not cost the user the rest of the file.
+    #[test]
+    fn an_unrecognised_appearance_follows_the_system_and_keeps_the_rest() {
+        for raw in [
+            r#"{"appearance": "sepia", "repos": ["acme/widgets"]}"#,
+            r#"{"appearance": 7, "repos": ["acme/widgets"]}"#,
+        ] {
+            let (_dir, store) = store_with_settings_file(raw);
+            let settings = load(&store).unwrap();
+            assert_eq!(settings.appearance, Appearance::System);
+            assert_eq!(settings.repos, ["acme/widgets"]);
+        }
+    }
+
+    #[test]
+    fn a_chosen_appearance_is_stored_in_lowercase() {
+        let (dir, store) = temp_store();
+        update(&store, |settings| {
+            settings.appearance = Appearance::Dark;
+            Ok(())
+        })
+        .unwrap();
+        let raw = fs::read_to_string(dir.path().join("settings.json")).unwrap();
+        let stored: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(stored["appearance"], "dark");
     }
 
     #[test]

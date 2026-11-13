@@ -1,5 +1,33 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
-import { filterGroups, groupRepos, pollLabel } from "./SettingsView";
+import type { Appearance } from "./backend";
+import { AppearanceRow, filterGroups, groupRepos, pollLabel } from "./SettingsView";
+
+const appearanceRow = (value: Appearance | null) =>
+  renderToStaticMarkup(createElement(AppearanceRow, { value, onChange: () => {} }));
+
+test("the appearance row offers System, Light and Dark, in that order", () => {
+  const html = appearanceRow("system");
+  expect(html).toContain("<span>Appearance</span>");
+  expect([...html.matchAll(/<option value="(\w+)"[^>]*>(\w+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
+    ["system", "System"],
+    ["light", "Light"],
+    ["dark", "Dark"],
+  ]);
+});
+
+test("the appearance row shows the stored choice", () => {
+  expect(appearanceRow("dark")).toMatch(/<option value="dark" selected="">/);
+  expect(appearanceRow("system")).toMatch(/<option value="system" selected="">/);
+});
+
+// A default the user did not pick would be a lie for as long as it showed.
+test("the appearance row is blank and disabled until the stored choice arrives", () => {
+  const html = appearanceRow(null);
+  expect(html).toMatch(/<select[^>]*disabled=""/);
+  expect(html).toMatch(/<option value="" selected="">/);
+});
 
 test("preset intervals label as minutes or an hour", () => {
   expect(pollLabel(60)).toBe("1 minute");

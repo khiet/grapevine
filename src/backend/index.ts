@@ -278,6 +278,12 @@ export const getPollInterval = () => adapter.invoke<number>("get_poll_interval")
 /** Resolves to the interval the backend stored, which it may have clamped. */
 export const setPollInterval = (secs: number) =>
   adapter.invoke<number>("set_poll_interval", { secs });
+/** The palette the user picked. "system" follows the desktop's style. */
+export type Appearance = "system" | "light" | "dark";
+export const getAppearance = () => adapter.invoke<Appearance>("get_appearance");
+/** Stores the choice and resolves to it. Showing it is appearance.ts's job. */
+export const setAppearance = (appearance: Appearance) =>
+  adapter.invoke<Appearance>("set_appearance", { appearance });
 export const getLaunchAtLogin = () => adapter.invoke<boolean>("get_launch_at_login");
 export const setLaunchAtLogin = (enabled: boolean) =>
   adapter.invoke<void>("set_launch_at_login", { enabled });
