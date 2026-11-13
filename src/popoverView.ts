@@ -174,7 +174,7 @@ const BLOCKED_LABELS: Record<BlockedReason, string> = {
 // The CI reason names the check when the backend could: the first failing
 // one, then "and more" for any others. Never a count: on a truncated list the
 // number seen is not the number failing, and "and more" is true either way.
-// Worded, not "+ more", so it cannot be read as the row's "+N".
+// In words because a "+" here would read as the row's "+N".
 function blockedLabel(reason: BlockedReason, pr: PullRequest): string {
   if (reason !== "ci" || pr.failing_checks.length === 0) {
     return BLOCKED_LABELS[reason];
@@ -205,8 +205,9 @@ interface TonedState {
 // the row sits in Todo. After it the order runs from under way (queue,
 // Copilot, checks, auto-merge) to done (approved) to waiting on others.
 //
-// Drafts need no special case: the backend suppresses everything but the
-// queue position on a draft, so whatever it does send shows. Ready is the
+// Drafts need no special case: the backend suppresses the approval, the
+// review states, the blockers and the merge states other than the queue
+// position on a draft, so whatever it does send shows. Ready is the
 // backend's call as well and does not imply approved, since a repo with no
 // required reviews is ready without an approval.
 function rowStates(pr: PullRequest): TonedState[] {

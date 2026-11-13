@@ -213,7 +213,7 @@ function PrAvatar({
 }
 
 // The shared frame around every stroke glyph: shapes are drawn on a 24-unit
-// grid and scaled down to their rendered size, a square of `size`. Hidden from assistive tech in
+// grid and scaled down to a square of `size`. Hidden from assistive tech in
 // all uses: the enclosing element carries the label (the section toggle's
 // text, a control's or header icon button's aria-label).
 export function GlyphSvg({

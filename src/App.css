@@ -755,11 +755,10 @@ body {
 }
 
 /* The row's state in words, pinned at the row's right edge, out of the
-   metadata's way. Plain text in its tone, not a pill: the words are the
-   signal, and the line stays one register. The neutral tone is the metadata
-   line's own grey, so it sets no colour. position: relative anchors the
-   tooltip. It never shrinks: the repo beside it gives way instead, since the
-   state is the news. */
+   metadata's way. Plain text in its tone, not a pill. The neutral tone is
+   the metadata line's own grey, so it sets no colour. position: relative
+   anchors the tooltip. It never shrinks: the repo beside it gives way
+   instead, since the state is the news. */
 .pr-state {
   position: relative;
   display: inline-flex;
