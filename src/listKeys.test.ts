@@ -88,37 +88,36 @@ test("Shift+Tab leaves the filter the ordinary way", () => {
 
 const SNOOZE: RowAction = { id: "snooze", label: "Snooze", hint: null };
 const WAKE: RowAction = { id: "wake", label: "Wake", hint: null };
-const OPEN: RowAction = { id: "open", label: "Open", hint: null };
 const DISMISS: RowAction = { id: "dismiss", label: "Dismiss", hint: null };
 
 test("S snoozes a row that can be snoozed and wakes a snoozed one", () => {
-  expect(rowCommand(key("s"), [SNOOZE, OPEN])).toBe("snooze");
-  expect(rowCommand(key("S", { shiftKey: true }), [SNOOZE, OPEN])).toBe("snooze");
-  expect(rowCommand(key("s"), [WAKE, OPEN])).toBe("wake");
+  expect(rowCommand(key("s"), [SNOOZE])).toBe("snooze");
+  expect(rowCommand(key("S", { shiftKey: true }), [SNOOZE])).toBe("snooze");
+  expect(rowCommand(key("s"), [WAKE])).toBe("wake");
 });
 
 test("S does nothing on a row that offers neither", () => {
-  expect(rowCommand(key("s"), [OPEN])).toBeNull();
-  expect(rowCommand(key("s"), [DISMISS, OPEN])).toBeNull();
+  expect(rowCommand(key("s"), [])).toBeNull();
+  expect(rowCommand(key("s"), [DISMISS])).toBeNull();
 });
 
 // A Mac's Delete key reports Backspace; the forward-delete key reports Delete.
 test("Delete dismisses a merged row and nothing else", () => {
-  expect(rowCommand(key("Delete"), [DISMISS, OPEN])).toBe("dismiss");
-  expect(rowCommand(key("Backspace"), [DISMISS, OPEN])).toBe("dismiss");
-  expect(rowCommand(key("Delete"), [SNOOZE, OPEN])).toBeNull();
+  expect(rowCommand(key("Delete"), [DISMISS])).toBe("dismiss");
+  expect(rowCommand(key("Backspace"), [DISMISS])).toBe("dismiss");
+  expect(rowCommand(key("Delete"), [SNOOZE])).toBeNull();
 });
 
 test("a key held with Command, Control or Option is not a row shortcut", () => {
-  expect(rowCommand(key("s", { metaKey: true }), [SNOOZE, OPEN])).toBeNull();
-  expect(rowCommand(key("s", { ctrlKey: true }), [SNOOZE, OPEN])).toBeNull();
-  expect(rowCommand(key("Backspace", { altKey: true }), [DISMISS, OPEN])).toBeNull();
+  expect(rowCommand(key("s", { metaKey: true }), [SNOOZE])).toBeNull();
+  expect(rowCommand(key("s", { ctrlKey: true }), [SNOOZE])).toBeNull();
+  expect(rowCommand(key("Backspace", { altKey: true }), [DISMISS])).toBeNull();
 });
 
 // The row after a removed one takes focus, so a held key would act on it too.
 test("a held key acts on one row only", () => {
-  expect(rowCommand(key("s", { repeat: true }), [SNOOZE, OPEN])).toBeNull();
-  expect(rowCommand(key("Delete", { repeat: true }), [DISMISS, OPEN])).toBeNull();
+  expect(rowCommand(key("s", { repeat: true }), [SNOOZE])).toBeNull();
+  expect(rowCommand(key("Delete", { repeat: true }), [DISMISS])).toBeNull();
 });
 
 test("in the list, the arrows move between rows and Escape returns to the filter", () => {
@@ -133,22 +132,22 @@ const hintText = (hints: { keys: string; label: string }[]) =>
 
 test("the filter's hints offer Open only once a row is selected", () => {
   expect(hintText(keyHints("filter", null))).toEqual(["↑↓ Select"]);
-  expect(hintText(keyHints("filter", [SNOOZE, OPEN]))).toEqual([
+  expect(hintText(keyHints("filter", [SNOOZE]))).toEqual([
     "↑↓ Select",
     "Enter Open",
   ]);
 });
 
 test("the list's hints name what the keys do to the selected row", () => {
-  expect(hintText(keyHints("list", [SNOOZE, OPEN]))).toEqual(["S Snooze", "Esc Filter"]);
-  expect(hintText(keyHints("list", [WAKE, OPEN]))).toEqual(["S Wake", "Esc Filter"]);
-  expect(hintText(keyHints("list", [DISMISS, OPEN]))).toEqual(["Del Dismiss", "Esc Filter"]);
-  expect(hintText(keyHints("list", [OPEN]))).toEqual(["Esc Filter"]);
+  expect(hintText(keyHints("list", [SNOOZE]))).toEqual(["S Snooze", "Esc Filter"]);
+  expect(hintText(keyHints("list", [WAKE]))).toEqual(["S Wake", "Esc Filter"]);
+  expect(hintText(keyHints("list", [DISMISS]))).toEqual(["Del Dismiss", "Esc Filter"]);
+  expect(hintText(keyHints("list", []))).toEqual(["Esc Filter"]);
   expect(hintText(keyHints("list", null))).toEqual(["Esc Filter"]);
 });
 
 test("with focus elsewhere there are no hints", () => {
-  expect(keyHints(null, [SNOOZE, OPEN])).toEqual([]);
+  expect(keyHints(null, [SNOOZE])).toEqual([]);
 });
 
 const openPr = {
@@ -213,7 +212,6 @@ test("a row is found by its key, with the words a screen reader is given", () =>
     label: "Fix the thing, #7 acme/widgets, Draft, Checks running, Approved",
     actions: [
       { id: "snooze", label: "Snooze", hint: "Snooze until it changes" },
-      { id: "open", label: "Open", hint: null },
     ],
   });
 });
@@ -228,13 +226,12 @@ test("rows are found wherever a section keeps them", () => {
     ["acme/widgets#3"],
   );
   expect(findRow(view, "acme/widgets#1")?.label).toBe("Fix the thing, #1 acme/widgets");
-  expect(findRow(view, "acme/widgets#2")?.actions.map((a) => a.id)).toEqual(["open"]);
-  expect(findRow(view, "acme/widgets#3")?.actions.map((a) => a.id)).toEqual(["wake", "open"]);
+  expect(findRow(view, "acme/widgets#2")?.actions.map((a) => a.id)).toEqual([]);
+  expect(findRow(view, "acme/widgets#3")?.actions.map((a) => a.id)).toEqual(["wake"]);
   expect(findRow(view, "acme/widgets#90")).toEqual({
     label: "Ship the release notes, #90 acme/widgets, Merged",
     actions: [
       { id: "dismiss", label: "Dismiss", hint: null },
-      { id: "open", label: "Open", hint: null },
     ],
   });
 });

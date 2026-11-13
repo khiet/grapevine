@@ -421,16 +421,26 @@ body {
   gap: 8px;
 }
 
-/* A merged row's deploy status: drawn over .pr-deploy-space, which holds its
-   width in the line so the repo truncates before it. The type must match
-   .pr-origin so the control covers its placeholder exactly. */
+/* A merged row's deploy status, a rocket and a time or a word: drawn over
+   .pr-deploy-space, which holds its width in the line so the repo truncates
+   before it. It ends the metadata line, so it sits in the timestamp's column
+   and takes the timestamp's type: the deploy time reads as a second entry
+   under the merge time. The two rules must keep the same type and layout so
+   the control covers its placeholder exactly. */
 .pr-deploy {
   border: none;
   background: none;
   padding: 0;
   font: inherit;
-  font-size: var(--text-m);
   color: var(--text-2);
+}
+
+.pr-deploy,
+.pr-deploy-space {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-s);
   white-space: nowrap;
 }
 
@@ -446,7 +456,6 @@ body {
   flex: none;
   margin-left: auto;
   visibility: hidden;
-  white-space: nowrap;
 }
 
 /* The action bar: one opaque strip of worded buttons, since it lies over the

@@ -53,10 +53,11 @@ export interface RowState {
   all: string[];
 }
 
-export type RowActionId = "snooze" | "wake" | "fix" | "open" | "dismiss";
+export type RowActionId = "snooze" | "wake" | "fix" | "dismiss";
 
-/** Something a row offers to do. The row's action bar and its right-click
- * menu both list a row's actions, in this order, under these labels. */
+/** Something a row offers to do beyond opening its PR, which is the click on
+ * the row itself. The row's action bar and its right-click menu both list a
+ * row's actions, in this order, under these labels; a row may have none. */
 export interface RowAction {
   id: RowActionId;
   label: string;
@@ -107,8 +108,12 @@ export interface RepoGroupView {
 /** The deploy status of a Merged row: its own control, which opens the
  * workflow run rather than the PR. */
 export interface DeployView {
+  /** The status in full, for the tooltip and the accessible name. */
   label: string;
-  /** Whether the row shows `completedAt` beside the label; only a deploy
+  /** The status as the row words it beside the deploy glyph, which already
+   * says "deploy". */
+  brief: string;
+  /** Whether the row shows `completedAt` in place of `brief`; only a deploy
    * that landed does. */
   showsTime: boolean;
   /** The one state in the failure color; the rest stay metadata grey. */
@@ -301,17 +306,14 @@ const SNOOZE: RowAction = {
 };
 const WAKE: RowAction = { id: "wake", label: "Wake", hint: null };
 const FIX: RowAction = { id: "fix", label: "Fix with Copilot", hint: null };
-const OPEN: RowAction = { id: "open", label: "Open", hint: null };
 const DISMISS: RowAction = { id: "dismiss", label: "Dismiss", hint: null };
 
-// Open comes last on every row, so it is always the bar's rightmost button.
-const MERGED_ACTIONS = [DISMISS, OPEN];
+const MERGED_ACTIONS = [DISMISS];
 
 function rowActions(snooze: Snooze, fix: RowView["fix"]): RowAction[] {
   const actions: RowAction[] = [];
   if (snooze !== null) actions.push(snooze === "wake" ? WAKE : SNOOZE);
   if (fix === "offer") actions.push(FIX);
-  actions.push(OPEN);
   return actions;
 }
 
@@ -411,10 +413,18 @@ const DEPLOY_LABELS: Record<DeployState, string> = {
   cancelled: "Deploy cancelled",
 };
 
+const DEPLOY_BRIEFS: Record<DeployState, string> = {
+  deploying: "Deploying",
+  deployed: "Deployed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
 function deployView(deploy: Deploy | null): DeployView | null {
   if (!deploy) return null;
   return {
     label: DEPLOY_LABELS[deploy.state],
+    brief: DEPLOY_BRIEFS[deploy.state],
     showsTime: deploy.state === "deployed",
     failed: deploy.state === "failed",
     completedAt: deploy.completed_at,

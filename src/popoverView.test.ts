@@ -347,6 +347,7 @@ test("a merged row with a deploy under way says Deploying", () => {
   );
   expect(deploy).toEqual({
     label: "Deploying",
+    brief: "Deploying",
     showsTime: false,
     failed: false,
     completedAt: null,
@@ -364,6 +365,7 @@ test("a deployed row says Deployed and when the deploy landed", () => {
   );
   expect(deploy).toEqual({
     label: "Deployed",
+    brief: "Deployed",
     showsTime: true,
     failed: false,
     completedAt: DEPLOY_DONE,
@@ -379,6 +381,7 @@ test("a failed deploy is the one status in the failure color", () => {
   );
   expect(deploy).toEqual({
     label: "Deploy failed",
+    brief: "Failed",
     showsTime: false,
     failed: true,
     completedAt: DEPLOY_DONE,
@@ -394,6 +397,7 @@ test("a cancelled deploy is named without the failure color", () => {
   );
   expect(deploy).toEqual({
     label: "Deploy cancelled",
+    brief: "Cancelled",
     showsTime: false,
     failed: false,
     completedAt: DEPLOY_DONE,
@@ -804,20 +808,21 @@ test("a filter that matches no snoozed row leaves no folded group", () => {
 const labels = (row: { actions: { label: string }[] }) =>
   row.actions.map((action) => action.label);
 
-test("a row offers Snooze and Open; a snoozed row Wake and Open; a row in All only Open", () => {
+// Opening the PR is the click on the row, never a listed action.
+test("a row offers Snooze; a snoozed row Wake; a row in All nothing", () => {
   const view = list(SNOOZE_FIXTURE);
-  expect(rows(view, "mine").map(labels)).toEqual([["Snooze", "Open"]]);
-  expect(labels(snoozedGroup(view, "mine").rows[0])).toEqual(["Wake", "Open"]);
+  expect(rows(view, "mine").map(labels)).toEqual([["Snooze"]]);
+  expect(labels(snoozedGroup(view, "mine").rows[0])).toEqual(["Wake"]);
   const { body } = section(view, "all");
   if (body.kind !== "groups") throw new Error("All is not grouped");
-  expect(labels(body.groups[0].rows[0])).toEqual(["Open"]);
+  expect(labels(body.groups[0].rows[0])).toEqual([]);
 });
 
-test("a merged row offers Dismiss and Open", () => {
+test("a merged row offers Dismiss", () => {
   const view = list(synced({ merged: [mergedPr()] }));
   const { body } = section(view, "merged");
   if (body.kind !== "merged") throw new Error("Merged is not merged rows");
-  expect(body.rows.map(labels)).toEqual([["Dismiss", "Open"]]);
+  expect(body.rows.map(labels)).toEqual([["Dismiss"]]);
 });
 
 const fixable = (overrides: Partial<PullRequest> = {}) =>
@@ -829,8 +834,8 @@ test("a row the backend calls fixable offers the Copilot fix, and no other row d
   );
   expect(rows(view, "mine").map((row) => row.fix)).toEqual(["offer", null]);
   expect(rows(view, "mine").map(labels)).toEqual([
-    ["Snooze", "Fix with Copilot", "Open"],
-    ["Snooze", "Open"],
+    ["Snooze", "Fix with Copilot"],
+    ["Snooze"],
   ]);
 });
 
@@ -851,8 +856,8 @@ test("a row whose fix is being posted shows that in place of the offer", () => {
   ]);
   // A request on its way is not something to ask for again.
   expect(rows(content as ListView, "mine").map(labels)).toEqual([
-    ["Snooze", "Open"],
-    ["Snooze", "Fix with Copilot", "Open"],
+    ["Snooze"],
+    ["Snooze", "Fix with Copilot"],
   ]);
 });
 
@@ -955,9 +960,9 @@ test("a snoozed your-turn row stays in its home section's fold until it is woken
 
 test("a row in Todo keeps the snooze action of its home section", () => {
   expect(rows(list(YOUR_TURN_FIXTURE), "yours").map(labels)).toEqual([
-    ["Snooze", "Open"],
-    ["Snooze", "Open"],
-    ["Open"],
+    ["Snooze"],
+    ["Snooze"],
+    [],
   ]);
 });
 
