@@ -989,3 +989,17 @@ test("a filter that matches nothing in Your turn hides it", () => {
   const view = list(YOUR_TURN_FIXTURE, "quiet");
   expect(view.sections.map((s) => [s.key, s.count])).toEqual([["mine", 1]]);
 });
+
+// The row shows its own badge in Your turn, so its home section's collapsed
+// header must not count the same unread again.
+test("a collapsed section's unread badge leaves out rows moved to Your turn", () => {
+  const snapshot = synced({
+    prs: [
+      pr({ number: 1, unread_count: 2 }),
+      pr({ number: 2, unread_count: 5, turn: "yours" }),
+    ],
+  });
+  const view = list(snapshot, "", ALL_COLLAPSED);
+  expect(section(view, "mine").collapsedUnread).toBe(2);
+  expect(section(view, "yours").collapsedUnread).toBe(0);
+});
