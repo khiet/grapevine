@@ -273,8 +273,8 @@ function rowMarks(pr: PullRequest): Mark[] {
 // Flags the mark that explains a your-turn row: the review glyph when a
 // review is asked of you, else the primary blocked pill, else the ready pill.
 // That is the order the backend decides the turn in, so the tinted mark is
-// the reason the row sits in Your turn. At most one mark is flagged; the +N pill never
-// is, since the primary pill already speaks for the blockage.
+// the reason the row sits in Your turn. At most one mark is flagged; the +N
+// pill never is, since the primary pill already speaks for the blockage.
 function tintYourTurn(marks: Mark[]): void {
   for (const kind of ["review-requested", "blocked", "ready"] as const) {
     const mark = marks.find((candidate) => candidate.kind === kind);
@@ -459,6 +459,7 @@ export function derivePopover(
   // and counted once. A snoozed row is not taken: it stays in its home
   // section's fold. The rows keep the order the backend sent.
   const yours = prs.filter((pr) => isYourTurn(pr, snoozedKeys));
+  const yoursSet = new Set(yours);
   // Pinned and always open, empty or not: an absent Your turn would leave the
   // tray's zero with nothing to match. Hidden only by a filter with no match
   // here, like every other section.
@@ -484,9 +485,7 @@ export function derivePopover(
     });
   }
   for (const { key, label } of SECTIONS) {
-    const rows = prs.filter(
-      (pr) => pr.section === key && !isYourTurn(pr, snoozedKeys),
-    );
+    const rows = prs.filter((pr) => pr.section === key && !yoursSet.has(pr));
     /* The three PR sections are always present, empty or not, so the popover
        keeps one stable scaffold (an absent "Mine" would read as broken, not
        empty). Filtering is the exception: an empty section there means "no

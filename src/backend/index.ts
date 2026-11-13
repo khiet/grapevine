@@ -66,8 +66,8 @@ export interface PullRequest {
    * Backend-computed and only ever set in Mine. */
   ready_to_merge: boolean;
   /** Whose move the PR waits on; null when there is no verdict, always so on
-   * a draft and in All. Backend-computed. A "yours" row leads its section and
-   * tints its mark, and the tray shows how many there are; "theirs" renders
+   * a draft and in All. Backend-computed. A "yours" row sits in Your turn
+   * and tints its mark, and the tray shows how many there are; "theirs" renders
    * nothing of its own. Never part of the unread count. */
   turn: Turn | null;
   /** Epoch ms of the sync that first saw the turn become yours; the row shows
