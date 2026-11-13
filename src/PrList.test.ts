@@ -185,7 +185,7 @@ test("each row carries its author's handle in its title and accessible name", ()
   }
 });
 
-test("Waiting on you has a heading and no collapse toggle; the other sections keep theirs", () => {
+test("Waiting has a heading and no collapse toggle; the other sections keep theirs", () => {
   const { content } = derivePopover(
     { ...EMPTY_SNAPSHOT, has_synced: true, prs: [{ ...openPr, turn: "yours" }] },
     "",
@@ -196,7 +196,23 @@ test("Waiting on you has a heading and no collapse toggle; the other sections ke
     createElement(PrList, { view: content as ListView, onToggle: () => {} }),
   );
   const [yours, mine] = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
-  expect(yours).toMatch(/<h2[^>]*>.*Waiting on you/);
+  expect(yours).toMatch(/<h2[^>]*>.*Waiting/);
   expect(yours).not.toContain("aria-expanded");
   expect(mine).toContain("aria-expanded");
+});
+
+test("an empty Waiting shows a named check; other empty sections keep their line", () => {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true },
+    "",
+    { mine: false, participated: false, all: false, merged: false },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  const [waiting, mine] = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+  expect(waiting).toContain('aria-label="Nothing is waiting on you"');
+  expect(waiting).toContain("<svg");
+  expect(mine).toContain("Nothing to wine about");
 });

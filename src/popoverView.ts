@@ -126,7 +126,7 @@ export interface SectionView {
   label: string;
   count: number;
   /** The body is derived either way; it is shown only while expanded. Always
-   * true for Waiting on you. */
+   * true for Waiting. */
   expanded: boolean;
   /** Unread total to badge on the header: zero while expanded, when the rows
    * carry their own badges. */
@@ -273,7 +273,7 @@ function rowMarks(pr: PullRequest): Mark[] {
 // Flags the mark that explains a your-turn row: the review glyph when a
 // review is asked of you, else the primary blocked pill, else the ready pill.
 // That is the order the backend decides the turn in, so the tinted mark is
-// the reason the row sits in Waiting on you. At most one mark is flagged; the +N
+// the reason the row sits in Waiting. At most one mark is flagged; the +N
 // pill never is, since the primary pill already speaks for the blockage.
 function tintYourTurn(marks: Mark[]): void {
   for (const kind of ["review-requested", "blocked", "ready"] as const) {
@@ -332,7 +332,7 @@ const rowView = (
 });
 
 // Rows asking the viewer's team lead a section, then the rest. Rows waiting
-// on the viewer are not here to rank: they sit in Waiting on you.
+// on the viewer are not here to rank: they sit in Waiting.
 // Array.prototype.sort is stable, so each group keeps the order the backend
 // sent.
 function teamRequestsFirst(prs: PullRequest[]): PullRequest[] {
@@ -346,14 +346,14 @@ function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
 }
 
-// The one membership rule shared by the Waiting on you section and yourTurnCount,
+// The one membership rule shared by the Waiting section and yourTurnCount,
 // so the two cannot disagree: the row waits on the viewer and is not snoozed.
 // The backend counts the tray number by the same rule.
 const isYourTurn = (pr: PullRequest, snoozedKeys: ReadonlySet<string>) =>
   pr.turn === "yours" && !snoozedKeys.has(prKey(pr));
 
 /** How many PRs wait on the viewer and are not snoozed; the tray shows the
- * same number, and so does the Waiting on you section while no filter is active. */
+ * same number, and so does the Waiting section while no filter is active. */
 export function yourTurnCount(snapshot: Snapshot): number {
   const snoozedKeys = new Set(snapshot.snoozed);
   return snapshot.prs.filter((pr) => isYourTurn(pr, snoozedKeys)).length;
@@ -455,18 +455,18 @@ export function derivePopover(
   const snoozedKeys = new Set(snapshot.snoozed);
 
   const sections: SectionView[] = [];
-  // Waiting on you takes its rows out of their home sections, so a PR is listed
+  // Waiting takes its rows out of their home sections, so a PR is listed
   // and counted once. A snoozed row is not taken: it stays in its home
   // section's fold. The rows keep the order the backend sent.
   const yours = prs.filter((pr) => isYourTurn(pr, snoozedKeys));
   const yoursSet = new Set(yours);
-  // Pinned and always open, empty or not: an absent Waiting on you would leave the
+  // Pinned and always open, empty or not: an absent Waiting would leave the
   // tray's zero with nothing to match. Hidden only by a filter with no match
   // here, like every other section.
   if (yours.length > 0 || !filtering) {
     sections.push({
       key: YOUR_TURN_KEY,
-      label: "Waiting on you",
+      label: "Waiting",
       count: yours.length,
       expanded: true,
       collapsedUnread: 0,
@@ -526,7 +526,7 @@ export function derivePopover(
       expanded,
       /* Rows the section hides still carry unread; without this a collapsed
          Mine looks read when it is not. Independent of the tray number, which
-         counts the rows of Waiting on you, so the two can disagree. */
+         counts the rows of Waiting, so the two can disagree. */
       collapsedUnread: expanded ? 0 : totalUnread(awake),
       offerClearAll: false,
       body,

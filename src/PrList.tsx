@@ -816,7 +816,7 @@ function SectionHeader({
   );
 }
 
-/* The heading of Waiting on you: the same label and count as a SectionHeader,
+/* The heading of Waiting: the same label and count as a SectionHeader,
    with no button around them, since the section is always open. */
 function PinnedHeader({ label, count }: { label: string; count: number }) {
   return (
@@ -839,10 +839,23 @@ function SectionBodyView({ section }: { section: SectionView }) {
   switch (body.kind) {
     case "empty":
       /* Inside the slab, not bare text, so an empty section keeps the shape
-         rows will appear in. */
+         rows will appear in. Waiting says it with a check alone: nothing
+         there is the good outcome, not a gap in the list. */
       return (
         <ul>
-          <li className="pr-empty">Nothing to wine about</li>
+          {section.key === YOUR_TURN_KEY ? (
+            <li className="pr-empty pr-empty-clear">
+              <span
+                className="pr-glyph-ok"
+                role="img"
+                aria-label="Nothing is waiting on you"
+              >
+                <Check />
+              </span>
+            </li>
+          ) : (
+            <li className="pr-empty">Nothing to wine about</li>
+          )}
         </ul>
       );
     case "rows":

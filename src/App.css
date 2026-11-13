@@ -257,7 +257,7 @@ body {
   padding-top: 18px;
 }
 
-/* The Waiting on you heading: the toggle's padding and gap without the button or
+/* The heading of Waiting: the toggle's padding and gap without the button or
    the chevron, so the header keeps the height of the sections below. */
 .pr-section-pinned {
   align-items: center;
@@ -357,6 +357,12 @@ body {
   padding: 13px 11px;
   color: var(--text-2);
   font-size: var(--text-m);
+}
+
+/* The check of an empty Waiting, centred since it stands in for a sentence. */
+.pr-empty-clear {
+  display: flex;
+  justify-content: center;
 }
 
 .pr-row {
