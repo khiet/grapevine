@@ -14,6 +14,13 @@ pub fn get_prs(state: tauri::State<'_, sync::SyncState>) -> pr_state::Snapshot {
     state.snapshot()
 }
 
+/// The popover's Sync now and Retry. Pushes a Snapshot with `syncing` set,
+/// unless a sync is already under way, when it does nothing.
+#[tauri::command]
+pub fn sync_now(app: AppHandle) -> Result<(), String> {
+    sync::sync_now(&app)
+}
+
 #[tauri::command]
 pub fn mark_read(app: AppHandle, key: String) -> Result<(), String> {
     sync::transition(&app, |prs| prs.mark_read(&key))

@@ -172,6 +172,7 @@ pub fn run() {
             commands::remove_repo,
             commands::list_affiliated_repos,
             commands::get_prs,
+            commands::sync_now,
             commands::mark_read,
             commands::mark_all_read,
             commands::dismiss_merged,

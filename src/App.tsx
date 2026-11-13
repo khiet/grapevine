@@ -4,6 +4,7 @@ import {
   EMPTY_SNAPSHOT,
   markAllRead,
   subscribeSnapshot,
+  syncNow,
   type Snapshot,
 } from "./backend";
 import { useFixesPosting } from "./fixConflict";
@@ -79,6 +80,65 @@ export function HeaderActions({
         </GlyphSvg>
       </button>
     </>
+  );
+}
+
+/** The footer as a status bar: the sync time and Sync now on the right, and a
+ * sync error with its Retry on the left, which is otherwise left free. Both
+ * buttons ask for the same sync. */
+export function SyncStatus({
+  lastSyncAt,
+  error,
+  syncing,
+}: {
+  lastSyncAt: number | null;
+  error: string | null;
+  syncing: boolean;
+}) {
+  // aria-disabled, not disabled: a disabled button drops keyboard focus, and
+  // the one that started the sync should still hold it when the sync ends.
+  // The backend ignores a press it should not act on, so nothing is guarded
+  // here.
+  const sync = () => syncNow().catch(() => {});
+  const unavailable = syncing ? true : undefined;
+  const label = syncing ? "Syncing" : "Sync now";
+  return (
+    <footer className="sync-status">
+      {error && (
+        <>
+          {/* title carries the full message; the footer line clips it. */}
+          <span className="sync-error" title={error}>
+            {error}
+          </span>
+          <button
+            type="button"
+            className="sync-retry"
+            aria-disabled={unavailable}
+            onClick={sync}
+          >
+            Retry
+          </button>
+        </>
+      )}
+      <span className="sync-right">
+        <span>{syncing ? "Syncing" : formatLastSync(lastSyncAt)}</span>
+        <button
+          type="button"
+          className="sync-now pr-tip"
+          data-tip={label}
+          aria-label={label}
+          aria-disabled={unavailable}
+          onClick={sync}
+        >
+          <GlyphSvg strokeWidth={2} size={14}>
+            <path d="M21 12a9 9 0 0 0-15.5-6.2L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M3 12a9 9 0 0 0 15.5 6.2L21 16" />
+            <path d="M16 16h5v5" />
+          </GlyphSvg>
+        </button>
+      </span>
+    </footer>
   );
 }
 
@@ -179,19 +239,11 @@ function App() {
         <PrList view={content} onToggle={toggleSection} />
       )}
       {!inSettings && (snapshot.last_sync_at !== null || snapshot.sync_error) && (
-        <footer className="sync-status">
-          {snapshot.last_sync_at !== null && (
-            <span className="sync-time">
-              {formatLastSync(snapshot.last_sync_at)}
-            </span>
-          )}
-          {snapshot.sync_error && (
-            /* title carries the full message; the footer line clips it. */
-            <span className="sync-error" title={snapshot.sync_error}>
-              {snapshot.sync_error}
-            </span>
-          )}
-        </footer>
+        <SyncStatus
+          lastSyncAt={snapshot.last_sync_at}
+          error={snapshot.sync_error}
+          syncing={snapshot.syncing}
+        />
       )}
     </div>
   );
