@@ -123,14 +123,16 @@ async function capture(baseUrl, dir) {
   await setOpen(true);
   await hideCursor();
   if ((await trayCount()) !== "4") throw new Error("tray should show 4");
-  // The first four targets sit close together, so their chips are spread by hand.
+  // The top five targets sit close together, so their chips are spread by
+  // hand, in the targets' own top-to-bottom order so no two lines cross. The
+  // second slot (112) is left for the Snooze label, which lands last.
   await label(tray, "right", "4 PRs waiting on you", 62);
   await snap(1700);
-  await label(row("#415").locator(".pr-updated"), "right", "Your turn first, and for how long", 112);
+  await label(row("#415").locator(".pr-updated"), "right", "Your turn first, and for how long", 158);
   await snap(1600);
-  await label(row("#415").locator(".pr-state"), "right", "Only required checks count", 158);
+  await label(row("#415").locator(".pr-state"), "right", "Only required checks count", 208);
   await snap(1500);
-  await label(row("#1295").locator(".pr-state"), "right", "Ready to merge", 208);
+  await label(row("#1295").locator(".pr-state"), "right", "Ready to merge", 254);
   await snap(1500);
   await label(row("#2320").locator(".pr-state"), "right", "Merge queue position");
   await snap(1500);
@@ -140,9 +142,14 @@ async function capture(baseUrl, dir) {
   await snap(1500);
   await label(row("#1291").locator(".pr-unread"), "left", "Unread from people, never bots");
   await snap(1500);
-  // The snooze button only shows on a hovered row.
+  // The action bar only shows on a hovered row.
   await row("#1284").hover();
-  await label(row("#1284").locator(".pr-snooze"), "right", "Snooze until it changes");
+  await label(
+    row("#1284").locator(".pr-action", { hasText: "Snooze" }),
+    "right",
+    "Snooze until it changes",
+    112,
+  );
   await snap(1800);
   await page.evaluate(() => document.getElementById("os").removeAttribute("hidden"));
   // The loop rests on the full summary so every label can be read.

@@ -325,7 +325,7 @@ test("Merged follows the PR sections while it holds rows", () => {
   expect(mergedSection.count).toBe(2);
   expect(mergedSection.body).toEqual({
     kind: "merged",
-    rows: merged.map((pr) => ({ pr, deploy: null })),
+    rows: merged.map((pr) => ({ pr, deploy: null, actions: expect.any(Array) })),
   });
 });
 
@@ -444,7 +444,7 @@ test("a filter force-expands collapsed sections and keeps only matching rows", (
   expect(numbers(view, "mine")).toEqual([42]);
   expect(section(view, "merged").body).toEqual({
     kind: "merged",
-    rows: [{ pr: FILTER_FIXTURE.merged[0], deploy: null }],
+    rows: [{ pr: FILTER_FIXTURE.merged[0], deploy: null, actions: expect.any(Array) }],
   });
   expect(view.canToggle).toBe(false);
 });
@@ -801,13 +801,23 @@ test("a filter that matches no snoozed row leaves no folded group", () => {
   expect(body).toMatchObject({ kind: "rows", snoozed: null });
 });
 
-test("rows in Mine and Participated offer snooze, snoozed rows offer wake, All offers neither", () => {
+const labels = (row: { actions: { label: string }[] }) =>
+  row.actions.map((action) => action.label);
+
+test("a row offers Snooze and Open; a snoozed row Wake and Open; a row in All only Open", () => {
   const view = list(SNOOZE_FIXTURE);
-  expect(rows(view, "mine").map((row) => row.snooze)).toEqual(["offer"]);
-  expect(snoozedGroup(view, "mine").rows[0].snooze).toBe("wake");
+  expect(rows(view, "mine").map(labels)).toEqual([["Snooze", "Open"]]);
+  expect(labels(snoozedGroup(view, "mine").rows[0])).toEqual(["Wake", "Open"]);
   const { body } = section(view, "all");
   if (body.kind !== "groups") throw new Error("All is not grouped");
-  expect(body.groups[0].rows[0].snooze).toBeNull();
+  expect(labels(body.groups[0].rows[0])).toEqual(["Open"]);
+});
+
+test("a merged row offers Dismiss and Open", () => {
+  const view = list(synced({ merged: [mergedPr()] }));
+  const { body } = section(view, "merged");
+  if (body.kind !== "merged") throw new Error("Merged is not merged rows");
+  expect(body.rows.map(labels)).toEqual([["Dismiss", "Open"]]);
 });
 
 const fixable = (overrides: Partial<PullRequest> = {}) =>
@@ -818,6 +828,10 @@ test("a row the backend calls fixable offers the Copilot fix, and no other row d
     synced({ prs: [fixable({ number: 1 }), pr({ number: 2, blocked_reasons: ["conflict"] })] }),
   );
   expect(rows(view, "mine").map((row) => row.fix)).toEqual(["offer", null]);
+  expect(rows(view, "mine").map(labels)).toEqual([
+    ["Snooze", "Fix with Copilot", "Open"],
+    ["Snooze", "Open"],
+  ]);
 });
 
 test("a snoozed row offers no Copilot fix", () => {
@@ -834,6 +848,11 @@ test("a row whose fix is being posted shows that in place of the offer", () => {
   expect(rows(content as ListView, "mine").map((row) => row.fix)).toEqual([
     "posting",
     "offer",
+  ]);
+  // A request on its way is not something to ask for again.
+  expect(rows(content as ListView, "mine").map(labels)).toEqual([
+    ["Snooze", "Open"],
+    ["Snooze", "Fix with Copilot", "Open"],
   ]);
 });
 
@@ -934,11 +953,11 @@ test("a snoozed your-turn row stays in its home section's fold until it is woken
   expect(yourTurnCount(woken)).toBe(2);
 });
 
-test("a row in Todo keeps the snooze control of its home section", () => {
-  expect(rows(list(YOUR_TURN_FIXTURE), "yours").map((row) => row.snooze)).toEqual([
-    "offer",
-    "offer",
-    null,
+test("a row in Todo keeps the snooze action of its home section", () => {
+  expect(rows(list(YOUR_TURN_FIXTURE), "yours").map(labels)).toEqual([
+    ["Snooze", "Open"],
+    ["Snooze", "Open"],
+    ["Open"],
   ]);
 });
 

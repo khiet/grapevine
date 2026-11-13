@@ -258,3 +258,76 @@ test("a row with several states shows one reason and +N, and names them all in i
       '<span class="pr-state-more">+2</span></span>',
   );
 });
+
+// The bar is the row's visible route to its actions, so its buttons are read
+// off the rendered row: each is a real button with its label as text.
+function barOf(li: string): string[] {
+  if (!li.includes('<span class="pr-actions"')) throw new Error("no action bar rendered");
+  return [...li.matchAll(/<button[^>]*class="pr-action[^>]*>([^<]+)<\/button>/g)].map(
+    (m) => m[1],
+  );
+}
+
+function renderList(
+  prs: PullRequest[],
+  merged: MergedPr[] = [],
+  fixesPosting: ReadonlySet<string> = new Set(),
+): string[] {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs, merged },
+    "",
+    { mine: false, participated: false, all: false, merged: false },
+    NOW.getTime(),
+    fixesPosting,
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  return (html.match(/<li[\s\S]*?<\/li>/g) ?? []).filter((li) => li.includes("pr-row"));
+}
+
+test("each kind of row words its actions in a bar", () => {
+  const [plain, fixable, inAll, merged] = renderList(
+    [
+      openPr,
+      { ...openPr, number: 8, can_fix_conflict: true, blocked_reasons: ["conflict"] },
+      { ...openPr, number: 9, section: "all" },
+    ],
+    [mergedPr],
+  );
+  expect(barOf(plain)).toEqual(["Snooze", "Open"]);
+  expect(barOf(fixable)).toEqual(["Snooze", "Fix with Copilot", "Open"]);
+  expect(barOf(inAll)).toEqual(["Open"]);
+  expect(barOf(merged)).toEqual(["Dismiss", "Open"]);
+});
+
+// The timestamp is part of the row button, never a control of its own, so a
+// click on it opens the PR whatever else the row offers.
+test("the timestamp sits inside the row button on every kind of row", () => {
+  const rows = renderList(
+    [
+      openPr,
+      { ...openPr, number: 8, can_fix_conflict: true, blocked_reasons: ["conflict"] },
+      { ...openPr, number: 9, turn: "yours" },
+    ],
+    [mergedPr],
+  );
+  expect(rows).toHaveLength(4);
+  for (const li of rows) {
+    const button = li.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0];
+    expect(button).toMatch(/<span class="pr-updated">[^<]+<\/span>/);
+    expect(li.match(/pr-updated/g)).toHaveLength(1);
+  }
+});
+
+// While the request is on its way there is nothing to ask for, so the bar
+// says so where the fix was.
+test("a row whose Copilot fix is being posted says Asking in place of the fix", () => {
+  const [li] = renderList(
+    [{ ...openPr, can_fix_conflict: true, blocked_reasons: ["conflict"] }],
+    [],
+    new Set(["acme/widgets#7"]),
+  );
+  expect(li).toContain('<span class="pr-action-status" role="status">Asking</span>');
+  expect(barOf(li)).toEqual(["Snooze", "Open"]);
+});

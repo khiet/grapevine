@@ -53,6 +53,17 @@ export interface RowState {
   all: string[];
 }
 
+export type RowActionId = "snooze" | "wake" | "fix" | "open" | "dismiss";
+
+/** Something a row offers to do. The row's action bar and its right-click
+ * menu both list a row's actions, in this order, under these labels. */
+export interface RowAction {
+  id: RowActionId;
+  label: string;
+  /** What the label leaves unsaid, for a tooltip; null when it says it all. */
+  hint: string | null;
+}
+
 export interface RowView {
   pr: PullRequest;
   /** The neutral Draft pill, shown beside `state` and never part of it. */
@@ -70,14 +81,12 @@ export interface RowView {
    * time. Null when the turn is not the viewer's; the row keeps the updated
    * time then. */
   waiting: string | null;
-  /** The row's snooze control: "offer" to park it, "wake" to bring a snoozed
-   * row back, null where rows cannot be snoozed (All). */
-  snooze: "offer" | "wake" | null;
-  /** The row's Fix with Copilot control: "offer" to ask Copilot to resolve
-   * the merge conflict, "posting" while the request is on its way, null
-   * where the fix is not on offer. A request that was made is a state, not a
-   * control. */
+  /** Where the row stands on Fix with Copilot: "offer" when `actions` has
+   * the fix, "posting" while the request is on its way, null where the fix
+   * is not on offer. A request that was made is a state, not a control. */
   fix: "offer" | "posting" | null;
+  /** Never empty: every row can at least be opened. */
+  actions: RowAction[];
 }
 
 /** The snoozed rows of a section, folded into one line at its foot. */
@@ -114,6 +123,7 @@ export interface MergedRowView {
   /** Null when no deploy run has been found: the row then shows nothing
    * about deploys at all. */
   deploy: DeployView | null;
+  actions: RowAction[];
 }
 
 export type SectionBody =
@@ -271,31 +281,59 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
 // already requested, and on a snoozed row: that one was put out of the way,
 // and waking it is the only thing it offers. A request on its way shows in
 // the offer's place.
-function fixControl(
+function fixState(
   pr: PullRequest,
-  snooze: RowView["snooze"],
+  snooze: Snooze,
   fixesPosting: FixesPosting,
 ): RowView["fix"] {
   if (!pr.can_fix_conflict || pr.fix_requested || snooze === "wake") return null;
   return fixesPosting.has(prKey(pr)) ? "posting" : "offer";
 }
 
-const rowView = (
+/** What a row can do about snoozing: "offer" to park it, "wake" to bring a
+ * snoozed row back, null where rows cannot be snoozed (All). */
+type Snooze = "offer" | "wake" | null;
+
+const SNOOZE: RowAction = {
+  id: "snooze",
+  label: "Snooze",
+  hint: "Snooze until it changes",
+};
+const WAKE: RowAction = { id: "wake", label: "Wake", hint: null };
+const FIX: RowAction = { id: "fix", label: "Fix with Copilot", hint: null };
+const OPEN: RowAction = { id: "open", label: "Open", hint: null };
+const DISMISS: RowAction = { id: "dismiss", label: "Dismiss", hint: null };
+
+// Open comes last on every row, so it is always the bar's rightmost button.
+const MERGED_ACTIONS = [DISMISS, OPEN];
+
+function rowActions(snooze: Snooze, fix: RowView["fix"]): RowAction[] {
+  const actions: RowAction[] = [];
+  if (snooze !== null) actions.push(snooze === "wake" ? WAKE : SNOOZE);
+  if (fix === "offer") actions.push(FIX);
+  actions.push(OPEN);
+  return actions;
+}
+
+function rowView(
   pr: PullRequest,
   now: number,
-  snooze: RowView["snooze"],
+  snooze: Snooze,
   fixesPosting: FixesPosting,
-): RowView => ({
-  pr,
-  draft: pr.is_draft,
-  state: rowState(pr),
-  botAuthor: pr.author_is_bot,
-  botNote:
-    pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
-  waiting: waitingLabel(pr, now),
-  snooze,
-  fix: fixControl(pr, snooze, fixesPosting),
-});
+): RowView {
+  const fix = fixState(pr, snooze, fixesPosting);
+  return {
+    pr,
+    draft: pr.is_draft,
+    state: rowState(pr),
+    botAuthor: pr.author_is_bot,
+    botNote:
+      pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
+    waiting: waitingLabel(pr, now),
+    fix,
+    actions: rowActions(snooze, fix),
+  };
+}
 
 // Rows asking the viewer's team lead a section, then the rest. Rows waiting
 // on the viewer are not here to rank: they sit in Todo.
@@ -442,7 +480,7 @@ export function derivePopover(
           ? { kind: "empty" }
           : {
               kind: "rows",
-              // A row keeps the snooze control of its home section.
+              // A row keeps the snooze action of its home section.
               rows: yours.map((pr) =>
                 rowView(pr, now, pr.section === "all" ? null : "offer", fixesPosting),
               ),
@@ -513,7 +551,11 @@ export function derivePopover(
       offerClearAll: expanded,
       body: {
         kind: "merged",
-        rows: merged.map((pr) => ({ pr, deploy: deployView(pr.deploy) })),
+        rows: merged.map((pr) => ({
+          pr,
+          deploy: deployView(pr.deploy),
+          actions: MERGED_ACTIONS,
+        })),
       },
     });
   }

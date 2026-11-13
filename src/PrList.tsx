@@ -1,4 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   clearMerged,
   dismissMerged,
@@ -9,11 +17,14 @@ import {
   wake,
 } from "./backend";
 import { clickFix } from "./fixConflict";
+import RowMenu, { opensMenu, type Point } from "./RowMenu";
 import {
   YOUR_TURN_KEY,
   type DeployView,
   type ListView,
   type MergedRowView,
+  type RowAction,
+  type RowActionId,
   type RowState,
   type RowView,
   type SectionKey,
@@ -267,68 +278,17 @@ function StateView({ state }: { state: RowState }) {
   );
 }
 
-// The crescent of the snooze control.
-function Moon() {
-  return (
-    <GlyphSvg strokeWidth={2}>
-      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z" />
-    </GlyphSvg>
-  );
-}
+// What the bare "Confirm" of an armed fix is confirming.
+const CONFIRM_HINT = "Confirm: ask Copilot to fix the conflict";
 
-// The sun of the wake control.
-function Sun() {
-  return (
-    <GlyphSvg strokeWidth={2}>
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-    </GlyphSvg>
-  );
-}
-
-/* The row's one snooze control: park it, or wake it once parked. A sibling of
-   the row button rather than a child (nested buttons are invalid HTML),
-   floated over the timestamp and shown in its place only while the row is
-   hovered or the control focused. */
-function SnoozeControl({ row }: { row: RowView }) {
-  if (row.snooze === null) return null;
-  const key = prKey(row.pr);
-  const parked = row.snooze === "wake";
-  const label = parked ? "Wake" : "Snooze until it changes";
-  return (
-    <button
-      type="button"
-      className="pr-snooze pr-tip"
-      data-tip={label}
-      aria-label={label}
-      {...NO_INHERITED_TITLE}
-      onClick={() => (parked ? wake(key) : snooze(key)).catch(() => {})}
-    >
-      {parked ? <Sun /> : <Moon />}
-    </button>
-  );
-}
-
-// The wrench of the Fix with Copilot control. Generic on purpose: the control
-// asks for a repair, and is not Copilot's own button.
-function Wrench() {
-  return (
-    <GlyphSvg strokeWidth={2}>
-      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </GlyphSvg>
-  );
-}
-
-// How long an armed control waits for its second click before standing down.
+// How long an armed fix waits for its second click before standing down.
 const FIX_CONFIRM_MS = 4000;
 
-/* The row's Fix with Copilot control, a sibling of the row button beside the
-   snooze control and revealed with it. It posts a comment under the user's
-   name, so it takes two clicks: the first turns it into Confirm, which stands
-   down when the pointer leaves the row or after a few seconds. Returns what
-   the row needs to place it: the control, the handler that stands it down,
-   and the message of a post that failed. */
-function useFixControl(row: RowView) {
+/* A row's Fix with Copilot action. It posts a comment under the user's name,
+   so it takes two clicks from the bar or the menu alike: the first arms it,
+   and it reads Confirm until the second, standing down after a few seconds
+   or when the row says so. */
+function useFix(row: RowView) {
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -337,46 +297,14 @@ function useFixControl(row: RowView) {
     return () => clearTimeout(timer);
   }, [armed]);
 
-  const click = () => {
-    const next = clickFix(prKey(row.pr), armed);
-    setArmed(next.armed);
-    setError(null);
-    next.request?.then(setError);
-  };
-
-  let control: ReactNode = null;
-  if (row.fix === "offer") {
-    control = armed ? (
-      <button
-        type="button"
-        className="pr-fix is-armed"
-        aria-label="Confirm: ask Copilot to fix the conflict"
-        {...NO_INHERITED_TITLE}
-        onClick={click}
-      >
-        Confirm
-      </button>
-    ) : (
-      <button
-        type="button"
-        className="pr-fix pr-tip"
-        data-tip="Fix with Copilot"
-        aria-label="Fix with Copilot"
-        {...NO_INHERITED_TITLE}
-        onClick={click}
-      >
-        <Wrench />
-      </button>
-    );
-  } else if (row.fix === "posting") {
-    control = (
-      <span className="pr-fix is-settled" role="status">
-        Asking
-      </span>
-    );
-  }
   return {
-    control,
+    armed,
+    click: () => {
+      const next = clickFix(prKey(row.pr), armed);
+      setArmed(next.armed);
+      setError(null);
+      next.request?.then(setError);
+    },
     standDown: () => setArmed(false),
     // Shown only beside the offer it explains: once the row stops offering
     // the fix, a note about a failed try has nothing left to say.
@@ -384,26 +312,168 @@ function useFixControl(row: RowView) {
   };
 }
 
+/* A row's right-click menu: where it is open, and the handlers that open it.
+   `row` goes on the row button, which is where focus returns when the menu
+   closes; `item` goes on the li, so a right-click or the context-menu key
+   anywhere in the row opens it. */
+function useRowMenu() {
+  const [at, setAt] = useState<Point | null>(null);
+  const row = useRef<HTMLButtonElement>(null);
+  // For the keyboard, which has no pointer to open the menu at: just inside
+  // the row, clear of the avatar.
+  const openAtRow = () => {
+    const box = row.current?.getBoundingClientRect();
+    if (box) setAt({ x: box.left + 48, y: box.top + box.height / 2 });
+  };
+  return {
+    at,
+    row,
+    close: (refocus: boolean) => {
+      setAt(null);
+      if (refocus) row.current?.focus();
+    },
+    item: {
+      onContextMenu: (event: MouseEvent) => {
+        // Always, so the webview's own menu never shows over a row.
+        event.preventDefault();
+        if ((event.target as Element).closest(".pr-menu")) return;
+        // A context menu asked for by key arrives without a pointer position.
+        if (event.clientX || event.clientY) {
+          setAt({ x: event.clientX, y: event.clientY });
+        } else {
+          openAtRow();
+        }
+      },
+      onKeyDown: (event: KeyboardEvent) => {
+        if (at !== null || !opensMenu(event)) return;
+        event.preventDefault();
+        openAtRow();
+      },
+    },
+  };
+}
+
+/* An open row menu, mounted on the body rather than in its row: nothing
+   there clips it or scrolls it, and it reaches past the row it belongs to.
+   Its events still bubble to the row through React's tree. */
+function MenuLayer(props: Parameters<typeof RowMenu>[0]) {
+  return createPortal(<RowMenu {...props} />, document.body);
+}
+
+// The li of a row: lit while its menu is open, so the menu's row is plain
+// even with the pointer on the menu.
+const rowClass = (menuOpen: boolean) =>
+  menuOpen ? "pr-row-split has-menu" : "pr-row-split";
+
+/* The row's actions as worded buttons. Siblings of the row button rather than
+   children (nested buttons are invalid HTML), floated over the end of the
+   row's metadata line and shown only while the row is hovered or holds
+   focus. `confirm` is the action waiting for its confirming click, under the
+   words it shows meanwhile, and `status` stands where an action would while
+   it cannot be asked for. */
+function ActionBar({
+  actions,
+  confirm = null,
+  status = null,
+  onPick,
+}: {
+  actions: RowAction[];
+  confirm?: RowAction | null;
+  status?: string | null;
+  onPick: (id: RowActionId) => void;
+}) {
+  return (
+    <span
+      className="pr-actions"
+      role="group"
+      aria-label="Actions"
+      {...NO_INHERITED_TITLE}
+    >
+      {status && (
+        <span className="pr-action-status" role="status">
+          {status}
+        </span>
+      )}
+      {actions.map((action) => {
+        const { id, label, hint } =
+          action.id === confirm?.id ? confirm : action;
+        return (
+          <button
+            key={id}
+            type="button"
+            className={id === confirm?.id ? "pr-action is-armed" : "pr-action"}
+            title={hint ?? ""}
+            // The hint is what the label leaves unsaid, so it names the
+            // button in full; it starts with the label, as a spoken name
+            // must.
+            aria-label={hint ?? undefined}
+            onClick={() => onPick(id)}
+          >
+            {id === confirm?.id ? (
+              /* The armed button keeps the width of the label it replaced.
+                 The bar is right-aligned, so a narrower button would slide
+                 its neighbour under the pointer, and the confirming click
+                 would land on that instead. */
+              <>
+                <span className="pr-action-width" aria-hidden="true">
+                  {action.label}
+                </span>
+                <span className="pr-action-over">{label}</span>
+              </>
+            ) : (
+              label
+            )}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
 // showRepo is false inside a repo group, where the header already names it.
 function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const { pr, draft, state, botAuthor, botNote, waiting } = row;
   const unread = pr.unread_count > 0;
-  const fix = useFixControl(row);
-  const open = () => {
-    openUrl(pr.url).catch(() => {});
-    // The backend clears the badge and pushes a fresh snapshot.
-    markRead(prKey(pr)).catch(() => {});
+  const key = prKey(pr);
+  const fix = useFix(row);
+  const menu = useRowMenu();
+  // The armed fix under the words it takes until its second click, in the
+  // bar and the menu alike.
+  const confirm: RowAction | null = fix.armed
+    ? { id: "fix", label: "Confirm", hint: CONFIRM_HINT }
+    : null;
+  const run = (id: RowActionId) => {
+    switch (id) {
+      case "open":
+        openUrl(pr.url).catch(() => {});
+        // The backend clears the badge and pushes a fresh snapshot.
+        markRead(key).catch(() => {});
+        break;
+      case "snooze":
+        snooze(key).catch(() => {});
+        break;
+      case "wake":
+        wake(key).catch(() => {});
+        break;
+      case "fix":
+        fix.click();
+        break;
+    }
   };
   return (
     <li
-      className={row.snooze === null ? undefined : "pr-row-split"}
+      className={rowClass(menu.at !== null)}
       title={authorLabel(pr.author, botAuthor)}
-      onPointerLeave={fix.standDown}
+      // Not while the menu is open: the pointer may be nowhere near a menu
+      // opened by key, and the armed item must wait there for its confirm.
+      onPointerLeave={menu.at === null ? fix.standDown : undefined}
+      {...menu.item}
     >
       <button
+        ref={menu.row}
         type="button"
         className={unread ? "pr-row is-unread" : "pr-row"}
-        onClick={open}
+        onClick={() => run("open")}
       >
         <PrAvatar
           avatarUrl={pr.avatar_url}
@@ -443,8 +513,28 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           </span>
         </span>
       </button>
-      {fix.control}
-      <SnoozeControl row={row} />
+      <span className="pr-row-end">
+        <ActionBar
+          actions={row.actions}
+          confirm={confirm}
+          status={row.fix === "posting" ? "Asking" : null}
+          onPick={run}
+        />
+      </span>
+      {menu.at && (
+        <MenuLayer
+          at={menu.at}
+          items={row.actions.map((action) =>
+            action.id === confirm?.id ? confirm : action,
+          )}
+          onPick={(id) => {
+            run(id);
+            // The pick that arms the fix leaves the menu up for its confirm.
+            if (id !== "fix" || fix.armed) menu.close(true);
+          }}
+          onClose={menu.close}
+        />
+      )}
     </li>
   );
 }
@@ -477,11 +567,13 @@ function SnoozedGroup({ group }: { group: SnoozedGroupView }) {
   );
 }
 
-/* Sibling buttons, not a dismiss or a deploy status nested inside the row
-   button, which would be invalid HTML. No mark_read here: merged PRs carry
-   no unread state. */
+/* The deploy status is a control of its own (it opens the workflow run, the
+   row opens the PR), so like the action bar it is a sibling of the row
+   button, not nested in it, which would be invalid HTML. No mark_read here:
+   merged PRs carry no unread state. */
 function MergedRow({ row }: { row: MergedRowView }) {
   const { pr, deploy } = row;
+  const menu = useRowMenu();
   const status = deploy && (
     <>
       {deploy.label}
@@ -490,37 +582,47 @@ function MergedRow({ row }: { row: MergedRowView }) {
         ` ${formatUpdated(deploy.completedAt)}`}
     </>
   );
+  const run = (id: RowActionId) => {
+    if (id === "open") openUrl(pr.url).catch(() => {});
+    if (id === "dismiss") dismissMerged(prKey(pr)).catch(() => {});
+  };
   return (
-    <li className="pr-row-split" title={authorLabel(pr.author, false)}>
-      <span className="pr-row-main">
-        <button
-          type="button"
-          className="pr-row"
-          onClick={() => openUrl(pr.url).catch(() => {})}
-        >
-          <PrAvatar
-            avatarUrl={pr.avatar_url}
-            ownerAvatarUrl={pr.owner_avatar_url}
-            author={pr.author}
-          />
-          <span className="pr-text">
-            <span className="pr-title-row">
-              <span className="pr-title">{pr.title}</span>
-              <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
-            </span>
-            <span className="pr-origin">
-              <span className="pr-number">#{pr.number}</span>
-              <span className="pr-repo">{pr.repo}</span>
-              {/* Holds the status's place in the line so the repo truncates
-                  before it; the real control floats over this spot. */}
-              {status && (
-                <span className="pr-deploy-space" aria-hidden="true">
-                  {status}
-                </span>
-              )}
-            </span>
+    <li
+      className={rowClass(menu.at !== null)}
+      title={authorLabel(pr.author, false)}
+      {...menu.item}
+    >
+      <button
+        ref={menu.row}
+        type="button"
+        className="pr-row"
+        onClick={() => run("open")}
+      >
+        <PrAvatar
+          avatarUrl={pr.avatar_url}
+          ownerAvatarUrl={pr.owner_avatar_url}
+          author={pr.author}
+        />
+        <span className="pr-text">
+          <span className="pr-title-row">
+            <span className="pr-title">{pr.title}</span>
+            <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
           </span>
-        </button>
+          <span className="pr-origin">
+            <span className="pr-number">#{pr.number}</span>
+            <span className="pr-repo">{pr.repo}</span>
+            {/* Holds the status's place in the line so the repo truncates
+                before it; the real control floats over this spot. */}
+            {status && (
+              <span className="pr-deploy-space" aria-hidden="true">
+                {status}
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
+      <span className="pr-row-end">
+        <ActionBar actions={row.actions} onPick={run} />
         {deploy && (
           <button
             type="button"
@@ -532,17 +634,17 @@ function MergedRow({ row }: { row: MergedRowView }) {
           </button>
         )}
       </span>
-      <button
-        type="button"
-        className="pr-dismiss"
-        aria-label="Dismiss"
-        {...NO_INHERITED_TITLE}
-        onClick={() =>
-          dismissMerged(prKey(pr)).catch(() => {})
-        }
-      >
-        ×
-      </button>
+      {menu.at && (
+        <MenuLayer
+          at={menu.at}
+          items={row.actions}
+          onPick={(id) => {
+            run(id);
+            menu.close(true);
+          }}
+          onClose={menu.close}
+        />
+      )}
     </li>
   );
 }
