@@ -20,6 +20,8 @@ export interface KeyPress {
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  /** True for the presses a held key keeps sending. */
+  repeat: boolean;
 }
 
 /** The row `step` away from `selected` in `keys`, the rows in the order they
@@ -99,12 +101,14 @@ const offered = (actions: RowAction[], ...ids: RowActionId[]) =>
   actions.find((action) => ids.includes(action.id)) ?? null;
 
 /** The action a key pressed on a row runs, out of the ones that row offers:
- * S snoozes or wakes, Delete dismisses. */
+ * S snoozes or wakes, Delete dismisses. One press, one row: focus moves to
+ * the next row when the action removes this one, so a held key would
+ * otherwise run down the list. */
 export function rowCommand(
   press: KeyPress,
   actions: RowAction[],
 ): RowActionId | null {
-  if (modified(press)) return null;
+  if (modified(press) || press.repeat) return null;
   switch (press.key) {
     case "s":
     case "S":

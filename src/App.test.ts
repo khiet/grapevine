@@ -125,5 +125,5 @@ test("a sync error takes the hints' place", () => {
 });
 
 test("with no keys to hint at, the footer's left side is empty", () => {
-  expect(footer(null)).not.toContain("key-hint");
+  expect(footer(null)).not.toContain("<kbd>");
 });

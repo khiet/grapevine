@@ -58,12 +58,13 @@ test("when every row leaves, nothing is selected", () => {
   expect(selectionAfter(KEYS, ["x"], "b")).toBeNull();
 });
 
-const key = (name: string, modifiers: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey", boolean>> = {}) => ({
+const key = (name: string, modifiers: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "repeat", boolean>> = {}) => ({
   key: name,
   metaKey: false,
   ctrlKey: false,
   altKey: false,
   shiftKey: false,
+  repeat: false,
   ...modifiers,
 });
 
@@ -112,6 +113,12 @@ test("a key held with Command, Control or Option is not a row shortcut", () => {
   expect(rowCommand(key("s", { metaKey: true }), [SNOOZE, OPEN])).toBeNull();
   expect(rowCommand(key("s", { ctrlKey: true }), [SNOOZE, OPEN])).toBeNull();
   expect(rowCommand(key("Backspace", { altKey: true }), [DISMISS, OPEN])).toBeNull();
+});
+
+// The row after a removed one takes focus, so a held key would act on it too.
+test("a held key acts on one row only", () => {
+  expect(rowCommand(key("s", { repeat: true }), [SNOOZE, OPEN])).toBeNull();
+  expect(rowCommand(key("Delete", { repeat: true }), [DISMISS, OPEN])).toBeNull();
 });
 
 test("in the list, the arrows move between rows and Escape returns to the filter", () => {

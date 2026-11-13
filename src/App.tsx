@@ -189,7 +189,7 @@ function App() {
   }, []);
 
   return (
-    <div className="popover" onFocus={listKeys.onFocus}>
+    <div className="popover" {...listKeys.around}>
       <header className="popover-header">
         {inSettings ? (
           <span className="popover-title">Settings</span>

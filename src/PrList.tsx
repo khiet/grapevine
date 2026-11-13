@@ -155,10 +155,13 @@ export function useListKeys(view: ListView | null): {
   };
   list: ListKeys;
   /** For an element around both the filter and the list. */
-  onFocus: (event: FocusEvent) => void;
+  around: {
+    onFocus: (event: FocusEvent) => void;
+    onPointerDown: () => void;
+  };
   hints: KeyHint[];
-  /** The selected row in words, set when the selection moves while focus
-   * is in the filter; a row that takes focus announces itself. */
+  /** The selected row in words, set when the arrows move the selection
+   * from the filter; a row that takes focus announces itself. */
   announcement: string;
 } {
   const list = useRef<HTMLElement>(null);
@@ -262,10 +265,21 @@ export function useListKeys(view: ListView | null): {
         if (next) rowButton(next)?.focus();
       },
     },
-    onFocus: (event) => {
-      // Focus moved by hand: nothing is owed a refocus any more.
-      refocus.current = false;
-      setZone(zoneOf(event.target as Node));
+    around: {
+      onFocus: (event) => {
+        // Focus moved by hand: nothing is owed a refocus any more.
+        refocus.current = false;
+        const zone = zoneOf(event.target as Node);
+        setZone(zone);
+        // Emptied once focus leaves the filter, so coming back to the same
+        // row is a change the live region speaks again.
+        if (zone !== "filter") setAnnouncement("");
+      },
+      // A click on nothing focusable drops focus to the body by choice;
+      // an action that removed no row must not pull it back later.
+      onPointerDown: () => {
+        refocus.current = false;
+      },
     },
     hints: keyHints(
       zone,

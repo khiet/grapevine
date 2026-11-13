@@ -352,11 +352,10 @@ test("the selected row, and only that row, is marked as the selection", () => {
       },
     }),
   );
-  const rows = (html.match(/<li[^>]*>/g) ?? []).filter((li) => li.includes("pr-row-split"));
-  expect(rows).toEqual([
-    '<li class="pr-row-split" title="@octocat" data-row-key="acme/widgets#7">',
-    '<li class="pr-row-split is-selected" title="@hubot" data-row-key="acme/widgets#90">',
-  ]);
+  const selected = (html.match(/<li[^>]*>/g) ?? [])
+    .filter((li) => li.includes("is-selected"))
+    .map((li) => li.match(/data-row-key="([^"]*)"/)?.[1]);
+  expect(selected).toEqual(["acme/widgets#90"]);
 });
 
 test("with no selection no row is marked", () => {
