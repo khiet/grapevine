@@ -17,9 +17,13 @@ const buttonNamed = (html: string, name: string) =>
 
 const SYNCED_AT = 1_790_000_000_000;
 
-const footer = (error: string | null, syncing = false) =>
+const footer = (
+  error: string | null,
+  syncing = false,
+  lastSyncAt: number | null = SYNCED_AT,
+) =>
   renderToStaticMarkup(
-    createElement(SyncStatus, { lastSyncAt: SYNCED_AT, error, syncing }),
+    createElement(SyncStatus, { lastSyncAt, error, syncing }),
   );
 
 const retryButton = (html: string) =>
@@ -82,4 +86,11 @@ test("Retry is unavailable while the retry runs", () => {
   expect(retryButton(footer("Could not reach GitHub.", true))).toContain(
     'aria-disabled="true"',
   );
+});
+
+test("a first sync that failed can be retried, with no sync time to show", () => {
+  const html = footer("Could not reach GitHub.", false, null);
+  expect(retryButton(html)).toBeDefined();
+  expect(buttonNamed(html, "Sync now")).toBeDefined();
+  expect(html).not.toContain("Synced");
 });
