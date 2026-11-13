@@ -219,3 +219,46 @@ test("an empty section shows a dash named for assistive tech, in Todo as elsewhe
     );
   }
 });
+
+function renderOpenRow(overrides: Partial<PullRequest>): string {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [{ ...openPr, ...overrides }] },
+    "",
+    { ...DEFAULT_COLLAPSED },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  const row = html.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0];
+  if (!row) throw new Error("no row rendered");
+  return row;
+}
+
+test("a row with one state shows it as plain words in its tone", () => {
+  const row = renderOpenRow({ approved: true });
+  expect(row).toContain(
+    '<span class="pr-state is-ok"><span class="pr-state-reason">Approved</span></span>',
+  );
+});
+
+// The row button computes its name from its content, so the label on the
+// state is what puts every state in the row's accessible name.
+test("a row with several states shows one reason and +N, and names them all in its tooltip and label", () => {
+  const row = renderOpenRow({
+    approved: true,
+    checks_running: true,
+    blocked_reasons: ["threads"],
+  });
+  expect(row).toContain(
+    '<span class="pr-state is-warn pr-tip" role="img"' +
+      ' data-tip="Unresolved threads\nChecks running\nApproved"' +
+      ' aria-label="Unresolved threads, Checks running, Approved" title="">' +
+      '<span class="pr-state-reason">Unresolved threads</span>' +
+      '<span class="pr-state-more">+2</span></span>',
+  );
+});
+
+test("a row with no state renders no reason", () => {
+  expect(renderOpenRow({})).not.toContain("pr-state");
+});

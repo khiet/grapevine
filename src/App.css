@@ -55,9 +55,7 @@
   --on-unread: #ffffff;
   --danger: #d70015;
   --warn: #8a4a00;
-  --warn-fill: rgba(255, 159, 10, 0.16);
   --ok: #1a7431;
-  --ok-fill: rgba(52, 199, 89, 0.16);
 
   /* The hover bubble is dark in both themes, like the native tooltip. */
   --tip-bg: rgba(58, 58, 60, 0.96);
@@ -94,9 +92,7 @@
     --on-unread: #2b0705;
     --danger: #ff8a80;
     --warn: #ffc266;
-    --warn-fill: rgba(255, 159, 10, 0.22);
     --ok: #6fe08e;
-    --ok-fill: rgba(48, 209, 88, 0.22);
 
     /* Lifted a step above the card so the bubble does not melt into the
        row it covers. */
@@ -556,7 +552,7 @@ body {
 /* A Copilot request that did not go out, in the sync error's amber. Clips
    like the bot note beside it. */
 .pr-fix-error {
-  /* Gives way before the blocked pill beside it does, after the repo. */
+  /* Gives way before the row's state beside it does, after the repo. */
   flex-shrink: 4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -741,7 +737,7 @@ body {
 }
 
 .pr-repo {
-  /* Gives way well before a check name in the marker cluster does: on a row
+  /* Gives way well before a check name in the row's state does: on a row
      with a failing check, the name is the news. */
   flex-shrink: 8;
   overflow: hidden;
@@ -750,7 +746,7 @@ body {
 }
 
 /* New bot activity, in the metadata line's own grey: worth knowing, never a
-   call to act. Truncates alongside the repo, so a row crowded with pills
+   call to act. Truncates alongside the repo, so a crowded row
    keeps some of each rather than losing the repo outright. */
 .pr-bot-note {
   overflow: hidden;
@@ -758,90 +754,70 @@ body {
   white-space: nowrap;
 }
 
-/* The action-marker cluster (approved check, review glasses, merge queue
-   mark, blocked pills), pinned as one group at the row's right edge, out of
-   the metadata's way, so the marks sit side by side rather than scattering
-   across the row. The draft pill is not here: the backend suppresses the
-   check, glasses and blocked pills on drafts, and a draft cannot be queued to
-   merge, so it never coexists with them. */
-.pr-marks {
+/* The row's state in words, pinned at the row's right edge, out of the
+   metadata's way. Plain text in its tone, not a pill: the words are the
+   signal, and the line stays one register. The neutral tone is the metadata
+   line's own grey, so it sets no colour. position: relative anchors the
+   tooltip. It never shrinks: the repo beside it gives way instead, since the
+   state is the news. */
+.pr-state {
+  position: relative;
   display: inline-flex;
-  align-items: center;
-  /* Glyphs carry 4px of transparent hover padding; pills carry none, so the
-     gap does the spacing between a pill pair on its own. */
+  flex: none;
   gap: 4px;
   margin-left: auto;
-  /* Lets a long check name inside the cluster give way instead of pushing
-     the cluster past the row's right edge. */
-  min-width: 0;
-}
-
-/* The one pill shape, shared so the state pills read as one vocabulary and a
-   later tune (radius, size, padding) cannot let them drift apart. Each rule
-   below adds only its colors and placement. */
-.pr-draft,
-.pr-neutral-pill,
-.pr-ready-pill,
-.pr-blocked-pill {
-  flex: none;
-  align-self: center;
-  padding: 0 5px;
-  border-radius: var(--radius-full);
-  font-size: var(--text-s);
   font-weight: 500;
-  line-height: 17px;
   white-space: nowrap;
 }
 
-/* The blocked-reason pill: the shared pill shape in the blocked amber, so
-   "Merge conflict" / "CI failing" / "Changes requested" reads without
-   hovering. A tinted fill rather than solid amber keeps it in the metadata
-   line's register. The text amber holds 4.5:1 on that fill even over a
-   hovered row's tint. Deliberately not the unread badge's red so the two
-   signals stay distinct: amber says "this PR is blocked", red says "someone
-   spoke". position: relative anchors the +N pill's tooltip. */
-.pr-blocked-pill {
-  position: relative;
-  background-color: var(--warn-fill);
+/* A draft's pill already took the free space to its left. */
+.pr-draft + .pr-state {
+  margin-left: 0;
+}
+
+/* Amber says "this PR is blocked", deliberately not the unread badge's red,
+   which says "someone spoke". Green is the one positive signal. The accent
+   marks what waits on the viewer. Each holds 4.5:1 on the card, hovered
+   included. */
+.pr-state.is-accent {
+  color: var(--accent);
+}
+
+.pr-state.is-warn {
   color: var(--warn);
 }
 
-/* The spelled-out pill can carry a check's name ("CI: e2e-safari"), which is
-   as long as its author made it. It is the one mark that shrinks: capped so
-   the repo keeps some room, and giving way with an ellipsis on a row whose
-   cluster is already full, down to a floor that still reads "CI: abc...".
-   Not on the +N pill: clipping overflow would cut off its tooltip, and its
-   label is always short. */
-.pr-blocked-pill:not(.pr-tip) {
-  flex: 0 1 auto;
-  min-width: 56px;
-  max-width: 150px;
+.pr-state.is-ok {
+  color: var(--ok);
+}
+
+/* The reason can carry a check's name ("CI failing: e2e-safari"), which is
+   as long as its author made it, so it is capped and clips with an ellipsis,
+   leaving the number and some of the repo their room. The clip is here and
+   not on .pr-state, where it would cut off the tooltip. */
+.pr-state-reason {
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* The ready pill: the shared pill shape in the approved check's green, the
-   cluster's one positive colour. The text green holds 4.5:1 on the tinted fill,
-   as the blocked amber does. */
-.pr-ready-pill {
-  background-color: var(--ok-fill);
-  color: var(--ok);
+/* The count of folded states: never a signal, whatever the reason's tone. */
+.pr-state-more {
+  flex: none;
+  color: var(--text-2);
 }
 
-/* Auto-merge and running checks: the draft pill's grey, since a merge under
-   way is a state and not a signal. The label takes the primary text colour
-   because the secondary grey cannot hold 4.5:1 on a grey fill over a hovered
-   row. position: relative anchors the tooltip. */
-.pr-neutral-pill {
-  position: relative;
-  background-color: var(--fill);
-  color: var(--text);
+/* One state per line, so a long list grows down instead of past the
+   popover's edge. */
+.pr-state.pr-tip::after {
+  font-weight: 400;
+  white-space: pre;
 }
 
-/* The hover bubble, shared by every mark in the cluster (each carries
-   `.pr-tip` and a `data-tip`). A custom tooltip instead of the native `title`
+/* The hover bubble, shared by everything that explains itself on hover (each
+   carries `.pr-tip` and a `data-tip`). A custom tooltip instead of the native `title`
    one, whose OS-controlled ~1.5s delay buried the information; this one shows
-   after 200ms. It sits to the left of its marker on the same line, vertically
+   after 200ms. It sits to the left of its anchor on the same line, vertically
    centred on it; growing leftward keeps it over the row rather than past the
    list edge. Dark in both themes, like the native macOS dark tooltip. */
 .pr-tip::after {
@@ -861,7 +837,7 @@ body {
 }
 
 /* The tip: a border-triangle butted against the bubble's right edge,
-   pointing at the marker. */
+   pointing at the anchor. */
 .pr-tip::before {
   content: "";
   position: absolute;
@@ -888,7 +864,7 @@ body {
   transition: opacity 120ms ease-out 200ms;
 }
 
-/* The rightward mirror of the bubble, for marks at the row's left edge (the
+/* The rightward mirror of the bubble, for anchors at the row's left edge (the
    avatar's author reveal), where the default leftward growth would clip at
    the card boundary. */
 .pr-tip-right::after {
@@ -905,69 +881,22 @@ body {
   border-right-color: var(--tip-bg);
 }
 
-/* A grey glyph mark in the cluster (the review glasses), deliberately never
-   the blocked pill's amber, which stays reserved for blockage. The
-   4px padding is an invisible hover hit area for the tooltip; the negative
-   margin keeps the visible glyph on the text baseline. */
-.pr-glyph {
-  position: relative;
-  display: inline-flex;
+/* The draft pill: a neutral grey fill, never a signal colour, since a draft
+   is the author's own choice, not something stuck. The label takes the
+   primary text colour because the secondary grey cannot hold 4.5:1 on a grey
+   fill over a hovered row. */
+.pr-draft {
   flex: none;
   align-self: center;
-  align-items: center;
-  padding: 4px;
-  margin: -4px 0;
-  color: var(--text-2);
-}
-
-/* The directional review glyph: glasses plus an arrow svg beside it. A small
-   gap keeps the arrow off the lens without widening the mark cluster's own
-   spacing. */
-.pr-glyph-wide {
-  gap: 1px;
-}
-
-/* The merge queue mark: the stack glyph with the position number beside it,
-   in the glyph's own grey because being queued is not a signal. */
-.pr-glyph-count {
-  gap: 2px;
-  font-size: var(--text-s);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-/* Your turn: the one mark that says why a row waits on you. A pill keeps its
-   hue, which still says what kind of thing is waiting, and gains a ring in
-   its own text colour, so a blocked PR of yours stands apart from a blocked
-   PR you only follow. The review glyph has no hue of its own, so it takes
-   the accent the app uses for things to act on. */
-.pr-blocked-pill.pr-your-turn,
-.pr-ready-pill.pr-your-turn {
-  box-shadow: inset 0 0 0 1px currentColor;
-}
-
-.pr-glyph.pr-your-turn {
-  color: var(--accent);
-}
-
-/* The approved check, the marker cluster's one green glyph: the same green as
-   .settings-ok rather than a new hue, and a colour override only,
-   so it stays a RowMark in every other respect. Green is reserved for this
-   positive signal, keeping it apart from the blocked amber and unread red. */
-.pr-glyph-ok {
-  color: var(--ok);
-}
-
-/* The draft pill: the shared pill shape on the neutral grey fill, never a
-   signal colour, since a draft is the author's own choice, not something
-   stuck. The backend suppresses the action markers on a draft, so this pill
-   sits alone at the right edge (hence `margin-left: auto`, matching the
-   cluster). */
-.pr-draft {
   margin-left: auto;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
   background-color: var(--fill);
   color: var(--text);
+  font-size: var(--text-s);
+  font-weight: 500;
+  line-height: 17px;
+  white-space: nowrap;
 }
 
 /* As tall as an icon button in both views, so the header keeps its height

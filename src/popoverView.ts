@@ -1,6 +1,6 @@
 // What the popover shows, derived from the Snapshot, the filter query and the
 // collapse state: the placeholder choice, which sections exist and what they
-// hold, and each row's marks. App, PrList, SectionHeader and PrRow render the
+// hold, and each row's state. App, PrList, SectionHeader and PrRow render the
 // result; a rule about what appears belongs here, where a test can reach it.
 // Pure: no React, no storage, no clock; the caller passes `now`.
 
@@ -33,29 +33,31 @@ export const YOUR_TURN_KEY = "yours";
  * to remember: it comes back as the PR's fix_requested. */
 export type FixesPosting = ReadonlySet<string>;
 
-/** One item of a row's right-edge marker cluster. `tip` is the hover tooltip
- * and the accessible name; null on the primary blocked pill, which is its own
- * label, and absent on the ready pill for the same reason. `yourTurn` is the
- * tint flag: set on the one mark that says why the row waits on the viewer,
- * and absent everywhere else. */
-export type Mark =
-  | { kind: "approved"; tip: string }
-  | { kind: "review-requested"; tip: string; yourTurn?: true }
-  | { kind: "team-review-requested"; tip: string }
-  | { kind: "awaiting-review"; tip: string }
-  | { kind: "merge-queue"; position: number; tip: string }
-  | { kind: "ready"; label: string; yourTurn?: true }
-  | { kind: "auto-merge"; label: string; tip: string }
-  | { kind: "checks-running"; label: string; tip: string }
-  | { kind: "copilot-fixing"; label: string; tip: string }
-  | { kind: "blocked"; label: string; tip: string | null; yourTurn?: true };
+/** What colours a row's reason: the accent for the viewer's turn, amber for
+ * blocked, green for ready and approved, neutral for everything else. */
+export type Tone = "accent" | "warn" | "ok" | "neutral";
+
+/** A row's states, in words. A row shows `reason` and `more`; the rest is
+ * for the tooltip and the accessible name. */
+export interface RowState {
+  /** The highest-priority state. On a your-turn row, the one the backend
+   * decided the turn on. */
+  reason: string;
+  tone: Tone;
+  /** "+N" for the N states folded behind the reason; null when it stands
+   * alone. */
+  more: string | null;
+  /** Every state in priority order, the reason first. */
+  all: string[];
+}
 
 export interface RowView {
   pr: PullRequest;
-  /** The neutral Draft pill; a state, not a mark. */
+  /** The neutral Draft pill, shown beside `state` and never part of it. */
   draft: boolean;
-  /** In display order. Empty means the row has no marker cluster. */
-  marks: Mark[];
+  /** Null when the PR has no state to report, so a quiet row keeps meaning
+   * "nothing is stuck". */
+  state: RowState | null;
   /** The "bot" tag on the avatar: a machine account opened the PR. */
   botAuthor: boolean;
   /** The muted metadata note counting new bot activity; null when there is
@@ -71,7 +73,7 @@ export interface RowView {
   snooze: "offer" | "wake" | null;
   /** The row's Fix with Copilot control: "offer" to ask Copilot to resolve
    * the merge conflict, "posting" while the request is on its way, null
-   * where the fix is not on offer. A request that was made is a mark, not a
+   * where the fix is not on offer. A request that was made is a state, not a
    * control. */
   fix: "offer" | "posting" | null;
 }
@@ -168,35 +170,15 @@ const BLOCKED_LABELS: Record<BlockedReason, string> = {
 };
 
 // The CI reason names the check when the backend could: the first failing
-// one, then "+ more" for any others. Never a count: on a truncated list the
-// number seen is not the number failing, and "+ more" is true either way.
+// one, then "and more" for any others. Never a count: on a truncated list the
+// number seen is not the number failing, and "and more" is true either way.
+// Worded, not "+ more", so it cannot be read as the row's "+N".
 function blockedLabel(reason: BlockedReason, pr: PullRequest): string {
   if (reason !== "ci" || pr.failing_checks.length === 0) {
     return BLOCKED_LABELS[reason];
   }
   const more = pr.failing_checks.length > 1 || pr.failing_checks_truncated;
-  return `CI: ${pr.failing_checks[0]}${more ? " + more" : ""}`;
-}
-
-// The blocked pills: the first reason spelled out, then "+N" for the rest, so
-// a doubly-blocked row stays width-bounded ("Merge conflict" "+1") instead of
-// listing everything inline. The first reason wins because the backend orders
-// by severity (conflict, ci, review, threads, behind). The +N pill's tooltip
-// names the reasons its count stands for.
-function blockedMarks(pr: PullRequest): Mark[] {
-  if (pr.blocked_reasons.length === 0) return [];
-  const [first, ...rest] = pr.blocked_reasons;
-  const marks: Mark[] = [
-    { kind: "blocked", label: blockedLabel(first, pr), tip: null },
-  ];
-  if (rest.length > 0) {
-    marks.push({
-      kind: "blocked",
-      label: `+${rest.length}`,
-      tip: rest.map((reason) => blockedLabel(reason, pr)).join("; "),
-    });
-  }
-  return marks;
+  return `CI failing: ${pr.failing_checks[0]}${more ? " and more" : ""}`;
 }
 
 // English ordinal for a positive integer. The suffix follows the last digit,
@@ -207,82 +189,58 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-// The marker cluster in display order: the approved check, the ready pill,
-// the review glyph (incoming, incoming through a team, or outgoing; the
-// backend sends at most one for a row, and the chain below holds the slot to
-// one mark regardless, a request naming you first), the merge marks (queue
-// position, auto-merge, checks running), Copilot at work on the conflict, then
-// the blocked pills. The positive
-// marks lead, so they read before whatever still stands in the way, and the
-// order runs from done, through under way, to stuck. A new signal needs a
-// Mark kind, a line here for when and where it shows, and its glyph in
-// MarkView; no condition elsewhere has to learn about it.
+// Every state the PR is in, in priority order; the row shows the first and
+// folds the rest. A new signal needs one line here, placed where it ranks.
 //
-// Drafts need no special case: the backend suppresses the check, the review
-// glyphs, the merge marks other than the queue position and the blocked
-// reasons on a draft, so whatever it does send shows. Ready is the backend's
-// call as well: the pill does not imply the check, since a repo with no
+// The head of the order (a review asked of you, then the blockers in the
+// backend's severity order, then ready to merge) is the order the backend
+// decides the turn in, so on a your-turn row the first state is the reason
+// the row sits in Todo. After it the order runs from under way (queue,
+// Copilot, checks, auto-merge) to done (approved) to waiting on others.
+//
+// Drafts need no special case: the backend suppresses everything but the
+// queue position on a draft, so whatever it does send shows. Ready is the
+// backend's call as well and does not imply approved, since a repo with no
 // required reviews is ready without an approval.
-function rowMarks(pr: PullRequest): Mark[] {
-  const marks: Mark[] = [];
-  if (pr.approved) marks.push({ kind: "approved", tip: "Approved" });
-  if (pr.ready_to_merge) marks.push({ kind: "ready", label: "Ready to merge" });
+function rowStates(pr: PullRequest): { text: string; tone: Tone }[] {
+  const states: { text: string; tone: Tone }[] = [];
+  const add = (text: string, tone: Tone = "neutral") => states.push({ text, tone });
+  // The accent is the viewer's turn, not the request: the same words on a row
+  // that does not wait on them are plain news.
   if (pr.review_requested) {
-    marks.push({ kind: "review-requested", tip: "Review requested" });
-  } else if (pr.team_review_requested) {
-    marks.push({
-      kind: "team-review-requested",
-      tip: "Review requested from your team",
-    });
-  } else if (pr.awaiting_review) {
-    marks.push({ kind: "awaiting-review", tip: "Awaiting review" });
+    add("Review requested", pr.turn === "yours" ? "accent" : "neutral");
   }
+  for (const reason of pr.blocked_reasons) add(blockedLabel(reason, pr), "warn");
+  if (pr.ready_to_merge) add("Ready to merge", "ok");
+  // Position only: the entry's state and the queue's size are deliberately
+  // not shown.
   if (pr.merge_queue_position !== null) {
-    // Position only: the entry's state and the queue's size are deliberately
-    // not shown.
-    marks.push({
-      kind: "merge-queue",
-      position: pr.merge_queue_position,
-      tip: `${ordinal(pr.merge_queue_position)} in merge queue`,
-    });
+    add(`In merge queue, ${ordinal(pr.merge_queue_position)}`);
   }
-  if (pr.auto_merge) {
-    marks.push({ kind: "auto-merge", label: "Auto", tip: "Auto-merge armed" });
+  // After the conflict it answers: the PR is still conflicting, and this
+  // says who is on it.
+  if (pr.fix_requested) add("Copilot fixing");
+  if (pr.checks_running) add("Checks running");
+  if (pr.auto_merge) add("Auto-merge armed");
+  if (pr.approved) add("Approved", "ok");
+  // The backend sends at most one of the three review directions; the chain
+  // holds the row to one regardless, a request naming you first.
+  if (pr.awaiting_review) add("Awaiting review");
+  else if (pr.team_review_requested && !pr.review_requested) {
+    add("Team review requested");
   }
-  if (pr.checks_running) {
-    marks.push({
-      kind: "checks-running",
-      label: "Running",
-      tip: "Checks running",
-    });
-  }
-  // Next to the conflict pill it answers: the PR is still conflicting, and
-  // this says who is on it.
-  if (pr.fix_requested) {
-    marks.push({
-      kind: "copilot-fixing",
-      label: "Copilot fixing",
-      tip: "Copilot was asked to resolve the conflict",
-    });
-  }
-  marks.push(...blockedMarks(pr));
-  if (pr.turn === "yours") tintYourTurn(marks);
-  return marks;
+  return states;
 }
 
-// Flags the mark that explains a your-turn row: the review glyph when a
-// review is asked of you, else the primary blocked pill, else the ready pill.
-// That is the order the backend decides the turn in, so the tinted mark is
-// the reason the row sits in Todo. At most one mark is flagged; the +N
-// pill never is, since the primary pill already speaks for the blockage.
-function tintYourTurn(marks: Mark[]): void {
-  for (const kind of ["review-requested", "blocked", "ready"] as const) {
-    const mark = marks.find((candidate) => candidate.kind === kind);
-    if (mark?.kind === kind) {
-      mark.yourTurn = true;
-      return;
-    }
-  }
+function rowState(pr: PullRequest): RowState | null {
+  const [first, ...rest] = rowStates(pr);
+  if (!first) return null;
+  return {
+    reason: first.text,
+    tone: first.tone,
+    more: rest.length > 0 ? `+${rest.length}` : null,
+    all: [first.text, ...rest.map((state) => state.text)],
+  };
 }
 
 const HOUR_MS = 3_600_000;
@@ -322,7 +280,7 @@ const rowView = (
 ): RowView => ({
   pr,
   draft: pr.is_draft,
-  marks: rowMarks(pr),
+  state: rowState(pr),
   botAuthor: pr.author_is_bot,
   botNote:
     pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
