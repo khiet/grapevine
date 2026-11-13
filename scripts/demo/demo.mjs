@@ -97,7 +97,19 @@ async function capture(baseUrl, dir) {
       document.getElementById("tray").classList.toggle("is-open", open);
     }, open);
   // Each label stays once it has landed, so the last frame carries them all.
+  // The fixture is sized so every target fits the popover without scrolling;
+  // a target that slipped under the footer or off the end would be ringed
+  // where nothing shows.
   async function label(target, side, text, chipY) {
+    const inView = await target.evaluate((el) => {
+      // Not a hit test: a row's hidden action bar lies over its state.
+      const { top, bottom } = el.getBoundingClientRect();
+      const footer = document.querySelector(".sync-status");
+      const floor =
+        footer && !footer.contains(el) ? footer.getBoundingClientRect().top : window.innerHeight;
+      return top >= 0 && bottom <= floor;
+    });
+    if (!inView) throw new Error(`"${text}" has no visible target`);
     await page.evaluate((args) => window.callout(...args), [
       await target.boundingBox(),
       side,
@@ -108,52 +120,69 @@ async function capture(baseUrl, dir) {
   const row = (number) => app.locator("li", { hasText: number });
 
   // Mine starts folded; it is opened off-camera so every labelled row is in
-  // view without scrolling.
+  // view without scrolling. Down from the filter then selects the first row,
+  // which puts the filter's keys in the footer.
   await setOpen(true);
   await app.locator(".pr-section-toggle", { hasText: "Mine" }).click();
-  await row("#415").waitFor();
+  await row("#2322").waitFor();
+  await app.locator(".header-search-input").press("ArrowDown");
+  await app.locator(".key-hint", { hasText: "Open" }).waitFor();
   await page.mouse.move(2, 400);
   // Let the chevron finish its rotation before any frame is taken.
   await page.waitForTimeout(400);
   await setOpen(false);
 
   const tray = page.locator("#tray");
+  const settings = app.getByRole("button", { name: "Settings" });
   await pointAt(tray);
   await snap(900);
   await setOpen(true);
   await hideCursor();
   if ((await trayCount()) !== "4") throw new Error("tray should show 4");
-  // The top five targets sit close together, so their chips are spread by
-  // hand, in the targets' own top-to-bottom order so no two lines cross. The
-  // second slot (112) is left for the Snooze label, which lands last.
-  await label(tray, "right", "4 PRs waiting on you", 62);
-  await snap(1700);
-  await label(row("#415").locator(".pr-updated"), "right", "Your turn first, and for how long", 158);
-  await snap(1600);
-  await label(row("#415").locator(".pr-state"), "right", "Only required checks count", 208);
-  await snap(1500);
-  await label(row("#1295").locator(".pr-state"), "right", "Ready to merge", 254);
-  await snap(1500);
+  // The top seven targets on the right sit close together, so their chips are
+  // spread by hand, in the targets' own top-to-bottom order so no two lines
+  // cross. The second slot (90) is left for Light or dark, which lands last.
+  const BEAT = 1300;
+  await label(tray, "right", "4 PRs waiting on you", 50);
+  await snap(BEAT);
+  await label(app.locator(".pr-section-pinned .pr-section-label"), "left", "Todo is the tray number");
+  await snap(BEAT);
+  await label(row("#415").locator(".pr-updated"), "right", "Your turn first, and for how long", 150);
+  await snap(BEAT);
+  await label(row("#415").locator(".pr-state"), "right", "Only required checks count", 190);
+  await snap(BEAT);
+  await label(row("#1295").locator(".pr-state"), "right", "Ready to merge", 230);
+  await snap(BEAT);
   await label(row("#2320").locator(".pr-state"), "right", "Merge queue position");
-  await snap(1500);
+  await snap(BEAT);
   await label(row("#2317").locator(".pr-state"), "right", "Your team was asked to review");
-  await snap(1500);
+  await snap(BEAT);
+  await label(app.locator(".pr-deploy"), "right", "Deploy status after merge");
+  await snap(BEAT);
   await label(app.locator(".header-search"), "left", "Filter every repo");
-  await snap(1500);
-  await label(row("#1291").locator(".pr-unread"), "left", "Unread from people, never bots");
-  await snap(1500);
-  // The action bar only shows on a hovered row.
-  await row("#1284").hover();
-  await label(
-    row("#1284").locator(".pr-action", { hasText: "Snooze" }),
-    "right",
-    "Snooze until it changes",
-    112,
-  );
-  await snap(1800);
+  await snap(BEAT);
+  await label(row("#1284").locator(".pr-unread"), "left", "Unread from people, never bots", 150);
+  await snap(BEAT);
+  await label(app.locator(".key-hints"), "left", "Drive it from the keyboard");
+  await snap(BEAT);
+  // The action bar only shows on a hovered row, so its two labels share
+  // one. Snooze is the inner of the two, so its chip sits below the row:
+  // its line then meets the bottom corner of its ring instead of crossing
+  // Copilot's.
+  await row("#2322").hover();
+  const action = (name) => row("#2322").locator(".pr-action", { hasText: name });
+  await label(action("Snooze"), "right", "Snooze until it changes", 366);
+  await snap(BEAT);
+  await label(action("Fix with Copilot"), "right", "Ask Copilot to fix a conflict");
+  await snap(BEAT);
   await page.evaluate(() => document.getElementById("os").removeAttribute("hidden"));
-  // The loop rests on the full summary so every label can be read.
-  await snap(5000);
+  // The loop rests on the summary, then shows it again in the dark palette.
+  await snap(2700);
+  await app.locator("html").evaluate((root) => {
+    root.dataset.theme = "dark";
+  });
+  await label(settings, "right", "Light or dark", 90);
+  await snap(3500);
 
   // No PR was opened or snoozed, so the count must not have moved.
   if ((await trayCount()) !== "4") throw new Error("tray should still show 4");
@@ -163,7 +192,7 @@ async function capture(baseUrl, dir) {
       return { text: node.textContent, left, top, right, bottom };
     }),
   );
-  if (chips.length !== 9) throw new Error(`want 9 labels, got ${chips.length}`);
+  if (chips.length !== 14) throw new Error(`want 14 labels, got ${chips.length}`);
   const popoverBox = await page.locator("#popover").boundingBox();
   for (const [i, a] of chips.entries()) {
     if (a.left < 0 || a.right > 1120) throw new Error(`"${a.text}" runs off the stage`);
@@ -177,7 +206,7 @@ async function capture(baseUrl, dir) {
     }
   }
   const total = frames.reduce((sum, frame) => sum + frame.duration, 0);
-  if (total !== 20000) throw new Error(`loop is ${total}ms, want 20000`);
+  if (total !== 24000) throw new Error(`loop is ${total}ms, want 24000`);
 
   await browser.close();
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);
