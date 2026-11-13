@@ -170,8 +170,15 @@ test("the list has no top padding for rows to show through", () => {
   expect(ruleFor(".pr-section-header").get("top")).toBe("0");
 });
 
-test("the merged dismiss button takes no width from the row", () => {
-  expect(ruleFor(".pr-dismiss").get("position")).toBe("absolute");
+// In the flow it would reserve a column and push merged timestamps off the
+// right edge the other sections share.
+test("the merged dismiss button is out of the row's flow", () => {
+  const positions = styleRules
+    .filter((r) => r.selector.split(",").some((s) => s.trim() === ".pr-dismiss"))
+    .flatMap((r) => declarations(r.body))
+    .filter(([name]) => name === "position")
+    .map(([, value]) => value);
+  expect(positions).toEqual(["absolute"]);
 });
 
 test("the header icon buttons are 28px square", () => {

@@ -399,30 +399,6 @@ body {
   border-top: none;
 }
 
-/* Hidden until the row is hovered, Mail-style: a persistent × on every
-   merged row would read as clutter. Floated over the timestamp's slot like
-   the snooze control, and with the same offsets, so it takes no width from
-   the row and merged timestamps share a right edge with every other row's. */
-.pr-dismiss {
-  position: absolute;
-  top: 9px;
-  right: 7px;
-  height: calc(var(--text-l) * 1.35);
-  display: flex;
-  align-items: center;
-  border: none;
-  background: none;
-  padding: 0 4px;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--text-l);
-  opacity: 0;
-}
-
-.pr-row-split:hover .pr-dismiss,
-.pr-dismiss:focus-visible {
-  opacity: 1;
-}
 
 /* A merged row's deploy status: a control of its own (it opens the workflow
    run, the row opens the PR) floated over the end of the metadata line,
@@ -470,7 +446,8 @@ body {
    is that a click on the timestamp corner snoozes instead of opening. The
    offsets must track .pr-row's padding (top 9px; right 11px = 7px + the 4px
    side padding) and the title's first line (13px x 1.35). */
-.pr-snooze {
+.pr-snooze,
+.pr-dismiss {
   position: absolute;
   top: 9px;
   right: 7px;
@@ -485,7 +462,9 @@ body {
 }
 
 .pr-row-split:hover .pr-snooze,
-.pr-snooze:focus-visible {
+.pr-snooze:focus-visible,
+.pr-row-split:hover .pr-dismiss,
+.pr-dismiss:focus-visible {
   opacity: 1;
 }
 
@@ -499,6 +478,18 @@ body {
 
 .pr-snooze:hover {
   color: var(--accent);
+}
+
+/* A merged row's dismiss shares the snooze control's slot and reveal, so it
+   takes no width from the row and merged timestamps share a right edge with
+   every other row's. It keeps the width it had as a column of its own, and
+   reaches the card's edge. Hidden until hover because a persistent × on
+   every merged row would read as clutter. */
+.pr-dismiss {
+  right: 0;
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--text-l);
 }
 
 /* The Fix with Copilot control: the snooze control's neighbour, in the same
@@ -997,7 +988,9 @@ body {
   color: var(--text);
 }
 
-.header-icon:disabled {
+/* The glyph dims, not the button: the tooltip is drawn by the button and
+   has to stay at full strength. */
+.header-icon:disabled svg {
   opacity: 0.45;
 }
 

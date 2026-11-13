@@ -21,6 +21,8 @@ import {
   useUpdateState,
 } from "./updater";
 
+type View = "list" | "settings";
+
 /** The header's buttons: Done inside Settings, otherwise the two icon
  * buttons. `onShow` is handed the view a click asks for. */
 export function HeaderActions({
@@ -30,7 +32,7 @@ export function HeaderActions({
 }: {
   inSettings: boolean;
   offerMarkAllRead: boolean;
-  onShow: (view: "list" | "settings") => void;
+  onShow: (view: View) => void;
 }) {
   if (inSettings) {
     return (
@@ -79,7 +81,7 @@ export function HeaderActions({
 }
 
 function App() {
-  const [view, setView] = useState<"list" | "settings">("list");
+  const [view, setView] = useState<View>("list");
   const [filter, setFilter] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const inSettings = view === "settings";

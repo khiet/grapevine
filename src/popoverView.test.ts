@@ -771,6 +771,10 @@ test("a your-turn row with no known start still carries the cue", () => {
 test("a row that is not the viewer's turn has no waiting label", () => {
   expect(rowFor(pr({ turn: "theirs" })).waiting).toBeNull();
   expect(rowFor(pr({ turn: null })).waiting).toBeNull();
+  // A start left over from a turn that has since passed does not count.
+  expect(
+    rowFor(pr({ turn: "theirs", turn_since: NOW - 3 * HOUR })).waiting,
+  ).toBeNull();
 });
 
 const SNOOZE_FIXTURE = synced({

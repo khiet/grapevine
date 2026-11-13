@@ -144,6 +144,15 @@ export function formatLastSync(
   return `Synced ${formatUpdated(new Date(ms).toISOString(), now)}`;
 }
 
+// The author as a row names them: in the avatar's label and the row's title.
+const authorLabel = (author: string, bot: boolean) =>
+  bot ? `@${author}, bot` : `@${author}`;
+
+/* A row's title names its author, and a native tooltip is inherited by
+   everything inside the row. A control or mark that says something of its
+   own takes an empty title, so the author never shows as its tooltip. */
+const NO_INHERITED_TITLE = { title: "" };
+
 // The round author avatar with badged corners, app-icon style: the face says
 // who, the bottom-right square (the repo owner's avatar) says which org, and
 // the top-right red counter says how much is new. Opposite corners keep the
@@ -151,15 +160,6 @@ export function formatLastSync(
 // author. The org badge has no placeholder by design:
 // a missing or broken owner avatar simply shows no badge, keeping the corner
 // clean rather than grey.
-// The author as a row names them: in the avatar's label and the row's title.
-const authorLabel = (author: string, bot: boolean) =>
-  bot ? `@${author}, bot` : `@${author}`;
-
-/* A row's title names its author, and a native tooltip is inherited by
-   everything inside the row. Whatever shows a bubble of its own takes an
-   empty title, so the two never appear together. */
-const OWN_TIP = { title: "" };
-
 function PrAvatar({
   avatarUrl,
   ownerAvatarUrl,
@@ -185,7 +185,7 @@ function PrAvatar({
       role="img"
       data-tip={`@${author}`}
       aria-label={authorLabel(author, bot)}
-      {...OWN_TIP}
+      {...NO_INHERITED_TITLE}
     >
       <img
         className="pr-avatar"
@@ -253,7 +253,7 @@ function RowMark({
       role="img"
       data-tip={tip}
       aria-label={tip}
-      {...OWN_TIP}
+      {...NO_INHERITED_TITLE}
     >
       {children}
     </span>
@@ -264,7 +264,7 @@ function RowMark({
 // grid and scaled down to their rendered size. Square at `size` unless
 // `width` narrows it (the direction arrow). Hidden from assistive tech in
 // all uses: the enclosing element carries the label (RowMark's aria-label,
-// the section toggle's text).
+// the section toggle's text, a header icon button's aria-label).
 export function GlyphSvg({
   strokeWidth,
   size = 13,
@@ -434,7 +434,7 @@ function MarkView({ mark }: { mark: Mark }) {
           role="img"
           data-tip={mark.tip}
           aria-label={mark.tip}
-          {...OWN_TIP}
+          {...NO_INHERITED_TITLE}
         >
           {mark.label}
         </span>
@@ -455,7 +455,7 @@ function MarkView({ mark }: { mark: Mark }) {
           role="img"
           data-tip={mark.tip}
           aria-label={mark.tip}
-          {...OWN_TIP}
+          {...NO_INHERITED_TITLE}
         >
           {mark.label}
         </span>
@@ -497,7 +497,7 @@ function SnoozeControl({ row }: { row: RowView }) {
       className="pr-snooze pr-tip"
       data-tip={label}
       aria-label={label}
-      {...OWN_TIP}
+      {...NO_INHERITED_TITLE}
       onClick={() => (parked ? wake(key) : snooze(key)).catch(() => {})}
     >
       {parked ? <Sun /> : <Moon />}
@@ -547,6 +547,7 @@ function useFixControl(row: RowView) {
         type="button"
         className="pr-fix is-armed"
         aria-label="Confirm: ask Copilot to fix the conflict"
+        {...NO_INHERITED_TITLE}
         onClick={click}
       >
         Confirm
@@ -557,7 +558,7 @@ function useFixControl(row: RowView) {
         className="pr-fix pr-tip"
         data-tip="Fix with Copilot"
         aria-label="Fix with Copilot"
-        {...OWN_TIP}
+        {...NO_INHERITED_TITLE}
         onClick={click}
       >
         <Wrench />
@@ -740,6 +741,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
         type="button"
         className="pr-dismiss"
         aria-label="Dismiss"
+        {...NO_INHERITED_TITLE}
         onClick={() =>
           dismissMerged(prKey(pr)).catch(() => {})
         }
