@@ -1,4 +1,10 @@
-import { prKey, SNAPSHOT_EVENT, type Adapter, type Snapshot } from "./index";
+import {
+  prKey,
+  SNAPSHOT_EVENT,
+  type Adapter,
+  type Appearance,
+  type Snapshot,
+} from "./index";
 
 export interface FakeBackend {
   adapter: Adapter;
@@ -15,7 +21,7 @@ export function createFakeBackend(
   onPublish: (snapshot: Snapshot) => void = () => {},
 ): FakeBackend {
   let snapshot = initial;
-  let appearance = "system";
+  let appearance: Appearance = "system";
   const subscribers = new Set<(snapshot: Snapshot) => void>();
 
   const publish = (next: Snapshot) => {
@@ -27,7 +33,7 @@ export function createFakeBackend(
   const commands: Record<string, (args: Record<string, unknown>) => unknown> = {
     get_prs: () => snapshot,
     get_appearance: () => appearance,
-    set_appearance: (args) => (appearance = args.appearance as string),
+    set_appearance: (args) => (appearance = args.appearance as Appearance),
     // Claims the sync as the backend does and leaves it running: the fake
     // has no GitHub to ask, so whoever drives it publishes the result.
     sync_now: () => {

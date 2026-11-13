@@ -184,7 +184,9 @@ function App() {
     !inSettings && content.kind === "list" ? content : null,
   );
 
-  // A layout effect, so the first paint is already in the right palette.
+  // A layout effect, so the first paint already follows the desktop. A
+  // stored Light or Dark lands one backend round trip later, which the
+  // window, hidden at launch, has time for before it is first shown.
   useLayoutEffect(() => {
     void appearance.start();
   }, []);

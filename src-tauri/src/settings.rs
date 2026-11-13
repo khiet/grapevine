@@ -45,6 +45,8 @@ pub struct Settings {
     /// clamped on read, so a hand-edited file cannot break the loop.
     #[serde(default = "default_poll_secs")]
     pub poll_interval_secs: u64,
+    /// A file without this field, or with a value this build does not know,
+    /// loads as `System`.
     #[serde(deserialize_with = "lenient_appearance")]
     pub appearance: Appearance,
 }

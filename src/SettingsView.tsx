@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { appearance as popoverAppearance } from "./appearance";
+import { appearance } from "./appearance";
 import * as backend from "./backend";
 import type { Appearance, TokenStatus } from "./backend";
 import { checkForUpdates, updateStatusLabel, useUpdateState } from "./updater";
@@ -154,7 +154,7 @@ function SettingsView() {
   // null until the stored value arrives, so the select never flashes a
   // default the user did not pick.
   const [pollSecs, setPollSecs] = useState<number | null>(null);
-  const [appearance, setAppearance] = useState<Appearance | null>(null);
+  const [chosenAppearance, setChosenAppearance] = useState<Appearance | null>(null);
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [generalError, setGeneralError] = useState("");
 
@@ -165,7 +165,7 @@ function SettingsView() {
     backend.tokenStatus().then(setTokenStatus).catch(() => {});
     backend.listRepos().then(setRepos).catch(() => {});
     backend.getPollInterval().then(setPollSecs).catch(() => {});
-    backend.getAppearance().then(setAppearance).catch(() => {});
+    backend.getAppearance().then(setChosenAppearance).catch(() => {});
     backend.getLaunchAtLogin().then(setLaunchAtLogin).catch(() => {});
     backend.appVersion().then(setAppVersion).catch(() => {});
   }, []);
@@ -197,7 +197,7 @@ function SettingsView() {
   async function changeAppearance(next: Appearance) {
     setGeneralError("");
     try {
-      setAppearance(await popoverAppearance.choose(next));
+      setChosenAppearance(await appearance.choose(next));
     } catch (error) {
       setGeneralError(String(error));
     }
@@ -458,7 +458,7 @@ function SettingsView() {
               ))}
             </select>
           </label>
-          <AppearanceRow value={appearance} onChange={changeAppearance} />
+          <AppearanceRow value={chosenAppearance} onChange={changeAppearance} />
           <label className="settings-row settings-field-row">
             <span>Launch at login</span>
             <input

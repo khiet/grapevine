@@ -14,8 +14,8 @@ interface Rule {
 }
 
 const LIGHT_BLOCK = ":root";
-// The dark palette hangs off the attribute the appearance resolver sets, not
-// off the OS preference, so a chosen appearance can differ from the desktop's.
+// The dark palette hangs off the attribute appearance.ts sets, not off the OS
+// preference, so a chosen appearance can differ from the desktop's.
 const DARK_BLOCK = ':root[data-theme="dark"]';
 
 // Flat rule list: App.css nests nothing, and an at-rule would hide rules from

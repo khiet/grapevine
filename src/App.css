@@ -72,9 +72,9 @@
   --menu-shadow: rgba(0, 0, 0, 0.18);
 }
 
-/* The dark palette. The attribute is set by the appearance resolver
-   (appearance.ts), which turns the user's choice, or the desktop's style
-   when the choice is System, into light or dark. */
+/* The dark palette. The attribute is set by appearance.ts, which turns the
+   user's choice, or the desktop's style when the choice is System, into
+   light or dark. */
 :root[data-theme="dark"] {
   color-scheme: dark;
   --window: #1e1e1e;
