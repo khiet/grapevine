@@ -486,6 +486,22 @@ body {
   color: var(--on-accent);
 }
 
+/* An armed button stacks its new label on the old one, which stays in the
+   flow unseen and holds the button's width. */
+.pr-action.is-armed {
+  display: grid;
+  place-items: center;
+}
+
+.pr-action-width,
+.pr-action-over {
+  grid-area: 1 / 1;
+}
+
+.pr-action-width {
+  visibility: hidden;
+}
+
 /* Stands where an action would while it cannot be asked for ("Asking"). */
 .pr-action-status {
   padding: 0 8px;

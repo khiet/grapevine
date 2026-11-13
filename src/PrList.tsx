@@ -368,16 +368,17 @@ const rowClass = (menuOpen: boolean) =>
 /* The row's actions as worded buttons. Siblings of the row button rather than
    children (nested buttons are invalid HTML), floated over the end of the
    row's metadata line and shown only while the row is hovered or holds
-   focus. `armed` is the action waiting for its confirming click, and
-   `status` stands where an action would while it cannot be asked for. */
+   focus. `confirm` is the action waiting for its confirming click, under the
+   words it shows meanwhile, and `status` stands where an action would while
+   it cannot be asked for. */
 function ActionBar({
   actions,
-  armed = null,
+  confirm = null,
   status = null,
   onPick,
 }: {
   actions: RowAction[];
-  armed?: RowActionId | null;
+  confirm?: RowAction | null;
   status?: string | null;
   onPick: (id: RowActionId) => void;
 }) {
@@ -393,20 +394,38 @@ function ActionBar({
           {status}
         </span>
       )}
-      {actions.map(({ id, label, hint }) => (
-        <button
-          key={id}
-          type="button"
-          className={id === armed ? "pr-action is-armed" : "pr-action"}
-          title={hint ?? ""}
-          // The hint is what the label leaves unsaid, so it names the button
-          // in full; it starts with the label, as a spoken name must.
-          aria-label={hint ?? undefined}
-          onClick={() => onPick(id)}
-        >
-          {label}
-        </button>
-      ))}
+      {actions.map((action) => {
+        const { id, label, hint } =
+          action.id === confirm?.id ? confirm : action;
+        return (
+          <button
+            key={id}
+            type="button"
+            className={id === confirm?.id ? "pr-action is-armed" : "pr-action"}
+            title={hint ?? ""}
+            // The hint is what the label leaves unsaid, so it names the
+            // button in full; it starts with the label, as a spoken name
+            // must.
+            aria-label={hint ?? undefined}
+            onClick={() => onPick(id)}
+          >
+            {id === confirm?.id ? (
+              /* The armed button keeps the width of the label it replaced.
+                 The bar is right-aligned, so a narrower button would slide
+                 its neighbour under the pointer, and the confirming click
+                 would land on that instead. */
+              <>
+                <span className="pr-action-width" aria-hidden="true">
+                  {action.label}
+                </span>
+                <span className="pr-action-over">{label}</span>
+              </>
+            ) : (
+              label
+            )}
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -418,12 +437,11 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const key = prKey(pr);
   const fix = useFix(row);
   const menu = useRowMenu();
-  const armed = fix.armed ? "fix" : null;
-  // The bar and the menu show the same actions under the same words, so the
-  // armed fix is reworded once, here, for both.
-  const actions = row.actions.map((action) =>
-    action.id === armed ? { ...action, label: "Confirm", hint: CONFIRM_HINT } : action,
-  );
+  // The armed fix under the words it takes until its second click, in the
+  // bar and the menu alike.
+  const confirm: RowAction | null = fix.armed
+    ? { id: "fix", label: "Confirm", hint: CONFIRM_HINT }
+    : null;
   const run = (id: RowActionId) => {
     switch (id) {
       case "open":
@@ -497,8 +515,8 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       </button>
       <span className="pr-row-end">
         <ActionBar
-          actions={actions}
-          armed={armed}
+          actions={row.actions}
+          confirm={confirm}
           status={row.fix === "posting" ? "Asking" : null}
           onPick={run}
         />
@@ -506,7 +524,9 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       {menu.at && (
         <MenuLayer
           at={menu.at}
-          items={actions}
+          items={row.actions.map((action) =>
+            action.id === confirm?.id ? confirm : action,
+          )}
           onPick={(id) => {
             run(id);
             // The pick that arms the fix leaves the menu up for its confirm.

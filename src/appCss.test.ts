@@ -207,6 +207,15 @@ test("every row action is a target of at least 24 x 24px", () => {
   expect(px(item.get("min-height"))).toBeGreaterThanOrEqual(24);
 });
 
+// The bar is right-aligned, so a button that narrowed on arming would slide
+// its neighbour under the pointer and hand it the confirming click. The old
+// label stays in the flow, unseen, with the new one stacked in its cell.
+test("an armed action keeps the width of the label it replaced", () => {
+  expect(ruleFor(".pr-action.is-armed").get("display")).toBe("grid");
+  expect(ruleFor(".pr-action-width,\n.pr-action-over").get("grid-area")).toBe("1 / 1");
+  expect(ruleFor(".pr-action-width").get("visibility")).toBe("hidden");
+});
+
 test("the action bar shows on hover and on keyboard focus", () => {
   expect(ruleFor(".pr-actions").get("opacity")).toBe("0");
   expect(ruleFor(".pr-row-split:hover .pr-actions").get("opacity")).toBe("1");
