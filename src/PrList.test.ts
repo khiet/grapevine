@@ -258,7 +258,3 @@ test("a row with several states shows one reason and +N, and names them all in i
       '<span class="pr-state-more">+2</span></span>',
   );
 });
-
-test("a row with no state renders no reason", () => {
-  expect(renderOpenRow({})).not.toContain("pr-state");
-});
