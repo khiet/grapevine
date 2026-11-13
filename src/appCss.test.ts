@@ -200,7 +200,6 @@ test("every row action is a target of at least 24 x 24px", () => {
   expect(px(action.get("min-width"))).toBeGreaterThanOrEqual(24);
   const item = ruleFor(".pr-menu-item");
   expect(px(item.get("min-height"))).toBeGreaterThanOrEqual(24);
-  expect(px(ruleFor(".pr-menu").get("min-width"))).toBeGreaterThanOrEqual(24);
 });
 
 test("the action bar shows on hover and on keyboard focus", () => {

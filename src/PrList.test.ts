@@ -262,17 +262,23 @@ test("a row with several states shows one reason and +N, and names them all in i
 // The bar is the row's visible route to its actions, so its buttons are read
 // off the rendered row: each is a real button with its label as text.
 function barOf(li: string): string[] {
-  const bar = li.match(/<span class="pr-actions"[\s\S]*?<\/span>/)?.[0];
-  if (!bar) throw new Error("no action bar rendered");
-  return [...bar.matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map((m) => m[1]);
+  if (!li.includes('<span class="pr-actions"')) throw new Error("no action bar rendered");
+  return [...li.matchAll(/<button[^>]*class="pr-action[^>]*>([^<]+)<\/button>/g)].map(
+    (m) => m[1],
+  );
 }
 
-function renderList(prs: PullRequest[], merged: MergedPr[] = []): string[] {
+function renderList(
+  prs: PullRequest[],
+  merged: MergedPr[] = [],
+  fixesPosting: ReadonlySet<string> = new Set(),
+): string[] {
   const { content } = derivePopover(
     { ...EMPTY_SNAPSHOT, has_synced: true, prs, merged },
     "",
     { mine: false, participated: false, all: false, merged: false },
     NOW.getTime(),
+    fixesPosting,
   );
   const html = renderToStaticMarkup(
     createElement(PrList, { view: content as ListView, onToggle: () => {} }),
@@ -312,4 +318,16 @@ test("the timestamp sits inside the row button on every kind of row", () => {
     expect(button).toMatch(/<span class="pr-updated">[^<]+<\/span>/);
     expect(li.match(/pr-updated/g)).toHaveLength(1);
   }
+});
+
+// While the request is on its way there is nothing to ask for, so the bar
+// says so where the fix was.
+test("a row whose Copilot fix is being posted says Asking in place of the fix", () => {
+  const [li] = renderList(
+    [{ ...openPr, can_fix_conflict: true, blocked_reasons: ["conflict"] }],
+    [],
+    new Set(["acme/widgets#7"]),
+  );
+  expect(li).toContain('<span class="pr-action-status" role="status">Asking</span>');
+  expect(barOf(li)).toEqual(["Snooze", "Open"]);
 });
