@@ -397,7 +397,7 @@ body {
    so the timestamp stays in view, and .pr-updated is stacked above this
    where their boxes touch: a click on the time always lands on the row
    button and opens the PR. `right` is .pr-row's right
-   padding. `bottom` is what centres the 24px bar on the metadata line (16px
+   padding. `bottom` is what centres the 24px bar on the metadata line (14px
    tall, above .pr-row's 9px bottom padding), and so keeps the deploy status
    on its placeholder. */
 .pr-row-end {
@@ -440,7 +440,7 @@ body {
 /* The action bar: one opaque strip of worded buttons, since it lies over the
    row's text and must stay readable there. Hidden until the row is hovered
    or holds keyboard focus; the row's right-click menu is the route that
-   covers nothing. */
+   does not come and go. */
 .pr-actions {
   display: flex;
   align-items: center;

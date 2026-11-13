@@ -1,5 +1,5 @@
 // A row's right-click menu, drawn in the webview: the same actions as the
-// row's action bar, on a route that covers none of the row's text.
+// row's action bar, on a route that does not come and go with hover.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RowActionId } from "./popoverView";
