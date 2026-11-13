@@ -213,12 +213,12 @@ export function useListKeys(view: ListView | null): {
     if (selected) rowItem(selected)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  // A click on something that takes no focus (in WebKit, any button) drops
-  // focus to the body, where neither zone's handler hears a key, while the
-  // footer goes on showing the hints of the zone focus was last in. A key
-  // pressed there is sent to that zone: focus returns to it and the press is
-  // replayed on it. Focus moves before the key's default action, so a
-  // character typed this way still lands in the filter. Bound afresh each
+  // A click on something that takes no focus (in macOS WebKit, any button)
+  // drops focus to the body, where neither zone's handler hears a key, while
+  // the footer goes on showing the hints of the zone focus was last in. A
+  // key pressed there is sent to that zone: focus returns to it and the
+  // press is replayed on it. Focus moves before the key's default action, so
+  // a character typed this way still lands in the filter. Bound afresh each
   // render, so it reads the zone and the selection as they now are.
   useEffect(() => {
     const sendToZone = (event: globalThis.KeyboardEvent) => {
@@ -227,8 +227,8 @@ export function useListKeys(view: ListView | null): {
       if (document.querySelector(".pr-menu")) return;
       const to = strayKeyZone(zone, event);
       if (to === null) return;
-      // With no row selected the list itself hears the key, unfocused: its
-      // keys still apply, and the filter's would not mean the same.
+      // With no row selected the list hears the key without taking focus:
+      // in the filter, Escape would clear the query.
       const element =
         to === "list" ? (selectedRow() ?? list.current) : filter.current;
       if (!element) return;
