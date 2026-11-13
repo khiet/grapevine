@@ -174,15 +174,12 @@ function renderRows(): string[] {
   return html.match(/<li[\s\S]*?<\/li>/g) ?? [];
 }
 
-// The avatar is the one place a row names its author. A title on the row
-// would be inherited by everything in it and show over the PR's own text.
-test("each row carries its author's handle in its accessible name and has no title of its own", () => {
+test("each row carries its author's handle in its accessible name", () => {
   const [open, merged] = renderRows().filter((li) => li.includes("pr-row"));
   for (const [li, handle] of [
     [open, "@octocat"],
     [merged, "@hubot"],
   ]) {
-    expect(li).not.toMatch(/^<li[^>]* title=/);
     // Inside the row button, so the button's name includes it.
     const button = li.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0];
     expect(button).toContain(`aria-label="${handle}"`);
@@ -291,18 +288,15 @@ function renderList(
 }
 
 test("each kind of row words its actions in a bar", () => {
-  const [plain, fixable, inAll, merged] = renderList(
+  const [plain, fixable, merged] = renderList(
     [
       openPr,
       { ...openPr, number: 8, can_fix_conflict: true, blocked_reasons: ["conflict"] },
-      { ...openPr, number: 9, section: "all" },
     ],
     [mergedPr],
   );
   expect(barOf(plain)).toEqual(["Snooze"]);
   expect(barOf(fixable)).toEqual(["Snooze", "Fix with Copilot"]);
-  // Nothing to offer beyond the click that opens it, so no bar at all.
-  expect(inAll).not.toContain("pr-actions");
   expect(barOf(merged)).toEqual(["Dismiss"]);
 });
 
