@@ -65,5 +65,5 @@ const browserHost: ThemeHost = {
   },
 };
 
-/** The popover's own appearance. */
+/** The one control for this document; it themes the root element. */
 export const appearance = createAppearance(browserHost);

@@ -15,8 +15,7 @@ fn default_poll_secs() -> u64 {
 }
 
 /// Which palette the popover draws in. `System` follows the desktop's light
-/// or dark style; the frontend resolves it, since only the webview can see
-/// that style on both platforms.
+/// or dark style, which the frontend resolves.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Appearance {

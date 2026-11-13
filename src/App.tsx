@@ -185,8 +185,8 @@ function App() {
   );
 
   // A layout effect, so the first paint already follows the desktop. A
-  // stored Light or Dark lands one backend round trip later, which the
-  // window, hidden at launch, has time for before it is first shown.
+  // stored Light or Dark lands one backend round trip later; the window is
+  // hidden at launch, so the switch is rarely seen.
   useLayoutEffect(() => {
     void appearance.start();
   }, []);
