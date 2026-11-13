@@ -98,16 +98,16 @@ async function capture(baseUrl, dir) {
     }, open);
   // Each label stays once it has landed, so the last frame carries them all.
   // The fixture is sized so every target fits the popover without scrolling;
-  // a target that slipped under the footer or off the end would be ringed
+  // a target that slipped under the footer or off an edge would be ringed
   // where nothing shows.
   async function label(target, side, text, chipY) {
     const inView = await target.evaluate((el) => {
       // Not a hit test: a row's hidden action bar lies over its state.
-      const { top, bottom } = el.getBoundingClientRect();
+      const { left, top, right, bottom } = el.getBoundingClientRect();
       const footer = document.querySelector(".sync-status");
       const floor =
         footer && !footer.contains(el) ? footer.getBoundingClientRect().top : window.innerHeight;
-      return top >= 0 && bottom <= floor;
+      return left >= 0 && right <= window.innerWidth && top >= 0 && bottom <= floor;
     });
     if (!inView) throw new Error(`"${text}" has no visible target`);
     await page.evaluate((args) => window.callout(...args), [
@@ -121,10 +121,10 @@ async function capture(baseUrl, dir) {
 
   // Mine starts folded; it is opened off-camera so every labelled row is in
   // view without scrolling. Down from the filter then selects the first row,
-  // which puts the filter's keys in the footer.
+  // which adds Enter to the keys the footer shows.
   await setOpen(true);
   await app.locator(".pr-section-toggle", { hasText: "Mine" }).click();
-  await row("#2322").waitFor();
+  await row("#2320").waitFor();
   await app.locator(".header-search-input").press("ArrowDown");
   await app.locator(".key-hint", { hasText: "Open" }).waitFor();
   await page.mouse.move(2, 400);
@@ -133,15 +133,15 @@ async function capture(baseUrl, dir) {
   await setOpen(false);
 
   const tray = page.locator("#tray");
-  const settings = app.getByRole("button", { name: "Settings" });
   await pointAt(tray);
   await snap(900);
   await setOpen(true);
   await hideCursor();
   if ((await trayCount()) !== "4") throw new Error("tray should show 4");
-  // The top seven targets on the right sit close together, so their chips are
-  // spread by hand, in the targets' own top-to-bottom order so no two lines
-  // cross. The second slot (90) is left for Light or dark, which lands last.
+  // The targets on the right down to the hovered row sit close together, so
+  // their chips are spread by hand, in the targets' own top-to-bottom order
+  // so no two lines cross. The second slot (90) is left for Light or dark,
+  // which lands last.
   const BEAT = 1300;
   await label(tray, "right", "4 PRs waiting on you", 50);
   await snap(BEAT);
@@ -181,7 +181,7 @@ async function capture(baseUrl, dir) {
   await app.locator("html").evaluate((root) => {
     root.dataset.theme = "dark";
   });
-  await label(settings, "right", "Light or dark", 90);
+  await label(app.getByRole("button", { name: "Settings" }), "right", "Light or dark", 90);
   await snap(3500);
 
   // No PR was opened or snoozed, so the count must not have moved.
