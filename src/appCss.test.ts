@@ -172,11 +172,11 @@ test("the list has no top padding for rows to show through", () => {
 
 // The action bar floats over a row out of the flow, so it takes no width
 // from the title, and hangs from the row's foot, away from the timestamp on
-// the first line. Where the two boxes
-// still touch (a one-line title), the timestamp is stacked on top, so the
-// click there is the row's. The row is its own stacking context so that lift
-// cannot reach the sticky section headers.
-test("the row's floating controls sit on its last line, under the timestamp", () => {
+// the first line. Where the two boxes still touch (a one-line title), the
+// timestamp is stacked on top, so the click there is the row's. The row is
+// its own stacking context so that lift cannot reach the sticky section
+// headers.
+test("the row's action bar sits on its last line, under the timestamp", () => {
   const end = ruleFor(".pr-row-end");
   expect(end.get("position")).toBe("absolute");
   expect(end.has("bottom")).toBe(true);
@@ -198,8 +198,8 @@ test("no rule hides the timestamp", () => {
 });
 
 // The deploy status is a button beside the row button, drawn over a
-// placeholder inside it. The two coincide only while they share a size, and
-// while the lines above the placeholder keep the height `top` counts on.
+// placeholder inside it. The two coincide only while they share a size and
+// the lines of the stack keep one fixed height.
 test("a merged row's deploy status sits on its placeholder under the merge time", () => {
   const times = ruleFor(".pr-times");
   expect(times.get("flex-direction")).toBe("column");

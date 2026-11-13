@@ -799,15 +799,14 @@ function MergedRow({ row }: { row: MergedRowView }) {
   const menu = useRowMenu(row.actions.length > 0);
   // A deploy that landed shows when, under the merge time; any other says
   // where it stands. The glyph is what says "deploy" in either.
-  const statusText =
-    deploy &&
-    (deploy.showsTime && deploy.completedAt
+  const landedAt =
+    deploy?.showsTime && deploy.completedAt
       ? formatUpdated(deploy.completedAt)
-      : deploy.brief);
+      : null;
   const status = deploy && (
     <>
       <DeployGlyph />
-      {statusText}
+      {landedAt ?? deploy.brief}
     </>
   );
   const open = () => openUrl(pr.url).catch(() => {});
@@ -865,11 +864,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
           title={deployTip(pr.merged_at, deploy)}
           // The glyph is unseen by assistive tech, and a bare time would
           // not say what it is the time of.
-          aria-label={
-            deploy.showsTime && deploy.completedAt
-              ? `${deploy.label} ${statusText}`
-              : deploy.label
-          }
+          aria-label={landedAt ? `${deploy.label} ${landedAt}` : deploy.label}
           onClick={() => openUrl(deploy.url).catch(() => {})}
         >
           {status}

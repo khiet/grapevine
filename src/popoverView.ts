@@ -406,25 +406,17 @@ function groupByRepo(
     }));
 }
 
-const DEPLOY_LABELS: Record<DeployState, string> = {
-  deploying: "Deploying",
-  deployed: "Deployed",
-  failed: "Deploy failed",
-  cancelled: "Deploy cancelled",
-};
-
-const DEPLOY_BRIEFS: Record<DeployState, string> = {
-  deploying: "Deploying",
-  deployed: "Deployed",
-  failed: "Failed",
-  cancelled: "Cancelled",
+const DEPLOY_WORDS: Record<DeployState, { label: string; brief: string }> = {
+  deploying: { label: "Deploying", brief: "Deploying" },
+  deployed: { label: "Deployed", brief: "Deployed" },
+  failed: { label: "Deploy failed", brief: "Failed" },
+  cancelled: { label: "Deploy cancelled", brief: "Cancelled" },
 };
 
 function deployView(deploy: Deploy | null): DeployView | null {
   if (!deploy) return null;
   return {
-    label: DEPLOY_LABELS[deploy.state],
-    brief: DEPLOY_BRIEFS[deploy.state],
+    ...DEPLOY_WORDS[deploy.state],
     showsTime: deploy.state === "deployed",
     failed: deploy.state === "failed",
     completedAt: deploy.completed_at,

@@ -414,24 +414,6 @@ body {
   position: absolute;
   bottom: 4px;
   right: 11px;
-  display: flex;
-  align-items: center;
-}
-
-/* A merged row's times, stacked at the title's right: when it merged, and
-   under that its deploy status. Both lines take a fixed height, which is
-   what lets .pr-deploy be placed from the row's top. */
-.pr-times {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  line-height: 16px;
-}
-
-/* The status can be a word wider than any timestamp ("Deploying"), so its
-   column grows to it. */
-.pr-title-row.has-deploy {
-  grid-template-columns: 1fr minmax(52px, max-content);
 }
 
 /* A merged row's deploy status, a rocket and a time or a word, in the
@@ -439,9 +421,10 @@ body {
    merge time. Drawn over .pr-deploy-space, which holds its place in
    .pr-times so a one-line title leaves it room. `top` is where that
    placeholder lands: .pr-row's 9px top padding, the 1.5px by which the
-   title's baseline sets the merge time down, and the merge time's 16px line. The
-   two rules below must keep the same type and layout so the control covers
-   its placeholder exactly. */
+   title's baseline sets the merge time down, and the merge time's 16px
+   line. The control and its placeholder share the rule after this one, so
+   they keep one type and size and the control covers the placeholder
+   exactly. */
 .pr-deploy {
   position: absolute;
   top: 26.5px;
@@ -722,6 +705,26 @@ body {
   grid-template-columns: 1fr minmax(66px, max-content);
 }
 
+/* A merged row with a deploy status stacks it under the merge time. The
+   status can be a word wider than any timestamp ("Deploying"), so its column
+   grows to it. */
+.pr-title-row.has-deploy {
+  grid-template-columns: 1fr minmax(52px, max-content);
+}
+
+/* Both lines take a fixed height, which is what lets .pr-deploy be placed
+   from the row's top. The padding matters under a one-line title, where the
+   metadata line comes straight after: it keeps the status clear of the
+   action bar floating there, so a click meant for one never lands on the
+   other. */
+.pr-times {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding-bottom: 4px;
+  line-height: 16px;
+}
+
 /* The your-turn cue ("waiting 3h", "waiting"): the accent the app uses for
    things to act on, and bold so it reads apart from a plain timestamp. */
 .pr-title-row.is-waiting .pr-updated {
@@ -746,7 +749,7 @@ body {
   font-weight: 700;
 }
 
-/* Lifted above the row's floating controls: on a row with a one-line title
+/* Lifted above the row's action bar: on a row with a one-line title
    the action bar's top edge reaches the timestamp's box, and where the two
    meet the click must be the timestamp's, which opens the PR. */
 .pr-updated {
