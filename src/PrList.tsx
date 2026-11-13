@@ -816,7 +816,7 @@ function SectionHeader({
   );
 }
 
-/* The heading of Your turn: the same label and count as a SectionHeader,
+/* The heading of Waiting on you: the same label and count as a SectionHeader,
    with no button around them, since the section is always open. */
 function PinnedHeader({ label, count }: { label: string; count: number }) {
   return (

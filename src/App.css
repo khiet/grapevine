@@ -257,7 +257,7 @@ body {
   padding-top: 18px;
 }
 
-/* Your turn's heading: the toggle's padding and gap without the button or
+/* The Waiting on you heading: the toggle's padding and gap without the button or
    the chevron, so the header keeps the height of the sections below. */
 .pr-section-pinned {
   align-items: center;
@@ -692,7 +692,7 @@ body {
   grid-template-columns: 1fr minmax(66px, max-content);
 }
 
-/* The your-turn cue ("waiting 3h", "your turn"): the accent the app uses for
+/* The your-turn cue ("waiting 3h", "waiting"): the accent the app uses for
    things to act on, and bold so it reads apart from a plain timestamp. */
 .pr-title-row.is-waiting .pr-updated {
   color: var(--accent);
