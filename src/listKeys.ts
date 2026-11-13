@@ -122,6 +122,13 @@ export function rowCommand(
   }
 }
 
+/** The zone a key pressed with focus on nothing is sent to: the one focus
+ * was last in, whose hints the footer is still showing. Null leaves the key
+ * alone: no zone to return to, or a system shortcut. */
+export function strayKeyZone(zone: Zone, press: KeyPress): Zone {
+  return modified(press) ? null : zone;
+}
+
 export interface KeyHint {
   keys: string;
   label: string;
