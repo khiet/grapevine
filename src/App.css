@@ -482,8 +482,8 @@ body {
 
 /* A merged row's dismiss shares the snooze control's slot and reveal, so it
    takes no width from the row and merged timestamps share a right edge with
-   every other row's. It keeps the width it had as a column of its own, and
-   reaches the card's edge. Hidden until hover because a persistent × on
+   every other row's. Its padding reaches the card's edge, a wider target
+   than the snooze control's. Hidden until hover because a persistent × on
    every merged row would read as clutter. */
 .pr-dismiss {
   right: 0;
@@ -1151,7 +1151,8 @@ body {
   gap: 8px;
 }
 
-/* The list's section label: sentence case, bold, inset to the same edge. */
+/* Matches the list's section label (.pr-section-label), so Settings reads
+   as part of the same app. */
 .settings-label {
   padding: 0 4px;
   font-size: var(--text-m);
