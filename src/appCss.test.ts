@@ -170,15 +170,43 @@ test("the list has no top padding for rows to show through", () => {
   expect(ruleFor(".pr-section-header").get("top")).toBe("0");
 });
 
-// In the flow it would reserve a column and push merged timestamps off the
-// right edge the other sections share.
-test("the merged dismiss button is out of the row's flow", () => {
-  const positions = styleRules
-    .filter((r) => r.selector.split(",").some((s) => s.trim() === ".pr-dismiss"))
+// What floats over a row (the action bar, a merged row's deploy status) is
+// out of the flow, so it takes no width from the title, and hangs from the
+// row's foot, so it is never over the timestamp on the first line.
+test("the row's floating controls sit on its last line, clear of the timestamp", () => {
+  const end = ruleFor(".pr-row-end");
+  expect(end.get("position")).toBe("absolute");
+  expect(end.has("bottom")).toBe(true);
+  expect(end.has("top")).toBe(false);
+  expect(ruleFor(".pr-actions").has("position")).toBe(false);
+  expect(ruleFor(".pr-deploy").has("position")).toBe(false);
+});
+
+// The timestamp is where a click opens the PR. No state of the row may take
+// it away to put a control there.
+test("no rule hides the timestamp", () => {
+  const hiding = styleRules
+    .filter((r) => r.selector.includes(".pr-updated"))
     .flatMap((r) => declarations(r.body))
-    .filter(([name]) => name === "position")
-    .map(([, value]) => value);
-  expect(positions).toEqual(["absolute"]);
+    .filter(([name]) => ["visibility", "display", "opacity"].includes(name));
+  expect(hiding).toEqual([]);
+});
+
+const px = (value: string | undefined) => Number(value?.match(/^(\d+)px$/)?.[1]);
+
+test("every row action is a target of at least 24 x 24px", () => {
+  const action = ruleFor(".pr-action");
+  expect(px(action.get("height"))).toBeGreaterThanOrEqual(24);
+  expect(px(action.get("min-width"))).toBeGreaterThanOrEqual(24);
+  const item = ruleFor(".pr-menu-item");
+  expect(px(item.get("min-height"))).toBeGreaterThanOrEqual(24);
+  expect(px(ruleFor(".pr-menu").get("min-width"))).toBeGreaterThanOrEqual(24);
+});
+
+test("the action bar shows on hover and on keyboard focus", () => {
+  expect(ruleFor(".pr-actions").get("opacity")).toBe("0");
+  expect(ruleFor(".pr-row-split:hover .pr-actions").get("opacity")).toBe("1");
+  expect(ruleFor(".pr-row-split:has(:focus-visible) .pr-actions").get("opacity")).toBe("1");
 });
 
 test("the header icon buttons are 28px square", () => {
@@ -284,6 +312,9 @@ const PAIRS: [string, string[]][] = [
   ...onRow("--ok"),
   ...onRow("--text", "--fill"),
   ...onRow("--text-2", "--fill-solid"),
+  // The action bar's labels, plain and under the pointer.
+  ...onRow("--text", "--fill-solid"),
+  ...onRow("--text", "--fill-solid", "--fill-strong"),
 ];
 
 function ratios(theme: Map<string, string>): { pair: string; ratio: number }[] {

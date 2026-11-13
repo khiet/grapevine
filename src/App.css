@@ -66,6 +66,7 @@
   --switch-on: #34c759;
   --knob: #ffffff;
   --knob-shadow: rgba(0, 0, 0, 0.25);
+  --menu-shadow: rgba(0, 0, 0, 0.18);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -123,6 +124,8 @@
 }
 
 .pr-row,
+.pr-action,
+.pr-menu-item,
 .pr-section-toggle,
 .pr-snoozed-toggle,
 .update-banner {
@@ -344,10 +347,6 @@ body {
   overflow: hidden;
 }
 
-.pr-section li + li .pr-row {
-  border-top: 1px solid var(--line);
-}
-
 /* Row-height padding so the empty slab matches a one-row section's shape. */
 /* Centred: the dash stands in for a line of text. */
 .pr-empty {
@@ -357,12 +356,31 @@ body {
   color: var(--text-2);
 }
 
+/* A row is sibling controls that must read as one row: the row button, and
+   beside it the action bar and a merged row's deploy status. The li carries
+   the hover highlight and the hairline so they span all of them. */
+.pr-row-split {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.pr-row-split:hover,
+.pr-row-split.has-menu {
+  background-color: var(--hover);
+}
+
+.pr-section li + li.pr-row-split {
+  border-top: 1px solid var(--line);
+}
+
 .pr-row {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: 30px 1fr;
   align-items: center;
   gap: 9px;
-  width: 100%;
   padding: 9px 11px;
   border: none;
   background: none;
@@ -371,59 +389,25 @@ body {
   text-align: left;
 }
 
-.pr-row:hover {
-  background-color: var(--hover);
-}
-
-/* A row with a second control (a merged row's dismiss, a PR row's snooze
-   or wake) is sibling buttons that must read as one row: the li carries
-   the hover highlight and the hairline, and the inner .pr-row gives up its
-   own so they don't stack. */
-.pr-row-split {
-  position: relative;
-  display: flex;
-  align-items: stretch;
-}
-
-.pr-row-split .pr-row {
-  flex: 1;
-  min-width: 0;
-}
-
-.pr-row-split:hover {
-  background-color: var(--hover);
-}
-
-.pr-row-split .pr-row:hover {
-  background-color: transparent;
-}
-
-.pr-section li + li.pr-row-split {
-  border-top: 1px solid var(--line);
-}
-
-.pr-section li + li.pr-row-split .pr-row {
-  border-top: none;
-}
-
-
-/* A merged row's deploy status: a control of its own (it opens the workflow
-   run, the row opens the PR) floated over the end of the metadata line,
-   where .pr-deploy-space holds its width so the repo truncates before it.
-   .pr-row-main is the row button's box, so the offsets track only .pr-row's
-   padding (bottom 9px, right 11px); the type must match .pr-origin so the
-   control covers its placeholder exactly. */
-.pr-row-main {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  display: flex;
-}
-
-.pr-deploy {
+/* What floats over the end of the row's metadata line: the action bar, and
+   after it a merged row's deploy status. On the last line, never the first,
+   so nothing here is ever over the timestamp: a click on the time always
+   lands on the row button and opens the PR. The offsets track .pr-row's
+   padding (bottom 9px, right 11px): `bottom` centres the 24px bar on the
+   metadata line, which is what keeps the deploy status on its placeholder. */
+.pr-row-end {
   position: absolute;
-  bottom: 9px;
+  bottom: 4px;
   right: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A merged row's deploy status: drawn over .pr-deploy-space, which holds its
+   width in the line so the repo truncates before it. The type must match
+   .pr-origin so the control covers its placeholder exactly. */
+.pr-deploy {
   border: none;
   background: none;
   padding: 0;
@@ -448,105 +432,94 @@ body {
   white-space: nowrap;
 }
 
-/* The snooze and wake control: floated over the timestamp's slot and shown in
-   its place on hover, Mail-style, so it costs the title no width. The price
-   is that a click on the timestamp corner snoozes instead of opening. The
-   offsets must track .pr-row's padding (top 9px; right 11px = 7px + the 4px
-   side padding) and the title's first line (13px x 1.35). */
-.pr-snooze,
-.pr-dismiss {
-  position: absolute;
-  top: 9px;
-  right: 7px;
-  height: calc(var(--text-l) * 1.35);
+/* The action bar: one opaque strip of worded buttons, since it lies over the
+   row's text and must stay readable there. Hidden until the row is hovered
+   or holds keyboard focus; the row's right-click menu is the route that
+   covers nothing. */
+.pr-actions {
   display: flex;
   align-items: center;
-  border: none;
-  background: none;
-  padding: 0 4px;
-  color: var(--text-2);
+  border-radius: var(--radius-m);
+  background-color: var(--fill-solid);
   opacity: 0;
 }
 
-.pr-row-split:hover .pr-snooze,
-.pr-snooze:focus-visible,
-.pr-row-split:hover .pr-dismiss,
-.pr-dismiss:focus-visible {
+.pr-row-split:hover .pr-actions {
   opacity: 1;
 }
 
-/* The timestamp makes way for whichever control floats over its slot. */
-.pr-row-split:hover .pr-updated,
-.pr-row-split:has(.pr-snooze:focus-visible) .pr-updated,
-.pr-row-split:has(.pr-dismiss:focus-visible) .pr-updated,
-.pr-row-split:has(.pr-fix:focus-visible) .pr-updated {
-  visibility: hidden;
+/* A rule of its own: a webview without :has() drops only this one, and the
+   bar still shows on hover. */
+.pr-row-split:has(:focus-visible) .pr-actions {
+  opacity: 1;
 }
 
-.pr-snooze:hover {
-  color: var(--accent);
-}
-
-/* A merged row's dismiss shares the snooze control's slot and reveal, so it
-   takes no width from the row and merged timestamps share a right edge with
-   every other row's. Its padding reaches the card's edge, a wider target
-   than the snooze control's. Hidden until hover because a persistent × on
-   every merged row would read as clutter. */
-.pr-dismiss {
-  right: 0;
-  padding: 0 12px;
-  font: inherit;
-  font-size: var(--text-l);
-}
-
-/* The Fix with Copilot control: the snooze control's neighbour, in the same
-   timestamp slot and revealed with it. `right` clears the snooze control
-   (7px offset + 21px wide) with a 6px gap, so neither is hit for the other.
-   Once armed or settled it is a word in a pill, wider than the slot, and
-   grows leftward over the end of the title; the opaque fill keeps it
-   readable there. */
-.pr-fix {
-  position: absolute;
-  top: 9px;
-  right: 34px;
-  height: calc(var(--text-l) * 1.35);
-  display: flex;
-  align-items: center;
+/* 24px is the smallest target WCAG 2.2 allows; the label's width does the
+   rest. */
+.pr-action {
+  min-width: 24px;
+  height: 24px;
   border: none;
+  border-radius: var(--radius-m);
   background: none;
-  padding: 0 4px;
-  color: var(--text-2);
+  padding: 0 8px;
+  color: var(--text);
   font: inherit;
   font-size: var(--text-s);
   font-weight: 500;
   white-space: nowrap;
-  opacity: 0;
 }
 
-.pr-row-split:hover .pr-fix,
-.pr-fix:focus-visible {
-  opacity: 1;
+.pr-action:hover {
+  background-color: var(--fill-strong);
 }
 
-.pr-fix:hover {
-  color: var(--accent);
-}
-
-.pr-fix.is-armed,
-.pr-fix.is-settled {
-  padding: 0 7px;
-  border-radius: var(--radius-full);
-}
-
-.pr-fix.is-armed,
-.pr-fix.is-armed:hover {
+/* Fix with Copilot waiting for its confirming click. */
+.pr-action.is-armed,
+.pr-action.is-armed:hover {
   background-color: var(--accent);
   color: var(--on-accent);
 }
 
-.pr-fix.is-settled {
-  background-color: var(--fill-solid);
+/* Stands where an action would while it cannot be asked for ("Asking"). */
+.pr-action-status {
+  padding: 0 8px;
   color: var(--text-2);
+  font-size: var(--text-s);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* The right-click menu, placed in window coordinates at the pointer. Above
+   the sticky section headers and the hover bubbles. */
+.pr-menu {
+  position: fixed;
+  z-index: 3;
+  min-width: 140px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background-color: var(--card);
+  box-shadow: 0 4px 14px var(--menu-shadow);
+}
+
+.pr-menu-item {
+  display: block;
+  width: 100%;
+  min-height: 26px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: none;
+  padding: 0 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-l);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.pr-menu-item:hover {
+  background-color: var(--hover);
 }
 
 /* A Copilot request that did not go out, in the sync error's amber. Clips

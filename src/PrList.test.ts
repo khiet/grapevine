@@ -258,3 +258,58 @@ test("a row with several states shows one reason and +N, and names them all in i
       '<span class="pr-state-more">+2</span></span>',
   );
 });
+
+// The bar is the row's visible route to its actions, so its buttons are read
+// off the rendered row: each is a real button with its label as text.
+function barOf(li: string): string[] {
+  const bar = li.match(/<span class="pr-actions"[\s\S]*?<\/span>/)?.[0];
+  if (!bar) throw new Error("no action bar rendered");
+  return [...bar.matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map((m) => m[1]);
+}
+
+function renderList(prs: PullRequest[], merged: MergedPr[] = []): string[] {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs, merged },
+    "",
+    { mine: false, participated: false, all: false, merged: false },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  return (html.match(/<li[\s\S]*?<\/li>/g) ?? []).filter((li) => li.includes("pr-row"));
+}
+
+test("each kind of row words its actions in a bar", () => {
+  const [plain, fixable, inAll, merged] = renderList(
+    [
+      openPr,
+      { ...openPr, number: 8, can_fix_conflict: true, blocked_reasons: ["conflict"] },
+      { ...openPr, number: 9, section: "all" },
+    ],
+    [mergedPr],
+  );
+  expect(barOf(plain)).toEqual(["Snooze", "Open"]);
+  expect(barOf(fixable)).toEqual(["Snooze", "Fix with Copilot", "Open"]);
+  expect(barOf(inAll)).toEqual(["Open"]);
+  expect(barOf(merged)).toEqual(["Dismiss", "Open"]);
+});
+
+// The timestamp is part of the row button, never a control of its own, so a
+// click on it opens the PR whatever else the row offers.
+test("the timestamp sits inside the row button on every kind of row", () => {
+  const rows = renderList(
+    [
+      openPr,
+      { ...openPr, number: 8, can_fix_conflict: true, blocked_reasons: ["conflict"] },
+      { ...openPr, number: 9, turn: "yours" },
+    ],
+    [mergedPr],
+  );
+  expect(rows).toHaveLength(4);
+  for (const li of rows) {
+    const button = li.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0];
+    expect(button).toMatch(/<span class="pr-updated">[^<]+<\/span>/);
+    expect(li.match(/pr-updated/g)).toHaveLength(1);
+  }
+});

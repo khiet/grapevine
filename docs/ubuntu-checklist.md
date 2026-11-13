@@ -139,10 +139,13 @@ request.
    and unfolds, the chevron turns with it, and the count pill, plus the red
    unread pill on a folded section with unread PRs, stay on the header's line.
 5. Move the pointer over a row in "Mine" or "Participated". **Expect:** the
-   row tints blue and a moon appears at its right edge.
-6. Click the moon. **Expect:** the row folds into a "1 snoozed" line at the
+   row tints and a bar with "Snooze" and "Open" appears at the right of its
+   last line; the time on its first line stays where it was. Right-click the
+   row. **Expect:** a menu with the same two actions opens at the pointer,
+   inside the popover, and Escape closes it.
+6. Click "Snooze". **Expect:** the row folds into a "1 snoozed" line at the
    foot of its section, level with the rows above it. Click the line, then
-   the moon on the row it reveals, to wake the PR.
+   "Wake" on the row it reveals, to wake the PR.
 7. Rest the pointer on an avatar, then on a state followed by "+1" at a row's
    right edge. **Expect:** each shows a dark bubble with a pointer after a
    short delay; the bubble stays inside the popover and its text is not cut
