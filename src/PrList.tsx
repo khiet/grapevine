@@ -30,7 +30,7 @@ import {
   moveSelection,
   rowCommand,
   selectionAfter,
-  strayKeyHome,
+  strayKeyZone,
   type KeyHint,
   type Zone,
 } from "./listKeys";
@@ -185,6 +185,8 @@ export function useListKeys(view: ListView | null): {
   const rowButton = (key: string) =>
     rowItem(key)?.querySelector<HTMLElement>(".pr-row") ?? null;
 
+  const selectedRow = () => (selected && rowButton(selected)) || null;
+
   // After every render, since anything can change the rows: a sync, the
   // filter, a section or a fold toggled.
   useLayoutEffect(() => {
@@ -203,7 +205,7 @@ export function useListKeys(view: ListView | null): {
     // A row removed while focused leaves focus on the body.
     if (refocus.current && document.activeElement === document.body) {
       refocus.current = false;
-      ((selected && rowButton(selected)) || filter.current)?.focus();
+      (selectedRow() ?? filter.current)?.focus();
     }
   });
 
@@ -216,23 +218,31 @@ export function useListKeys(view: ListView | null): {
   // footer goes on showing the hints of the zone focus was last in. A key
   // pressed there is sent to that zone: focus returns to it and the press is
   // replayed on it. Focus moves before the key's default action, so a
-  // character typed this way still lands in the filter.
+  // character typed this way still lands in the filter. Bound afresh each
+  // render, so it reads the zone and the selection as they now are.
   useEffect(() => {
-    const stray = (event: globalThis.KeyboardEvent) => {
+    const sendToZone = (event: globalThis.KeyboardEvent) => {
       if (event.target !== document.body) return;
       // An open row menu has keys of its own.
       if (document.querySelector(".pr-menu")) return;
-      const home = strayKeyHome(zone, event);
-      if (home === null) return;
+      const to = strayKeyZone(zone, event);
+      if (to === null) return;
+      // With no row selected the list itself hears the key, unfocused: its
+      // keys still apply, and the filter's would not mean the same.
       const element =
-        (home === "row" && selected && rowButton(selected)) || filter.current;
+        to === "list" ? (selectedRow() ?? list.current) : filter.current;
       if (!element) return;
       element.focus();
+      const focused = document.activeElement;
       const replay = new window.KeyboardEvent("keydown", event);
-      if (!element.dispatchEvent(replay)) event.preventDefault();
+      const handled = !element.dispatchEvent(replay);
+      // WebKit walks focus on a scripted Tab as it does on a pressed one;
+      // letting the press through as well would walk it twice.
+      const walked = document.activeElement !== focused;
+      if (handled || walked) event.preventDefault();
     };
-    document.addEventListener("keydown", stray);
-    return () => document.removeEventListener("keydown", stray);
+    document.addEventListener("keydown", sendToZone);
+    return () => document.removeEventListener("keydown", sendToZone);
   });
 
   const move = (step: 1 | -1) => {

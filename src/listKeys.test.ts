@@ -8,7 +8,7 @@ import {
   moveSelection,
   rowCommand,
   selectionAfter,
-  strayKeyHome,
+  strayKeyZone,
 } from "./listKeys";
 import { derivePopover, type ListView, type RowAction } from "./popoverView";
 
@@ -152,14 +152,14 @@ test("with focus elsewhere there are no hints", () => {
 });
 
 test("a key pressed with focus on nothing goes to the zone focus was last in", () => {
-  expect(strayKeyHome("filter", key("ArrowDown"))).toBe("filter");
-  expect(strayKeyHome("filter", key("a"))).toBe("filter");
-  expect(strayKeyHome("list", key("s"))).toBe("row");
+  expect(strayKeyZone("filter", key("ArrowDown"))).toBe("filter");
+  expect(strayKeyZone("filter", key("a"))).toBe("filter");
+  expect(strayKeyZone("list", key("s"))).toBe("list");
 });
 
 test("a stray key is left alone with no zone to return to, or as a system shortcut", () => {
-  expect(strayKeyHome(null, key("ArrowDown"))).toBeNull();
-  expect(strayKeyHome("filter", key("q", { metaKey: true }))).toBeNull();
+  expect(strayKeyZone(null, key("ArrowDown"))).toBeNull();
+  expect(strayKeyZone("filter", key("q", { metaKey: true }))).toBeNull();
 });
 
 const openPr = {
