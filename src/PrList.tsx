@@ -373,7 +373,6 @@ export function formatLastSync(
   return `Synced ${formatUpdated(new Date(ms).toISOString(), now)}`;
 }
 
-// The author as the avatar's label names them.
 const authorLabel = (author: string, bot: boolean) =>
   bot ? `@${author}, bot` : `@${author}`;
 
