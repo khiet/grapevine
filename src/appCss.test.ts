@@ -13,31 +13,27 @@ interface Rule {
   dark: boolean;
 }
 
-// Flat rule list. The only nesting App.css uses is the dark-mode media block.
-function parseRules(text: string, dark = false): Rule[] {
+const LIGHT_BLOCK = ":root";
+// The dark palette hangs off the attribute appearance.ts sets, not off the OS
+// preference, so a chosen appearance can differ from the desktop's.
+const DARK_BLOCK = ':root[data-theme="dark"]';
+
+// Flat rule list: App.css nests nothing, and an at-rule would hide rules from
+// every check below.
+function parseRules(text: string): Rule[] {
   const rules: Rule[] = [];
   let i = 0;
   while (i < text.length) {
     const open = text.indexOf("{", i);
     if (open === -1) break;
     const selector = text.slice(i, open).trim();
-    let depth = 1;
-    let close = open + 1;
-    for (; depth > 0; close++) {
-      if (close >= text.length) throw new Error(`unclosed block: ${selector}`);
-      if (text[close] === "{") depth++;
-      else if (text[close] === "}") depth--;
-    }
-    const body = text.slice(open + 1, close - 1);
-    if (selector.startsWith("@media")) {
-      if (!selector.includes("prefers-color-scheme: dark")) {
-        throw new Error(`unexpected at-rule: ${selector}`);
-      }
-      rules.push(...parseRules(body, true));
-    } else {
-      rules.push({ selector, body, dark });
-    }
-    i = close;
+    if (selector.startsWith("@")) throw new Error(`unexpected at-rule: ${selector}`);
+    const close = text.indexOf("}", open);
+    if (close === -1) throw new Error(`unclosed block: ${selector}`);
+    const body = text.slice(open + 1, close);
+    if (body.includes("{")) throw new Error(`nested block: ${selector}`);
+    rules.push({ selector, body, dark: selector === DARK_BLOCK });
+    i = close + 1;
   }
   return rules;
 }
@@ -54,7 +50,7 @@ function declarations(body: string): [string, string][] {
 }
 
 const rules = parseRules(css);
-const isTokenBlock = (r: Rule) => r.selector === ":root";
+const isTokenBlock = (r: Rule) => r.selector === LIGHT_BLOCK || r.dark;
 const tokensOf = (dark: boolean) =>
   new Map(
     rules
@@ -83,13 +79,25 @@ test("no colour literal remains outside the token definitions", () => {
 });
 
 test("dark mode is one block that redefines colour tokens only", () => {
-  const darkRules = rules.filter((r) => r.dark);
-  expect(darkRules.map((r) => r.selector)).toEqual([":root"]);
+  expect(rules.filter((r) => r.dark)).toHaveLength(1);
   expect(darkOverrides.size).toBeGreaterThan(0);
   for (const [name, value] of darkOverrides) {
     expect(light.has(name), `${name} has no light definition`).toBe(true);
     expect(value, `${name} is not a colour`).toMatch(COLOUR_LITERAL);
   }
+});
+
+// Native controls (the selects, scrollbars) draw from color-scheme, so it has
+// to name the one palette in force, never both.
+test("each palette tells native controls which scheme it is", () => {
+  const schemeOf = (dark: boolean) =>
+    rules
+      .filter((r) => isTokenBlock(r) && r.dark === dark)
+      .flatMap((r) => declarations(r.body))
+      .filter(([name]) => name === "color-scheme")
+      .map(([, value]) => value);
+  expect(schemeOf(false)).toEqual(["light"]);
+  expect(schemeOf(true)).toEqual(["dark"]);
 });
 
 test("only the three radii are in use", () => {

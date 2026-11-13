@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import "./App.css";
+import { appearance } from "./appearance";
 import {
   EMPTY_SNAPSHOT,
   markAllRead,
@@ -182,6 +183,13 @@ function App() {
   const listKeys = useListKeys(
     !inSettings && content.kind === "list" ? content : null,
   );
+
+  // A layout effect, so the first paint already follows the desktop. A
+  // stored Light or Dark lands one backend round trip later; the window is
+  // hidden at launch, so the switch is rarely seen.
+  useLayoutEffect(() => {
+    void appearance.start();
+  }, []);
 
   useEffect(() => {
     startUpdateChecks();

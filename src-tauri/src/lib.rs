@@ -182,6 +182,8 @@ pub fn run() {
             commands::fix_conflict,
             commands::get_poll_interval,
             commands::set_poll_interval,
+            commands::get_appearance,
+            commands::set_appearance,
             commands::get_launch_at_login,
             commands::set_launch_at_login,
         ])

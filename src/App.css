@@ -1,8 +1,8 @@
 /* Every colour, radius and type size the popover uses is a token here. Rules
    below take them through var() only, so a theme is a matter of redefining
-   colour tokens and nothing else. */
+   colour tokens and nothing else. These are the light palette's. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   /* -webkit-system-font is the desktop's own UI font in both webviews: San
      Francisco on macOS, the GNOME interface font on Ubuntu. Not system-ui:
      in WebKitGTK that name does not follow the desktop's font setting and
@@ -72,42 +72,44 @@
   --menu-shadow: rgba(0, 0, 0, 0.18);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --window: #1e1e1e;
-    --card: #2c2c2e;
-    --line: rgba(255, 255, 255, 0.12);
-    /* The light-mode fills sink into the dark card; stronger ones keep a
-       pill legible without brightening its text into a signal. */
-    --fill: rgba(120, 120, 128, 0.32);
-    --fill-solid: #3a3a3c;
-    --fill-strong: #3a3a3c;
-    --hover: rgba(235, 235, 245, 0.08);
-    --selected: rgba(185, 166, 255, 0.13);
+/* The dark palette. The attribute is set by appearance.ts, which turns the
+   user's choice, or the desktop's style when the choice is System, into
+   light or dark. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --window: #1e1e1e;
+  --card: #2c2c2e;
+  --line: rgba(255, 255, 255, 0.12);
+  /* The light-mode fills sink into the dark card; stronger ones keep a
+     pill legible without brightening its text into a signal. */
+  --fill: rgba(120, 120, 128, 0.32);
+  --fill-solid: #3a3a3c;
+  --fill-strong: #3a3a3c;
+  --hover: rgba(235, 235, 245, 0.08);
+  --selected: rgba(185, 166, 255, 0.13);
 
-    --text: #f2f2f7;
-    --text-2: #aeaeb2;
+  --text: #f2f2f7;
+  --text-2: #aeaeb2;
 
-    /* The accent brightens to read on the dark card, so what sits on an
-       accent fill turns dark. The unread count does the same. */
-    --accent: #b9a6ff;
-    --on-accent: #1b1726;
+  /* The accent brightens to read on the dark card, so what sits on an
+     accent fill turns dark. The unread count does the same. */
+  --accent: #b9a6ff;
+  --on-accent: #1b1726;
 
-    --unread: #ff453a;
-    --on-unread: #2b0705;
-    --danger: #ff8a80;
-    --warn: #ffc266;
-    --ok: #6fe08e;
+  --unread: #ff453a;
+  --on-unread: #2b0705;
+  --danger: #ff8a80;
+  --warn: #ffc266;
+  --ok: #6fe08e;
 
-    /* Lifted a step above the card so the bubble does not melt into the
-       row it covers. */
-    --tip-bg: #48484a;
+  /* Lifted a step above the card so the bubble does not melt into the
+     row it covers. */
+  --tip-bg: #48484a;
 
-    /* Recessed against the card, so a field reads as a well. */
-    --field: #1c1c1e;
-    --field-line: rgba(255, 255, 255, 0.16);
-    --switch-on: #30d158;
-  }
+  /* Recessed against the card, so a field reads as a well. */
+  --field: #1c1c1e;
+  --field-line: rgba(255, 255, 255, 0.16);
+  --switch-on: #30d158;
 }
 
 * {
