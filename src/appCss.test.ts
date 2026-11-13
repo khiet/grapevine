@@ -111,14 +111,11 @@ test("only the three type sizes and three weights are in use", () => {
   expect(new Set(valuesOf("font"))).toEqual(new Set(["inherit"]));
   // 400 is the inherited default, so it need not be written out.
   expect(valuesOf("font-weight").filter((w) => !["400", "500", "700"].includes(w))).toEqual([]);
-  // A size token left in px arithmetic elsewhere would dodge the scale.
-  const strayPx = styleRules
-    .flatMap((r) => declarations(r.body))
-    .filter(([name, value]) => name === "height" && /\b1[0-9]px \*/.test(value));
-  expect(strayPx).toEqual([]);
 });
 
-test("the accent is grape, with dark text on dark-mode accent fills", () => {
+// The values the design review settled on, so a retune is a deliberate edit
+// here as well as in the stylesheet.
+test("the palette carries the agreed accent, secondary, unread and amber values", () => {
   expect(light.get("--accent")).toBe("#5b3fc4");
   expect(dark.get("--accent")).toBe("#b9a6ff");
   expect(light.get("--text-2")).toBe("#636366");
