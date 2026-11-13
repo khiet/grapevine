@@ -33,8 +33,10 @@ export const YOUR_TURN_KEY = "yours";
  * to remember: it comes back as the PR's fix_requested. */
 export type FixesPosting = ReadonlySet<string>;
 
-/** What colours a row's reason: the accent for the viewer's turn, amber for
- * blocked, green for ready and approved, neutral for everything else. */
+/** What colours a row's reason: the accent for a review asked of the viewer
+ * on their turn, amber for blocked, green for ready and approved, neutral
+ * for everything else. A blocked or ready row keeps its own hue on the
+ * viewer's turn too: Todo already says whose move it is. */
 export type Tone = "accent" | "warn" | "ok" | "neutral";
 
 /** A row's states, in words. A row shows `reason` and `more`; the rest is
@@ -189,6 +191,11 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
+interface TonedState {
+  text: string;
+  tone: Tone;
+}
+
 // Every state the PR is in, in priority order; the row shows the first and
 // folds the rest. A new signal needs one line here, placed where it ranks.
 //
@@ -202,8 +209,8 @@ function ordinal(n: number): string {
 // queue position on a draft, so whatever it does send shows. Ready is the
 // backend's call as well and does not imply approved, since a repo with no
 // required reviews is ready without an approval.
-function rowStates(pr: PullRequest): { text: string; tone: Tone }[] {
-  const states: { text: string; tone: Tone }[] = [];
+function rowStates(pr: PullRequest): TonedState[] {
+  const states: TonedState[] = [];
   const add = (text: string, tone: Tone = "neutral") => states.push({ text, tone });
   // The accent is the viewer's turn, not the request: the same words on a row
   // that does not wait on them are plain news.
@@ -223,11 +230,11 @@ function rowStates(pr: PullRequest): { text: string; tone: Tone }[] {
   if (pr.checks_running) add("Checks running");
   if (pr.auto_merge) add("Auto-merge armed");
   if (pr.approved) add("Approved", "ok");
-  // The backend sends at most one of the three review directions; the chain
-  // holds the row to one regardless, a request naming you first.
-  if (pr.awaiting_review) add("Awaiting review");
-  else if (pr.team_review_requested && !pr.review_requested) {
-    add("Team review requested");
+  // The backend sends at most one of the three review directions; this holds
+  // the row to one regardless, a request naming you first.
+  if (!pr.review_requested) {
+    if (pr.awaiting_review) add("Awaiting review");
+    else if (pr.team_review_requested) add("Team review requested");
   }
   return states;
 }

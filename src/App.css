@@ -777,7 +777,7 @@ body {
 
 /* Amber says "this PR is blocked", deliberately not the unread badge's red,
    which says "someone spoke". Green is the one positive signal. The accent
-   marks what waits on the viewer. Each holds 4.5:1 on the card, hovered
+   marks a review asked of the viewer. Each holds 4.5:1 on the card, hovered
    included. */
 .pr-state.is-accent {
   color: var(--accent);
@@ -807,9 +807,14 @@ body {
   color: var(--text-2);
 }
 
-/* One state per line, so a long list grows down instead of past the
-   popover's edge. */
+/* One state per line, so a long list never runs past the popover's edge.
+   It grows upward from the state's own line: the state sits at the foot of
+   its row, and a bubble centred on it would be cut off by the card's edge
+   on the last row. */
 .pr-state.pr-tip::after {
+  top: auto;
+  bottom: -3px;
+  transform: none;
   font-weight: 400;
   white-space: pre;
 }

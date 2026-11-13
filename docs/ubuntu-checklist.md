@@ -132,9 +132,9 @@ request.
 3. Scroll the whole list. **Expect:** no title, repository name, timestamp or
    "waiting" label is cut off mid-glyph or overlaps its neighbour; long ones
    end in an ellipsis. The red unread badge, the square org badge and the
-   "bot" tag sit on the avatar's corners. Pills ("Draft", "CI failing",
-   "Ready to merge" and the like) and the glyphs beside them share one line
-   at the row's right edge. **Screenshot** of each screenful.
+   "bot" tag sit on the avatar's corners. The "Draft" pill and the worded
+   state ("CI failing", "Ready to merge" and the like, with a "+1" where
+   more is folded) share one line at the row's right edge. **Screenshot** of each screenful.
 4. Click each section header in turn, twice. **Expect:** the section folds
    and unfolds, the chevron turns with it, and the count pill, plus the red
    unread pill on a folded section with unread PRs, stay on the header's line.
@@ -143,7 +143,7 @@ request.
 6. Click the moon. **Expect:** the row folds into a "1 snoozed" line at the
    foot of its section, level with the rows above it. Click the line, then
    the moon on the row it reveals, to wake the PR.
-7. Rest the pointer on an avatar, then on a glyph or a "+1" pill at a row's
+7. Rest the pointer on an avatar, then on a state followed by "+1" at a row's
    right edge. **Expect:** each shows a dark bubble with a pointer after a
    short delay; the bubble stays inside the popover and its text is not cut
    off.

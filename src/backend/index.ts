@@ -26,7 +26,7 @@ export interface PullRequest {
    * Composed at the Rust boundary; the row only maps keys to words. */
   blocked_reasons: BlockedReason[];
   /** Drafts render a neutral pill; the backend suppresses their blocked
-   * reasons and review markers. */
+   * reasons and review states. */
   is_draft: boolean;
   /** The viewer's review is requested and not yet acted on; reads "Review
    * requested". Backend-computed, suppressed on drafts, and self-clearing

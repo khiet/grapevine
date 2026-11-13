@@ -214,8 +214,8 @@ test("a draft still shows a state the backend sends for it", () => {
 });
 
 // The keys are the wire contract with the Rust BlockedReason enum; the labels
-// are kept neutral (a PR property, never "you must act").
-test("each blocked reason has its own neutral wording", () => {
+// name a PR property, never "you must act".
+test("each blocked reason is worded as a property of the PR", () => {
   const reason = (blocked: PullRequest["blocked_reasons"][number]) =>
     state({ blocked_reasons: [blocked] })?.reason;
   expect(reason("conflict")).toBe("Merge conflict");

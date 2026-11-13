@@ -213,20 +213,17 @@ function PrAvatar({
 }
 
 // The shared frame around every stroke glyph: shapes are drawn on a 24-unit
-// grid and scaled down to their rendered size. Square at `size` unless
-// `width` narrows it (the direction arrow). Hidden from assistive tech in
+// grid and scaled down to their rendered size, a square of `size`. Hidden from assistive tech in
 // all uses: the enclosing element carries the label (the section toggle's
 // text, a control's or header icon button's aria-label).
 export function GlyphSvg({
   strokeWidth,
   size = 13,
-  width = size,
   className,
   children,
 }: {
   strokeWidth: number;
   size?: number;
-  width?: number;
   className?: string;
   children: ReactNode;
 }) {
@@ -234,7 +231,7 @@ export function GlyphSvg({
     <svg
       className={className}
       viewBox="0 0 24 24"
-      width={width}
+      width={size}
       height={size}
       fill="none"
       stroke="currentColor"
@@ -251,9 +248,7 @@ export function GlyphSvg({
 /* The row's state in words: one reason in its tone, then "+N" when further
    states are folded behind it. Which states a row has, and their order, is
    decided by the popover view. Only a folded row gets the tooltip and the
-   label, each listing every state; a lone reason is its own label. The
-   tooltip takes one state per line, so a long list grows down, not past the
-   popover's edge. */
+   label, each listing every state; a lone reason is its own label. */
 function StateView({ state }: { state: RowState }) {
   const className = `pr-state is-${state.tone}`;
   const reason = <span className="pr-state-reason">{state.reason}</span>;
