@@ -58,8 +58,9 @@ export interface RowView {
    * none. The quiet counterpart of the unread badge. */
   botNote: string | null;
   /** How long the row has waited on the viewer ("waiting 3h", "waiting 2d"),
-   * shown in place of the updated time. Null when the turn is not the
-   * viewer's or its start is unknown; the row keeps the updated time then. */
+   * or "your turn" when the start is unknown, shown in place of the updated
+   * time. Null when the turn is not the viewer's; the row keeps the updated
+   * time then. */
   waiting: string | null;
   /** The row's snooze control: "offer" to park it, "wake" to bring a snoozed
    * row back, null where rows cannot be snoozed (All). */
@@ -282,10 +283,12 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
 // Whole hours under a day, whole days from one day up, both rounded down: a
-// wait is never overstated. Under an hour reads "<1h" rather than "0h". The
-// backend sends a start only on a your-turn row, so the start alone decides.
+// wait is never overstated. Under an hour reads "<1h" rather than "0h". A
+// turn nobody watched begin has no age to show, and says "your turn" so the
+// row still carries the cue.
 function waitingLabel(pr: PullRequest, now: number): string | null {
-  if (pr.turn_since === null) return null;
+  if (pr.turn !== "yours") return null;
+  if (pr.turn_since === null) return "your turn";
   const elapsed = now - pr.turn_since;
   if (elapsed < HOUR_MS) return "waiting <1h";
   if (elapsed < DAY_MS) return `waiting ${Math.floor(elapsed / HOUR_MS)}h`;

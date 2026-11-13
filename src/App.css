@@ -127,7 +127,6 @@
 }
 
 .pr-row,
-.pr-dismiss,
 .pr-section-toggle,
 .pr-snoozed-toggle,
 .update-banner {
@@ -164,6 +163,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
 }
@@ -192,10 +192,13 @@ body {
   color: var(--text-2);
 }
 
+/* No top padding: a sticky header pins at the scroller's padding edge, so
+   padding here is a strip where scrolled rows show above the header. The
+   first header carries the list's top gap instead. */
 .pr-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 10px 12px;
+  padding: 0 10px 12px;
 }
 
 /* Sticky: the section a row belongs to changes what it means ("Mine" vs
@@ -247,6 +250,10 @@ body {
   font: inherit;
   color: inherit;
   text-align: left;
+}
+
+.pr-section:first-child .pr-section-toggle {
+  padding-top: 18px;
 }
 
 .pr-section-chevron {
@@ -362,7 +369,7 @@ body {
 }
 
 /* A row with a second control (a merged row's dismiss, a PR row's snooze
-   or wake) is two sibling buttons that must read as one row: the li carries
+   or wake) is sibling buttons that must read as one row: the li carries
    the hover highlight and the hairline, and the inner .pr-row gives up its
    own so they don't stack. */
 .pr-row-split {
@@ -393,11 +400,19 @@ body {
 }
 
 /* Hidden until the row is hovered, Mail-style: a persistent × on every
-   merged row would read as clutter. */
+   merged row would read as clutter. Floated over the timestamp's slot like
+   the snooze control, and with the same offsets, so it takes no width from
+   the row and merged timestamps share a right edge with every other row's. */
 .pr-dismiss {
+  position: absolute;
+  top: 9px;
+  right: 7px;
+  height: calc(var(--text-l) * 1.35);
+  display: flex;
+  align-items: center;
   border: none;
   background: none;
-  padding: 0 12px;
+  padding: 0 4px;
   color: var(--text-2);
   font: inherit;
   font-size: var(--text-l);
@@ -474,10 +489,10 @@ body {
   opacity: 1;
 }
 
-/* Scoped to rows with the control: a merged row is also split but keeps its
-   date on hover. */
-.pr-row-split:has(.pr-snooze):hover .pr-updated,
+/* The timestamp makes way for whichever control floats over its slot. */
+.pr-row-split:hover .pr-updated,
 .pr-row-split:has(.pr-snooze:focus-visible) .pr-updated,
+.pr-row-split:has(.pr-dismiss:focus-visible) .pr-updated,
 .pr-row-split:has(.pr-fix:focus-visible) .pr-updated {
   visibility: hidden;
 }
@@ -675,6 +690,13 @@ body {
    Both stay right-aligned to the same edge. */
 .pr-title-row.is-waiting {
   grid-template-columns: 1fr minmax(66px, max-content);
+}
+
+/* The your-turn cue ("waiting 3h", "your turn"): the accent the app uses for
+   things to act on, and bold so it reads apart from a plain timestamp. */
+.pr-title-row.is-waiting .pr-updated {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 /* Three lines, not two: the timestamp column leaves the title ~290px, and a
@@ -946,10 +968,48 @@ body {
   color: var(--text);
 }
 
+/* As tall as an icon button in both views, so the header keeps its height
+   when Settings swaps the icons for "Done". */
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 2px;
+  min-height: 28px;
+}
+
+/* A header action as a glyph: its meaning is in the tooltip and aria-label.
+   position: relative anchors both the tooltip and the dot. */
+.header-icon {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--text-2);
+}
+
+.header-icon:hover:enabled {
+  background-color: var(--fill);
+  color: var(--text);
+}
+
+.header-icon:disabled {
+  opacity: 0.45;
+}
+
+/* Something is unread: the unread badge's red, on Mark all read. */
+.header-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: var(--unread);
 }
 
 /* Rounded macOS search field filling the space the title used to hold. */
@@ -959,8 +1019,8 @@ body {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  margin-right: 12px;
-  padding: 4px 8px;
+  height: 28px;
+  padding: 0 8px;
   border-radius: var(--radius-m);
   background-color: var(--fill);
 }
@@ -1035,8 +1095,7 @@ body {
   gap: 8px;
 }
 
-.settings-field-row select,
-.settings-field-row button {
+.settings-field-row select {
   padding: 3px 6px;
   border: 1px solid var(--field-line);
   border-radius: var(--radius-m);
@@ -1045,7 +1104,30 @@ body {
   font: inherit;
 }
 
-.settings-field-row button:disabled {
+/* The button ranking: filled for the one primary action in a card, bordered
+   for a secondary one, and .settings-link's bare text for destructive or
+   minor ones. Both boxed ranks share a shape; the filled one keeps a border
+   in its own colour so the two are the same height. */
+.button-primary,
+.button-secondary {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--field-line);
+  border-radius: var(--radius-m);
+  background-color: var(--field);
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+}
+
+.button-primary {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.button-primary:disabled,
+.button-secondary:disabled {
   opacity: 0.45;
 }
 
@@ -1076,11 +1158,11 @@ body {
   gap: 8px;
 }
 
+/* The list's section label: sentence case, bold, inset to the same edge. */
 .settings-label {
-  font-size: var(--text-s);
+  padding: 0 4px;
+  font-size: var(--text-m);
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
   color: var(--text-2);
 }
 
@@ -1100,20 +1182,6 @@ body {
   font: inherit;
   user-select: text;
   -webkit-user-select: text;
-}
-
-.settings-input-row button {
-  padding: 5px 10px;
-  border: none;
-  border-radius: var(--radius-m);
-  background-color: var(--accent);
-  color: var(--on-accent);
-  font: inherit;
-  font-weight: 500;
-}
-
-.settings-input-row button:disabled {
-  opacity: 0.45;
 }
 
 .settings-link {
@@ -1151,13 +1219,12 @@ body {
   overflow-y: auto;
 }
 
-/* Owner headers inside the browser, in the style of .settings-label. */
+/* Owner headers inside the browser, in the style of the list's repo
+   headers (.pr-repo-name). */
 .repo-group-label {
   padding: 8px 11px 2px;
   font-size: var(--text-s);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+  font-weight: 500;
   color: var(--text-2);
 }
 

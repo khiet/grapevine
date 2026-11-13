@@ -762,8 +762,15 @@ test("a turn that began within the hour reads as under an hour, not zero", () =>
   expect(row.waiting).toBe("waiting <1h");
 });
 
-test("a your-turn row with no known start has no waiting label", () => {
-  expect(rowFor(pr({ turn: "yours", turn_since: null })).waiting).toBeNull();
+test("a your-turn row with no known start still carries the cue", () => {
+  expect(rowFor(pr({ turn: "yours", turn_since: null })).waiting).toBe(
+    "your turn",
+  );
+});
+
+test("a row that is not the viewer's turn has no waiting label", () => {
+  expect(rowFor(pr({ turn: "theirs" })).waiting).toBeNull();
+  expect(rowFor(pr({ turn: null })).waiting).toBeNull();
 });
 
 const SNOOZE_FIXTURE = synced({

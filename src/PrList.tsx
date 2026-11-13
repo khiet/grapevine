@@ -151,6 +151,15 @@ export function formatLastSync(
 // author. The org badge has no placeholder by design:
 // a missing or broken owner avatar simply shows no badge, keeping the corner
 // clean rather than grey.
+// The author as a row names them: in the avatar's label and the row's title.
+const authorLabel = (author: string, bot: boolean) =>
+  bot ? `@${author}, bot` : `@${author}`;
+
+/* A row's title names its author, and a native tooltip is inherited by
+   everything inside the row. Whatever shows a bubble of its own takes an
+   empty title, so the two never appear together. */
+const OWN_TIP = { title: "" };
+
 function PrAvatar({
   avatarUrl,
   ownerAvatarUrl,
@@ -168,12 +177,15 @@ function PrAvatar({
     <span
       /* The author's name lives here as a hover reveal, not in the metadata
          line: the face already says who, so spelling the handle out on every
-         row bought little. pr-tip-right because the avatar sits at the card's
-         left edge, where the default leftward bubble would clip. */
+         row bought little. The aria-label is what puts the handle in the
+         accessible name of the row button around it. pr-tip-right because
+         the avatar sits at the card's left edge, where the default leftward
+         bubble would clip. */
       className="pr-avatar-wrap pr-tip pr-tip-right"
       role="img"
       data-tip={`@${author}`}
-      aria-label={bot ? `@${author}, bot` : `@${author}`}
+      aria-label={authorLabel(author, bot)}
+      {...OWN_TIP}
     >
       <img
         className="pr-avatar"
@@ -236,7 +248,13 @@ function RowMark({
     "pr-tip",
   ].join(" ");
   return (
-    <span className={className} role="img" data-tip={tip} aria-label={tip}>
+    <span
+      className={className}
+      role="img"
+      data-tip={tip}
+      aria-label={tip}
+      {...OWN_TIP}
+    >
       {children}
     </span>
   );
@@ -247,7 +265,7 @@ function RowMark({
 // `width` narrows it (the direction arrow). Hidden from assistive tech in
 // all uses: the enclosing element carries the label (RowMark's aria-label,
 // the section toggle's text).
-function GlyphSvg({
+export function GlyphSvg({
   strokeWidth,
   size = 13,
   width = size,
@@ -416,6 +434,7 @@ function MarkView({ mark }: { mark: Mark }) {
           role="img"
           data-tip={mark.tip}
           aria-label={mark.tip}
+          {...OWN_TIP}
         >
           {mark.label}
         </span>
@@ -436,6 +455,7 @@ function MarkView({ mark }: { mark: Mark }) {
           role="img"
           data-tip={mark.tip}
           aria-label={mark.tip}
+          {...OWN_TIP}
         >
           {mark.label}
         </span>
@@ -477,6 +497,7 @@ function SnoozeControl({ row }: { row: RowView }) {
       className="pr-snooze pr-tip"
       data-tip={label}
       aria-label={label}
+      {...OWN_TIP}
       onClick={() => (parked ? wake(key) : snooze(key)).catch(() => {})}
     >
       {parked ? <Sun /> : <Moon />}
@@ -536,6 +557,7 @@ function useFixControl(row: RowView) {
         className="pr-fix pr-tip"
         data-tip="Fix with Copilot"
         aria-label="Fix with Copilot"
+        {...OWN_TIP}
         onClick={click}
       >
         <Wrench />
@@ -570,6 +592,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   return (
     <li
       className={row.snooze === null ? undefined : "pr-row-split"}
+      title={authorLabel(pr.author, botAuthor)}
       onPointerLeave={fix.standDown}
     >
       <button
@@ -672,7 +695,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
     </>
   );
   return (
-    <li className="pr-row-split">
+    <li className="pr-row-split" title={authorLabel(pr.author, false)}>
       <span className="pr-row-main">
         <button
           type="button"
