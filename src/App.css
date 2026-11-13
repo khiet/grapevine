@@ -404,30 +404,48 @@ body {
   text-align: left;
 }
 
-/* What floats over the end of the row's metadata line: the action bar, and
-   after it a merged row's deploy status. On the last line, never the first,
-   so the timestamp stays in view, and .pr-updated is stacked above this
-   where their boxes touch: a click on the time always lands on the row
-   button and opens the PR. `right` is .pr-row's right
-   padding. `bottom` is what centres the 24px bar on the metadata line (14px
-   tall, above .pr-row's 9px bottom padding), and so keeps the deploy status
-   on its placeholder. */
+/* What floats over the end of the row's metadata line: the action bar. On
+   the last line, never the first, so the timestamp stays in view, and
+   .pr-updated is stacked above this where their boxes touch: a click on the
+   time always lands on the row button and opens the PR. `right` is .pr-row's
+   right padding. `bottom` is what centres the 24px bar on the metadata line
+   (14px tall, above .pr-row's 9px bottom padding). */
 .pr-row-end {
   position: absolute;
   bottom: 4px;
   right: 11px;
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
-/* A merged row's deploy status, a rocket and a time or a word: drawn over
-   .pr-deploy-space, which holds its width in the line so the repo truncates
-   before it. It ends the metadata line, so it sits in the timestamp's column
-   and takes the timestamp's type: the deploy time reads as a second entry
-   under the merge time. The two rules must keep the same type and layout so
-   the control covers its placeholder exactly. */
+/* A merged row's times, stacked at the title's right: when it merged, and
+   under that its deploy status. Both lines take a fixed height, which is
+   what lets .pr-deploy be placed from the row's top. */
+.pr-times {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 16px;
+}
+
+/* The status can be a word wider than any timestamp ("Deploying"), so its
+   column grows to it. */
+.pr-title-row.has-deploy {
+  grid-template-columns: 1fr minmax(52px, max-content);
+}
+
+/* A merged row's deploy status, a rocket and a time or a word, in the
+   timestamp's type so the deploy time reads as a second entry under the
+   merge time. Drawn over .pr-deploy-space, which holds its place in
+   .pr-times so a one-line title leaves it room. `top` is where that
+   placeholder lands: .pr-row's 9px top padding, the 1.5px by which the
+   title's baseline sets the merge time down, and the merge time's 16px line. The
+   two rules below must keep the same type and layout so the control covers
+   its placeholder exactly. */
 .pr-deploy {
+  position: absolute;
+  top: 26.5px;
+  right: 11px;
   border: none;
   background: none;
   padding: 0;
@@ -440,6 +458,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  height: 16px;
   font-size: var(--text-s);
   white-space: nowrap;
 }
@@ -453,8 +472,6 @@ body {
 }
 
 .pr-deploy-space {
-  flex: none;
-  margin-left: auto;
   visibility: hidden;
 }
 

@@ -170,9 +170,9 @@ test("the list has no top padding for rows to show through", () => {
   expect(ruleFor(".pr-section-header").get("top")).toBe("0");
 });
 
-// What floats over a row (the action bar, a merged row's deploy status) is
-// out of the flow, so it takes no width from the title, and hangs from the
-// row's foot, away from the timestamp on the first line. Where the two boxes
+// The action bar floats over a row out of the flow, so it takes no width
+// from the title, and hangs from the row's foot, away from the timestamp on
+// the first line. Where the two boxes
 // still touch (a one-line title), the timestamp is stacked on top, so the
 // click there is the row's. The row is its own stacking context so that lift
 // cannot reach the sticky section headers.
@@ -195,6 +195,22 @@ test("no rule hides the timestamp", () => {
     .flatMap((r) => declarations(r.body))
     .filter(([name]) => ["visibility", "display", "opacity"].includes(name));
   expect(hiding).toEqual([]);
+});
+
+// The deploy status is a button beside the row button, drawn over a
+// placeholder inside it. The two coincide only while they share a size, and
+// while the lines above the placeholder keep the height `top` counts on.
+test("a merged row's deploy status sits on its placeholder under the merge time", () => {
+  const times = ruleFor(".pr-times");
+  expect(times.get("flex-direction")).toBe("column");
+  const line = px(times.get("line-height"));
+  const both = ruleFor(".pr-deploy,\n.pr-deploy-space");
+  expect(px(both.get("height"))).toBe(line);
+  expect(both.has("font-size")).toBe(true);
+  const status = ruleFor(".pr-deploy");
+  expect(status.get("position")).toBe("absolute");
+  expect(status.get("right")).toBe(ruleFor(".pr-row-end").get("right"));
+  expect(ruleFor(".pr-deploy-space").get("visibility")).toBe("hidden");
 });
 
 const px = (value: string | undefined) => Number(value?.match(/^(\d+)px$/)?.[1]);

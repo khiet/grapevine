@@ -833,43 +833,48 @@ function MergedRow({ row }: { row: MergedRowView }) {
           author={pr.author}
         />
         <span className="pr-text">
-          <span className="pr-title-row">
+          <span
+            className={status ? "pr-title-row has-deploy" : "pr-title-row"}
+          >
             <span className="pr-title">{pr.title}</span>
-            <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
+            <span className="pr-times">
+              <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
+              {/* Holds the status's place under the merge time, so a
+                  one-line title leaves it room; the real control floats
+                  over this spot. */}
+              {status && (
+                <span className="pr-deploy-space" aria-hidden="true">
+                  {status}
+                </span>
+              )}
+            </span>
           </span>
           <span className="pr-origin">
             <span className="pr-number">#{pr.number}</span>
             <span className="pr-repo">{pr.repo}</span>
-            {/* Holds the status's place in the line so the repo truncates
-                before it; the real control floats over this spot. */}
-            {status && (
-              <span className="pr-deploy-space" aria-hidden="true">
-                {status}
-              </span>
-            )}
           </span>
         </span>
       </button>
       <span className="pr-row-end">
         <ActionBar actions={row.actions} onPick={run} />
-        {deploy && (
-          <button
-            type="button"
-            className={deploy.failed ? "pr-deploy is-failed" : "pr-deploy"}
-            title={deployTip(pr.merged_at, deploy)}
-            // The glyph is unseen by assistive tech, and a bare time would
-            // not say what it is the time of.
-            aria-label={
-              deploy.showsTime && deploy.completedAt
-                ? `${deploy.label} ${statusText}`
-                : deploy.label
-            }
-            onClick={() => openUrl(deploy.url).catch(() => {})}
-          >
-            {status}
-          </button>
-        )}
       </span>
+      {deploy && (
+        <button
+          type="button"
+          className={deploy.failed ? "pr-deploy is-failed" : "pr-deploy"}
+          title={deployTip(pr.merged_at, deploy)}
+          // The glyph is unseen by assistive tech, and a bare time would
+          // not say what it is the time of.
+          aria-label={
+            deploy.showsTime && deploy.completedAt
+              ? `${deploy.label} ${statusText}`
+              : deploy.label
+          }
+          onClick={() => openUrl(deploy.url).catch(() => {})}
+        >
+          {status}
+        </button>
+      )}
       {menu.at && (
         <MenuLayer
           at={menu.at}
