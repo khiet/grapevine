@@ -373,14 +373,8 @@ export function formatLastSync(
   return `Synced ${formatUpdated(new Date(ms).toISOString(), now)}`;
 }
 
-// The author as a row names them: in the avatar's label and the row's title.
 const authorLabel = (author: string, bot: boolean) =>
   bot ? `@${author}, bot` : `@${author}`;
-
-/* A row's title names its author, and a native tooltip is inherited by
-   everything inside the row. A control or state that says something of its
-   own takes an empty title, so the author never shows as its tooltip. */
-const NO_INHERITED_TITLE = { title: "" };
 
 // The round author avatar with badged corners, app-icon style: the face says
 // who, the bottom-right square (the repo owner's avatar) says which org, and
@@ -414,7 +408,6 @@ function PrAvatar({
       role="img"
       data-tip={`@${author}`}
       aria-label={authorLabel(author, bot)}
-      {...NO_INHERITED_TITLE}
     >
       <img
         className="pr-avatar"
@@ -487,7 +480,6 @@ function StateView({ state }: { state: RowState }) {
       role="img"
       data-tip={state.all.join("\n")}
       aria-label={state.all.join(", ")}
-      {...NO_INHERITED_TITLE}
     >
       {reason}
       <span className="pr-state-more">{state.more}</span>
@@ -532,8 +524,8 @@ function useFix(row: RowView) {
 /* A row's right-click menu: where it is open, and the handlers that open it.
    `row` goes on the row button, which is where focus returns when the menu
    closes; `item` goes on the li, so a right-click or the context-menu key
-   anywhere in the row opens it. */
-function useRowMenu() {
+   anywhere in the row opens it. A row with no actions has no menu to open. */
+function useRowMenu(hasActions: boolean) {
   const [at, setAt] = useState<Point | null>(null);
   const row = useRef<HTMLButtonElement>(null);
   // For the keyboard, which has no pointer to open the menu at: just inside
@@ -553,6 +545,7 @@ function useRowMenu() {
       onContextMenu: (event: MouseEvent) => {
         // Always, so the webview's own menu never shows over a row.
         event.preventDefault();
+        if (!hasActions) return;
         if ((event.target as Element).closest(".pr-menu")) return;
         // A context menu asked for by key arrives without a pointer position.
         if (event.clientX || event.clientY) {
@@ -562,7 +555,7 @@ function useRowMenu() {
         }
       },
       onKeyDown: (event: KeyboardEvent) => {
-        if (at !== null || !opensMenu(event)) return;
+        if (!hasActions || at !== null || !opensMenu(event)) return;
         event.preventDefault();
         openAtRow();
       },
@@ -589,7 +582,7 @@ const rowClass = (menuOpen: boolean, selected: boolean) =>
    row's metadata line and shown only while the row is hovered or holds
    focus. `confirm` is the action waiting for its confirming click, under the
    words it shows meanwhile, and `status` stands where an action would while
-   it cannot be asked for. */
+   it cannot be asked for. A row with neither has no bar. */
 function ActionBar({
   actions,
   confirm = null,
@@ -601,13 +594,9 @@ function ActionBar({
   status?: string | null;
   onPick: (id: RowActionId) => void;
 }) {
+  if (actions.length === 0 && !status) return null;
   return (
-    <span
-      className="pr-actions"
-      role="group"
-      aria-label="Actions"
-      {...NO_INHERITED_TITLE}
-    >
+    <span className="pr-actions" role="group" aria-label="Actions">
       {status && (
         <span className="pr-action-status" role="status">
           {status}
@@ -621,7 +610,7 @@ function ActionBar({
             key={id}
             type="button"
             className={id === confirm?.id ? "pr-action is-armed" : "pr-action"}
-            title={hint ?? ""}
+            title={hint ?? undefined}
             // The hint is what the label leaves unsaid, so it names the
             // button in full; it starts with the label, as a spoken name
             // must.
@@ -655,19 +644,19 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const unread = pr.unread_count > 0;
   const key = prKey(pr);
   const fix = useFix(row);
-  const menu = useRowMenu();
+  const menu = useRowMenu(row.actions.length > 0);
   // The armed fix under the words it takes until its second click, in the
   // bar and the menu alike.
   const confirm: RowAction | null = fix.armed
     ? { id: "fix", label: "Confirm", hint: CONFIRM_HINT }
     : null;
+  const open = () => {
+    openUrl(pr.url).catch(() => {});
+    // The backend clears the badge and pushes a fresh snapshot.
+    markRead(key).catch(() => {});
+  };
   const run = (id: RowActionId) => {
     switch (id) {
-      case "open":
-        openUrl(pr.url).catch(() => {});
-        // The backend clears the badge and pushes a fresh snapshot.
-        markRead(key).catch(() => {});
-        break;
       case "snooze":
         snooze(key).catch(() => {});
         break;
@@ -683,7 +672,6 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   return (
     <li
       className={rowClass(menu.at !== null, rowKeys.selected)}
-      title={authorLabel(pr.author, botAuthor)}
       // Not while the menu is open: the pointer may be nowhere near a menu
       // opened by key, and the armed item must wait there for its confirm.
       onPointerLeave={menu.at === null ? fix.standDown : undefined}
@@ -694,7 +682,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
         ref={menu.row}
         type="button"
         className={unread ? "pr-row is-unread" : "pr-row"}
-        onClick={() => run("open")}
+        onClick={open}
       >
         <PrAvatar
           avatarUrl={pr.avatar_url}
@@ -788,30 +776,46 @@ function SnoozedGroup({ group }: { group: SnoozedGroupView }) {
   );
 }
 
+// A rocket, for a merged row's deploy status. Inherits the status's colour,
+// so a failed deploy's is red.
+function DeployGlyph() {
+  return (
+    <GlyphSvg strokeWidth={2} size={12}>
+      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+      <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+      <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+    </GlyphSvg>
+  );
+}
+
 /* The deploy status is a control of its own (it opens the workflow run, the
    row opens the PR), so like the action bar it is a sibling of the row
    button, not nested in it, which would be invalid HTML. No mark_read here:
    merged PRs carry no unread state. */
 function MergedRow({ row }: { row: MergedRowView }) {
   const { pr, deploy } = row;
-  const menu = useRowMenu();
+  const menu = useRowMenu(row.actions.length > 0);
+  // A deploy that landed shows when, under the merge time; any other says
+  // where it stands. The glyph is what says "deploy" in either.
+  const landedAt =
+    deploy?.showsTime && deploy.completedAt
+      ? formatUpdated(deploy.completedAt)
+      : null;
   const status = deploy && (
     <>
-      {deploy.label}
-      {deploy.showsTime &&
-        deploy.completedAt &&
-        ` ${formatUpdated(deploy.completedAt)}`}
+      <DeployGlyph />
+      {landedAt ?? deploy.brief}
     </>
   );
+  const open = () => openUrl(pr.url).catch(() => {});
   const run = (id: RowActionId) => {
-    if (id === "open") openUrl(pr.url).catch(() => {});
     if (id === "dismiss") dismissMerged(prKey(pr)).catch(() => {});
   };
   const rowKeys = useRowKeys(prKey(pr), row.actions, run, menu);
   return (
     <li
       className={rowClass(menu.at !== null, rowKeys.selected)}
-      title={authorLabel(pr.author, false)}
       {...menu.item}
       {...rowKeys.item}
     >
@@ -819,7 +823,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
         ref={menu.row}
         type="button"
         className="pr-row"
-        onClick={() => run("open")}
+        onClick={open}
       >
         <PrAvatar
           avatarUrl={pr.avatar_url}
@@ -827,36 +831,44 @@ function MergedRow({ row }: { row: MergedRowView }) {
           author={pr.author}
         />
         <span className="pr-text">
-          <span className="pr-title-row">
+          <span
+            className={status ? "pr-title-row has-deploy" : "pr-title-row"}
+          >
             <span className="pr-title">{pr.title}</span>
-            <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
+            <span className="pr-times">
+              <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
+              {/* Holds the status's place under the merge time, so a
+                  one-line title leaves it room; the real control floats
+                  over this spot. */}
+              {status && (
+                <span className="pr-deploy-space" aria-hidden="true">
+                  {status}
+                </span>
+              )}
+            </span>
           </span>
           <span className="pr-origin">
             <span className="pr-number">#{pr.number}</span>
             <span className="pr-repo">{pr.repo}</span>
-            {/* Holds the status's place in the line so the repo truncates
-                before it; the real control floats over this spot. */}
-            {status && (
-              <span className="pr-deploy-space" aria-hidden="true">
-                {status}
-              </span>
-            )}
           </span>
         </span>
       </button>
       <span className="pr-row-end">
         <ActionBar actions={row.actions} onPick={run} />
-        {deploy && (
-          <button
-            type="button"
-            className={deploy.failed ? "pr-deploy is-failed" : "pr-deploy"}
-            title={deployTip(pr.merged_at, deploy)}
-            onClick={() => openUrl(deploy.url).catch(() => {})}
-          >
-            {status}
-          </button>
-        )}
       </span>
+      {deploy && (
+        <button
+          type="button"
+          className={deploy.failed ? "pr-deploy is-failed" : "pr-deploy"}
+          title={deployTip(pr.merged_at, deploy)}
+          // The glyph is unseen by assistive tech, and a bare time would
+          // not say what it is the time of.
+          aria-label={landedAt ? `${deploy.label} ${landedAt}` : deploy.label}
+          onClick={() => openUrl(deploy.url).catch(() => {})}
+        >
+          {status}
+        </button>
+      )}
       {menu.at && (
         <MenuLayer
           at={menu.at}

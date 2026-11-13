@@ -54,7 +54,7 @@ test("the menu lists each action as a named menu item, in order", () => {
       at: { x: 10, y: 10 },
       items: [
         { id: "snooze", label: "Snooze" },
-        { id: "open", label: "Open" },
+        { id: "dismiss", label: "Dismiss" },
       ],
       onPick: () => {},
       onClose: () => {},
@@ -62,5 +62,5 @@ test("the menu lists each action as a named menu item, in order", () => {
   );
   expect(html).toMatch(/^<div[^>]* role="menu"/);
   const items = [...html.matchAll(/<button[^>]* role="menuitem"[^>]*>([^<]*)</g)];
-  expect(items.map((m) => m[1])).toEqual(["Snooze", "Open"]);
+  expect(items.map((m) => m[1])).toEqual(["Snooze", "Dismiss"]);
 });

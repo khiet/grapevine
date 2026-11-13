@@ -93,6 +93,7 @@ const RUN = "https://github.com/acme/widgets/actions/runs/1";
 test("the deploy tooltip gives the exact local merge and deploy times", () => {
   const tip = deployTip(at(2026, 7, 16, 14, 59).toISOString(), {
     label: "Deployed",
+    brief: "Deployed",
     showsTime: true,
     failed: false,
     completedAt: at(2026, 7, 16, 15, 4).toISOString(),
@@ -104,6 +105,7 @@ test("the deploy tooltip gives the exact local merge and deploy times", () => {
 test("the tooltip of a deploy under way has only the merge time to give", () => {
   const tip = deployTip(at(2026, 1, 2, 9, 5).toISOString(), {
     label: "Deploying",
+    brief: "Deploying",
     showsTime: false,
     failed: false,
     completedAt: null,
@@ -172,13 +174,12 @@ function renderRows(): string[] {
   return html.match(/<li[\s\S]*?<\/li>/g) ?? [];
 }
 
-test("each row carries its author's handle in its title and accessible name", () => {
+test("each row carries its author's handle in its accessible name", () => {
   const [open, merged] = renderRows().filter((li) => li.includes("pr-row"));
   for (const [li, handle] of [
     [open, "@octocat"],
     [merged, "@hubot"],
   ]) {
-    expect(li).toMatch(new RegExp(`^<li[^>]* title="${handle}"`));
     // Inside the row button, so the button's name includes it.
     const button = li.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0];
     expect(button).toContain(`aria-label="${handle}"`);
@@ -253,7 +254,7 @@ test("a row with several states shows one reason and +N, and names them all in i
   expect(row).toContain(
     '<span class="pr-state is-warn pr-tip" role="img"' +
       ' data-tip="Unresolved threads\nChecks running\nApproved"' +
-      ' aria-label="Unresolved threads, Checks running, Approved" title="">' +
+      ' aria-label="Unresolved threads, Checks running, Approved">' +
       '<span class="pr-state-reason">Unresolved threads</span>' +
       '<span class="pr-state-more">+2</span></span>',
   );
@@ -287,18 +288,38 @@ function renderList(
 }
 
 test("each kind of row words its actions in a bar", () => {
-  const [plain, fixable, inAll, merged] = renderList(
+  const [plain, fixable, merged] = renderList(
     [
       openPr,
       { ...openPr, number: 8, can_fix_conflict: true, blocked_reasons: ["conflict"] },
-      { ...openPr, number: 9, section: "all" },
     ],
     [mergedPr],
   );
-  expect(barOf(plain)).toEqual(["Snooze", "Open"]);
-  expect(barOf(fixable)).toEqual(["Snooze", "Fix with Copilot", "Open"]);
-  expect(barOf(inAll)).toEqual(["Open"]);
-  expect(barOf(merged)).toEqual(["Dismiss", "Open"]);
+  expect(barOf(plain)).toEqual(["Snooze"]);
+  expect(barOf(fixable)).toEqual(["Snooze", "Fix with Copilot"]);
+  expect(barOf(merged)).toEqual(["Dismiss"]);
+});
+
+// The status is its own button beside the row button, and what it shows is
+// a glyph and a time, so its name spells out what the time is of.
+test("a deployed row shows a rocket and the deploy time, named in full", () => {
+  const deploy = {
+    state: "deployed" as const,
+    completed_at: at(2026, 7, 11, 12, 0).toISOString(),
+    url: RUN,
+  };
+  const [li] = renderList([], [{ ...mergedPr, deploy }]);
+  const status = li.match(/<button[^>]*class="pr-deploy"[\s\S]*?<\/button>/)?.[0];
+  expect(status).toMatch(/aria-label="Deployed 11 Jul"/);
+  expect(status).toMatch(/<svg[^>]*aria-hidden="true"[\s\S]*<\/svg>11 Jul<\/button>$/);
+});
+
+test("a deploy that has not landed is worded briefly beside the rocket", () => {
+  const deploy = { state: "failed" as const, completed_at: null, url: RUN };
+  const [li] = renderList([], [{ ...mergedPr, deploy }]);
+  const status = li.match(/<button[^>]*class="pr-deploy is-failed"[\s\S]*?<\/button>/)?.[0];
+  expect(status).toMatch(/aria-label="Deploy failed"/);
+  expect(status).toMatch(/<\/svg>Failed<\/button>$/);
 });
 
 // The timestamp is part of the row button, never a control of its own, so a
@@ -329,7 +350,7 @@ test("a row whose Copilot fix is being posted says Asking in place of the fix", 
     new Set(["acme/widgets#7"]),
   );
   expect(li).toContain('<span class="pr-action-status" role="status">Asking</span>');
-  expect(barOf(li)).toEqual(["Snooze", "Open"]);
+  expect(barOf(li)).toEqual(["Snooze"]);
 });
 
 test("the selected row, and only that row, is marked as the selection", () => {
