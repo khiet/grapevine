@@ -839,23 +839,17 @@ function SectionBodyView({ section }: { section: SectionView }) {
   switch (body.kind) {
     case "empty":
       /* Inside the slab, not bare text, so an empty section keeps the shape
-         rows will appear in. Todo says it with a check alone: nothing
-         there is the good outcome, not a gap in the list. */
+         rows will appear in. A grey dash, not a sentence: empty is the
+         ordinary state of a section and has nothing to announce. */
       return (
         <ul>
-          {section.key === YOUR_TURN_KEY ? (
-            <li className="pr-empty pr-empty-clear">
-              <span
-                className="pr-glyph-ok"
-                role="img"
-                aria-label="Nothing is waiting on you"
-              >
-                <Check />
-              </span>
-            </li>
-          ) : (
-            <li className="pr-empty">Nothing to wine about</li>
-          )}
+          <li className="pr-empty">
+            <span role="img" aria-label="No pull requests">
+              <GlyphSvg strokeWidth={2}>
+                <path d="M7 12h10" />
+              </GlyphSvg>
+            </span>
+          </li>
         </ul>
       );
     case "rows":

@@ -201,7 +201,7 @@ test("Todo has a heading and no collapse toggle; the other sections keep theirs"
   expect(mine).toContain("aria-expanded");
 });
 
-test("an empty Todo shows a named check; other empty sections keep their line", () => {
+test("an empty section shows a dash named for assistive tech, in Todo as elsewhere", () => {
   const { content } = derivePopover(
     { ...EMPTY_SNAPSHOT, has_synced: true },
     "",
@@ -211,8 +211,11 @@ test("an empty Todo shows a named check; other empty sections keep their line", 
   const html = renderToStaticMarkup(
     createElement(PrList, { view: content as ListView, onToggle: () => {} }),
   );
-  const [waiting, mine] = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
-  expect(waiting).toContain('aria-label="Nothing is waiting on you"');
-  expect(waiting).toContain("<svg");
-  expect(mine).toContain("Nothing to wine about");
+  const sections = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+  expect(sections).toHaveLength(4);
+  for (const section of sections) {
+    expect(section).toMatch(
+      /<li class="pr-empty"><span role="img" aria-label="No pull requests"><svg/,
+    );
+  }
 });

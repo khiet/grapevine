@@ -353,16 +353,12 @@ body {
 }
 
 /* Row-height padding so the empty slab matches a one-row section's shape. */
+/* Centred: the dash stands in for a line of text. */
 .pr-empty {
-  padding: 13px 11px;
-  color: var(--text-2);
-  font-size: var(--text-m);
-}
-
-/* The check of an empty Todo, centred since it stands in for a sentence. */
-.pr-empty-clear {
   display: flex;
   justify-content: center;
+  padding: 13px 11px;
+  color: var(--text-2);
 }
 
 .pr-row {
