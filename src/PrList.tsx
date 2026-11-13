@@ -278,6 +278,9 @@ function StateView({ state }: { state: RowState }) {
   );
 }
 
+// What the bare "Confirm" of an armed fix is confirming.
+const CONFIRM_HINT = "Confirm: ask Copilot to fix the conflict";
+
 // How long an armed fix waits for its second click before standing down.
 const FIX_CONFIRM_MS = 4000;
 
@@ -396,9 +399,12 @@ function ActionBar({
           type="button"
           className={id === armed ? "pr-action is-armed" : "pr-action"}
           title={hint ?? ""}
+          // The hint is what the label leaves unsaid, so it names the button
+          // in full; it starts with the label, as a spoken name must.
+          aria-label={hint ?? undefined}
           onClick={() => onPick(id)}
         >
-          {id === armed ? "Confirm" : label}
+          {label}
         </button>
       ))}
     </span>
@@ -413,6 +419,11 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const fix = useFix(row);
   const menu = useRowMenu();
   const armed = fix.armed ? "fix" : null;
+  // The bar and the menu show the same actions under the same words, so the
+  // armed fix is reworded once, here, for both.
+  const actions = row.actions.map((action) =>
+    action.id === armed ? { ...action, label: "Confirm", hint: CONFIRM_HINT } : action,
+  );
   const run = (id: RowActionId) => {
     switch (id) {
       case "open":
@@ -486,7 +497,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       </button>
       <span className="pr-row-end">
         <ActionBar
-          actions={row.actions}
+          actions={actions}
           armed={armed}
           status={row.fix === "posting" ? "Asking" : null}
           onPick={run}
@@ -495,10 +506,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       {menu.at && (
         <MenuLayer
           at={menu.at}
-          items={row.actions.map(({ id, label }) => ({
-            id,
-            label: id === armed ? "Confirm" : label,
-          }))}
+          items={actions}
           onPick={(id) => {
             run(id);
             // The pick that arms the fix leaves the menu up for its confirm.

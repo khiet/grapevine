@@ -323,9 +323,9 @@ test("Merged follows the PR sections while it holds rows", () => {
   const mergedSection = section(view, "merged");
   expect(mergedSection.label).toBe("Merged");
   expect(mergedSection.count).toBe(2);
-  expect(mergedSection.body).toMatchObject({
+  expect(mergedSection.body).toEqual({
     kind: "merged",
-    rows: merged.map((pr) => ({ pr, deploy: null })),
+    rows: merged.map((pr) => ({ pr, deploy: null, actions: expect.any(Array) })),
   });
 });
 
@@ -442,9 +442,9 @@ test("a filter force-expands collapsed sections and keeps only matching rows", (
     ["merged", 1, true],
   ]);
   expect(numbers(view, "mine")).toEqual([42]);
-  expect(section(view, "merged").body).toMatchObject({
+  expect(section(view, "merged").body).toEqual({
     kind: "merged",
-    rows: [{ pr: FILTER_FIXTURE.merged[0], deploy: null }],
+    rows: [{ pr: FILTER_FIXTURE.merged[0], deploy: null, actions: expect.any(Array) }],
   });
   expect(view.canToggle).toBe(false);
 });

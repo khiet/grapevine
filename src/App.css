@@ -361,6 +361,9 @@ body {
    the hover highlight and the hairline so they span all of them. */
 .pr-row-split {
   position: relative;
+  /* A stacking context of its own, so the timestamp's lift (see .pr-updated)
+     stays inside the row and never climbs over a sticky section header. */
+  z-index: 0;
   display: flex;
   align-items: stretch;
 }
@@ -391,10 +394,12 @@ body {
 
 /* What floats over the end of the row's metadata line: the action bar, and
    after it a merged row's deploy status. On the last line, never the first,
-   so nothing here is ever over the timestamp: a click on the time always
-   lands on the row button and opens the PR. The offsets track .pr-row's
-   padding (bottom 9px, right 11px): `bottom` centres the 24px bar on the
-   metadata line, which is what keeps the deploy status on its placeholder. */
+   so the timestamp stays in view, and .pr-updated is stacked above this
+   where their boxes touch: a click on the time always lands on the row
+   button and opens the PR. `right` is .pr-row's right
+   padding. `bottom` is what centres the 24px bar on the metadata line (16px
+   tall, above .pr-row's 9px bottom padding), and so keeps the deploy status
+   on its placeholder. */
 .pr-row-end {
   position: absolute;
   bottom: 4px;
@@ -687,7 +692,12 @@ body {
   font-weight: 700;
 }
 
+/* Lifted above the row's floating controls: on a row with a one-line title
+   the action bar's top edge reaches the timestamp's box, and where the two
+   meet the click must be the timestamp's, which opens the PR. */
 .pr-updated {
+  position: relative;
+  z-index: 1;
   font-size: var(--text-s);
   color: var(--text-2);
   white-space: nowrap;

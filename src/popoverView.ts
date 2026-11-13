@@ -281,7 +281,7 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
 // already requested, and on a snoozed row: that one was put out of the way,
 // and waking it is the only thing it offers. A request on its way shows in
 // the offer's place.
-function fixControl(
+function fixState(
   pr: PullRequest,
   snooze: Snooze,
   fixesPosting: FixesPosting,
@@ -321,7 +321,7 @@ function rowView(
   snooze: Snooze,
   fixesPosting: FixesPosting,
 ): RowView {
-  const fix = fixControl(pr, snooze, fixesPosting);
+  const fix = fixState(pr, snooze, fixesPosting);
   return {
     pr,
     draft: pr.is_draft,

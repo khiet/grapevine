@@ -172,14 +172,19 @@ test("the list has no top padding for rows to show through", () => {
 
 // What floats over a row (the action bar, a merged row's deploy status) is
 // out of the flow, so it takes no width from the title, and hangs from the
-// row's foot, so it is never over the timestamp on the first line.
-test("the row's floating controls sit on its last line, clear of the timestamp", () => {
+// row's foot, away from the timestamp on the first line. Where the two boxes
+// still touch (a one-line title), the timestamp is stacked on top, so the
+// click there is the row's. The row is its own stacking context so that lift
+// cannot reach the sticky section headers.
+test("the row's floating controls sit on its last line, under the timestamp", () => {
   const end = ruleFor(".pr-row-end");
   expect(end.get("position")).toBe("absolute");
   expect(end.has("bottom")).toBe(true);
-  expect(end.has("top")).toBe(false);
-  expect(ruleFor(".pr-actions").has("position")).toBe(false);
-  expect(ruleFor(".pr-deploy").has("position")).toBe(false);
+  expect(end.has("z-index")).toBe(false);
+  const stamp = ruleFor(".pr-updated");
+  expect(stamp.get("position")).toBe("relative");
+  expect(stamp.get("z-index")).toBe("1");
+  expect(ruleFor(".pr-row-split").get("z-index")).toBe("0");
 });
 
 // The timestamp is where a click opens the PR. No state of the row may take

@@ -99,12 +99,29 @@ function RowMenu({
   // Read through a ref so the listeners below are set once per menu, not
   // once per render of the row.
   const close = useRef(onClose);
-  close.current = onClose;
+  useEffect(() => {
+    close.current = onClose;
+  });
   useEffect(() => {
     const outside = (event: Event) => {
       if (!menu.current?.contains(event.target as Node)) close.current(false);
     };
     const gone = () => close.current(false);
+    // On the document, not on the items: an item can leave while it holds
+    // focus (the row stops offering the action), which drops focus to the
+    // body, and the keys must still work from there.
+    const key = (event: KeyboardEvent) => {
+      const buttons = [...(menu.current?.querySelectorAll("button") ?? [])];
+      const focused = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      // With no item focused, Down starts at the first and Up at the last.
+      const index = focused === -1 && event.key === "ArrowUp" ? 0 : focused;
+      const result = menuKey(event.key, index, buttons.length);
+      if (result === null) return;
+      event.preventDefault();
+      if (result === "close") close.current(true);
+      else buttons[result.focus]?.focus();
+    };
+    document.addEventListener("keydown", key);
     document.addEventListener("pointerdown", outside);
     // Fixed to the window, the menu would stay put while its row scrolled
     // away; capture, because scroll does not bubble out of the list.
@@ -113,6 +130,7 @@ function RowMenu({
     // The popover hides when it loses focus, and must not reopen on a menu.
     window.addEventListener("blur", gone);
     return () => {
+      document.removeEventListener("keydown", key);
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("scroll", gone, true);
       window.removeEventListener("resize", gone);
@@ -127,22 +145,13 @@ function RowMenu({
       role="menu"
       style={{ left: placed.x, top: placed.y }}
     >
-      {items.map((item, index) => (
+      {items.map((item) => (
         <button
           key={item.id}
           type="button"
           role="menuitem"
           className="pr-menu-item"
           onClick={() => onPick(item.id)}
-          onKeyDown={(event) => {
-            const result = menuKey(event.key, index, items.length);
-            if (result === null) return;
-            event.preventDefault();
-            // The row listens for keys too, and would act on these.
-            event.stopPropagation();
-            if (result === "close") onClose(true);
-            else menu.current?.querySelectorAll("button")[result.focus]?.focus();
-          }}
         >
           {item.label}
         </button>
