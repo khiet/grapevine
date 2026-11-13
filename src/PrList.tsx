@@ -816,7 +816,7 @@ function SectionHeader({
   );
 }
 
-/* The heading of Waiting: the same label and count as a SectionHeader,
+/* The heading of Todo: the same label and count as a SectionHeader,
    with no button around them, since the section is always open. */
 function PinnedHeader({ label, count }: { label: string; count: number }) {
   return (
@@ -839,7 +839,7 @@ function SectionBodyView({ section }: { section: SectionView }) {
   switch (body.kind) {
     case "empty":
       /* Inside the slab, not bare text, so an empty section keeps the shape
-         rows will appear in. Waiting says it with a check alone: nothing
+         rows will appear in. Todo says it with a check alone: nothing
          there is the good outcome, not a gap in the list. */
       return (
         <ul>

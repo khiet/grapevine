@@ -185,7 +185,7 @@ test("each row carries its author's handle in its title and accessible name", ()
   }
 });
 
-test("Waiting has a heading and no collapse toggle; the other sections keep theirs", () => {
+test("Todo has a heading and no collapse toggle; the other sections keep theirs", () => {
   const { content } = derivePopover(
     { ...EMPTY_SNAPSHOT, has_synced: true, prs: [{ ...openPr, turn: "yours" }] },
     "",
@@ -196,12 +196,12 @@ test("Waiting has a heading and no collapse toggle; the other sections keep thei
     createElement(PrList, { view: content as ListView, onToggle: () => {} }),
   );
   const [yours, mine] = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
-  expect(yours).toMatch(/<h2[^>]*>.*Waiting/);
+  expect(yours).toMatch(/<h2[^>]*>.*Todo/);
   expect(yours).not.toContain("aria-expanded");
   expect(mine).toContain("aria-expanded");
 });
 
-test("an empty Waiting shows a named check; other empty sections keep their line", () => {
+test("an empty Todo shows a named check; other empty sections keep their line", () => {
   const { content } = derivePopover(
     { ...EMPTY_SNAPSHOT, has_synced: true },
     "",

@@ -225,7 +225,7 @@ pub struct PullRequest {
     pub ready_to_merge: bool,
     /// Whose move the PR waits on (see [`turn_for`]); `None` when there is no
     /// verdict, always so on a draft and in All. A your-turn row sits in the
-    /// Waiting section, tints its mark and is what the tray counts. Same
+    /// Todo section, tints its mark and is what the tray counts. Same
     /// property-not-event rule as `blocked_reasons`: it never reaches an
     /// unread badge.
     pub turn: Option<Turn>,

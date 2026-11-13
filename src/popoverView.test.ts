@@ -108,7 +108,7 @@ function rows(view: ListView, key: SectionView["key"]): RowView[] {
   return body.rows;
 }
 
-// The single row of a snapshot holding just this PR, from Waiting when it
+// The single row of a snapshot holding just this PR, from Todo when it
 // waits on the viewer and from Mine otherwise.
 const rowFor = (only: PullRequest): RowView =>
   rows(
@@ -335,10 +335,10 @@ test("the merge queue tooltip states the position as an English ordinal", () => 
   expect(tip(22)).toBe("22nd in merge queue");
 });
 
-test("with no filter Waiting, Mine, Participated and All are present even when empty", () => {
+test("with no filter Todo, Mine, Participated and All are present even when empty", () => {
   const view = list(synced({ prs: [pr({ section: "participated" })] }));
   expect(view.sections.map((s) => [s.key, s.label, s.count])).toEqual([
-    ["yours", "Waiting", 0],
+    ["yours", "Todo", 0],
     ["mine", "Mine", 0],
     ["participated", "Participated", 1],
     ["all", "All", 0],
@@ -505,7 +505,7 @@ test("multiple terms are AND'd across the searchable fields", () => {
 });
 
 // A whitespace-only query matches everything, so it must not force-expand or
-// drop the empty sections either. Waiting is open whatever is stored: it
+// drop the empty sections either. Todo is open whatever is stored: it
 // has no collapse state.
 test("a whitespace-only query is no filter at all", () => {
   for (const query of ["", "   ", "\t \n"]) {
@@ -881,7 +881,7 @@ test("a row with a requested fix shows the Copilot fixing mark beside its confli
   expect(row.fix).toBeNull();
 });
 
-test("a row with a requested fix leaves Waiting and the your-turn count", () => {
+test("a row with a requested fix leaves Todo and the your-turn count", () => {
   const snapshot = synced({
     prs: [
       fixing({ number: 1 }),
@@ -929,10 +929,10 @@ const YOUR_TURN_FIXTURE = synced({
   ],
 });
 
-test("Waiting leads the list and holds every row waiting on the viewer, in the order sent", () => {
+test("Todo leads the list and holds every row waiting on the viewer, in the order sent", () => {
   const view = list(YOUR_TURN_FIXTURE);
   expect(view.sections.map((s) => [s.key, s.label, s.count])).toEqual([
-    ["yours", "Waiting", 3],
+    ["yours", "Todo", 3],
     ["mine", "Mine", 1],
     ["participated", "Participated", 0],
     ["all", "All", 1],
@@ -940,7 +940,7 @@ test("Waiting leads the list and holds every row waiting on the viewer, in the o
   expect(numbers(view, "yours")).toEqual([1, 3, 4]);
 });
 
-test("a row in Waiting appears in no other section, and the other counts leave it out", () => {
+test("a row in Todo appears in no other section, and the other counts leave it out", () => {
   const view = list(YOUR_TURN_FIXTURE);
   expect(numbers(view, "mine")).toEqual([2]);
   expect(section(view, "participated").body).toEqual({ kind: "empty" });
@@ -949,7 +949,7 @@ test("a row in Waiting appears in no other section, and the other counts leave i
   expect(body.groups.flatMap((g) => g.rows.map((row) => row.pr.number))).toEqual([5]);
 });
 
-test("with no filter the Waiting count is the tray number", () => {
+test("with no filter the Todo count is the tray number", () => {
   for (const [snapshot, tray] of [
     [YOUR_TURN_FIXTURE, 3],
     [SNOOZE_FIXTURE, 1],
@@ -971,7 +971,7 @@ test("a snoozed your-turn row stays in its home section's fold until it is woken
   expect(yourTurnCount(woken)).toBe(2);
 });
 
-test("a row in Waiting keeps the snooze control of its home section", () => {
+test("a row in Todo keeps the snooze control of its home section", () => {
   expect(rows(list(YOUR_TURN_FIXTURE), "yours").map((row) => row.snooze)).toEqual([
     "offer",
     "offer",
@@ -979,20 +979,20 @@ test("a row in Waiting keeps the snooze control of its home section", () => {
   ]);
 });
 
-test("a filter narrows Waiting to its matches and counts only those", () => {
+test("a filter narrows Todo to its matches and counts only those", () => {
   const view = list(YOUR_TURN_FIXTURE, "review");
   expect(view.sections.map((s) => [s.key, s.count])).toEqual([["yours", 1]]);
   expect(numbers(view, "yours")).toEqual([3]);
 });
 
-test("a filter that matches nothing in Waiting hides it", () => {
+test("a filter that matches nothing in Todo hides it", () => {
   const view = list(YOUR_TURN_FIXTURE, "quiet");
   expect(view.sections.map((s) => [s.key, s.count])).toEqual([["mine", 1]]);
 });
 
-// The row shows its own badge in Waiting, so its home section's collapsed
+// The row shows its own badge in Todo, so its home section's collapsed
 // header must not count the same unread again.
-test("a collapsed section's unread badge leaves out rows moved to Waiting", () => {
+test("a collapsed section's unread badge leaves out rows moved to Todo", () => {
   const snapshot = synced({
     prs: [
       pr({ number: 1, unread_count: 2 }),
