@@ -278,7 +278,11 @@ function SettingsView() {
               autoComplete="off"
               spellCheck={false}
             />
-            <button type="submit" disabled={tokenBusy || tokenInput.trim() === ""}>
+            <button
+              type="submit"
+              className="button-primary"
+              disabled={tokenBusy || tokenInput.trim() === ""}
+            >
               {tokenBusy ? "Checking…" : "Save"}
             </button>
           </form>
@@ -294,8 +298,9 @@ function SettingsView() {
               Create one on GitHub
             </button>
             . <strong>repo</strong> grants read and write access to all your
-            private repositories; Grapevine only ever reads. If you watch
-            public repositories only, <strong>public_repo</strong> is enough.
+            private repositories. Grapevine only reads, except that Fix with
+            Copilot posts one comment when you confirm it. If you watch public
+            repositories only, <strong>public_repo</strong> is enough.
           </p>
         </div>
         {tokenError && <p className="settings-error">{tokenError}</p>}
@@ -375,6 +380,7 @@ function SettingsView() {
               />
               <button
                 type="submit"
+                className="button-primary"
                 disabled={repoBusy || repoInput.trim() === ""}
               >
                 {repoBusy ? "Checking…" : "Add"}
@@ -426,6 +432,7 @@ function SettingsView() {
             <span>Grapevine {appVersion && `v${appVersion}`}</span>
             <button
               type="button"
+              className="button-secondary"
               disabled={
                 updateState.phase === "checking" ||
                 updateState.phase === "downloading"

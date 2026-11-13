@@ -8,7 +8,11 @@ import {
 } from "./backend";
 import { useFixesPosting } from "./fixConflict";
 import { derivePopover } from "./popoverView";
-import PrList, { formatLastSync, useCollapsedSections } from "./PrList";
+import PrList, {
+  GlyphSvg,
+  formatLastSync,
+  useCollapsedSections,
+} from "./PrList";
 import SettingsView from "./SettingsView";
 import {
   restartLabel,
@@ -17,8 +21,69 @@ import {
   useUpdateState,
 } from "./updater";
 
+type View = "list" | "settings";
+
+/** The header's buttons: Done inside Settings, otherwise the two icon
+ * buttons. `onShow` is handed the view a click asks for. */
+export function HeaderActions({
+  inSettings,
+  offerMarkAllRead,
+  onShow,
+}: {
+  inSettings: boolean;
+  offerMarkAllRead: boolean;
+  onShow: (view: View) => void;
+}) {
+  if (inSettings) {
+    return (
+      <button
+        type="button"
+        className="settings-link"
+        onClick={() => onShow("list")}
+      >
+        Done
+      </button>
+    );
+  }
+  return (
+    <>
+      {/* Always in the header, so the buttons never shift: the dot says
+          there is something to mark, and without it the button has nothing
+          to do. */}
+      <button
+        type="button"
+        className="header-icon pr-tip"
+        data-tip="Mark all read"
+        aria-label="Mark all read"
+        disabled={!offerMarkAllRead}
+        onClick={() => markAllRead().catch(() => {})}
+      >
+        <GlyphSvg strokeWidth={2} size={16}>
+          <path d="m2 13 4 4L15 7" />
+          <path d="m11 16 1.5 1.5L22 7" />
+        </GlyphSvg>
+        {offerMarkAllRead && <span className="header-dot" aria-hidden="true" />}
+      </button>
+      <button
+        type="button"
+        className="header-icon pr-tip"
+        data-tip="Settings"
+        aria-label="Settings"
+        onClick={() => onShow("settings")}
+      >
+        <GlyphSvg strokeWidth={2} size={16}>
+          {/* A toothed gear, not a ring of rays: rays read as a sun, which
+              the list already uses for Wake. */}
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+          <circle cx="12" cy="12" r="3" />
+        </GlyphSvg>
+      </button>
+    </>
+  );
+}
+
 function App() {
-  const [view, setView] = useState<"list" | "settings">("list");
+  const [view, setView] = useState<View>("list");
   const [filter, setFilter] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const inSettings = view === "settings";
@@ -76,22 +141,11 @@ function App() {
           </div>
         )}
         <span className="header-actions">
-          {!inSettings && offerMarkAllRead && (
-            <button
-              type="button"
-              className="settings-link"
-              onClick={() => markAllRead().catch(() => {})}
-            >
-              Mark all read
-            </button>
-          )}
-          <button
-            type="button"
-            className="settings-link"
-            onClick={() => setView(inSettings ? "list" : "settings")}
-          >
-            {inSettings ? "Done" : "Settings"}
-          </button>
+          <HeaderActions
+            inSettings={inSettings}
+            offerMarkAllRead={offerMarkAllRead}
+            onShow={setView}
+          />
         </span>
       </header>
       {/* Above the body in both views: an update staged by a background check

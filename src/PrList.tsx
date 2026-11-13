@@ -144,6 +144,15 @@ export function formatLastSync(
   return `Synced ${formatUpdated(new Date(ms).toISOString(), now)}`;
 }
 
+// The author as a row names them: in the avatar's label and the row's title.
+const authorLabel = (author: string, bot: boolean) =>
+  bot ? `@${author}, bot` : `@${author}`;
+
+/* A row's title names its author, and a native tooltip is inherited by
+   everything inside the row. A control or mark that says something of its
+   own takes an empty title, so the author never shows as its tooltip. */
+const NO_INHERITED_TITLE = { title: "" };
+
 // The round author avatar with badged corners, app-icon style: the face says
 // who, the bottom-right square (the repo owner's avatar) says which org, and
 // the top-right red counter says how much is new. Opposite corners keep the
@@ -168,12 +177,15 @@ function PrAvatar({
     <span
       /* The author's name lives here as a hover reveal, not in the metadata
          line: the face already says who, so spelling the handle out on every
-         row bought little. pr-tip-right because the avatar sits at the card's
-         left edge, where the default leftward bubble would clip. */
+         row bought little. The aria-label is what puts the handle in the
+         accessible name of the row button around it. pr-tip-right because
+         the avatar sits at the card's left edge, where the default leftward
+         bubble would clip. */
       className="pr-avatar-wrap pr-tip pr-tip-right"
       role="img"
       data-tip={`@${author}`}
-      aria-label={bot ? `@${author}, bot` : `@${author}`}
+      aria-label={authorLabel(author, bot)}
+      {...NO_INHERITED_TITLE}
     >
       <img
         className="pr-avatar"
@@ -236,7 +248,13 @@ function RowMark({
     "pr-tip",
   ].join(" ");
   return (
-    <span className={className} role="img" data-tip={tip} aria-label={tip}>
+    <span
+      className={className}
+      role="img"
+      data-tip={tip}
+      aria-label={tip}
+      {...NO_INHERITED_TITLE}
+    >
       {children}
     </span>
   );
@@ -246,8 +264,8 @@ function RowMark({
 // grid and scaled down to their rendered size. Square at `size` unless
 // `width` narrows it (the direction arrow). Hidden from assistive tech in
 // all uses: the enclosing element carries the label (RowMark's aria-label,
-// the section toggle's text).
-function GlyphSvg({
+// the section toggle's text, a header icon button's aria-label).
+export function GlyphSvg({
   strokeWidth,
   size = 13,
   width = size,
@@ -416,6 +434,7 @@ function MarkView({ mark }: { mark: Mark }) {
           role="img"
           data-tip={mark.tip}
           aria-label={mark.tip}
+          {...NO_INHERITED_TITLE}
         >
           {mark.label}
         </span>
@@ -436,6 +455,7 @@ function MarkView({ mark }: { mark: Mark }) {
           role="img"
           data-tip={mark.tip}
           aria-label={mark.tip}
+          {...NO_INHERITED_TITLE}
         >
           {mark.label}
         </span>
@@ -477,6 +497,7 @@ function SnoozeControl({ row }: { row: RowView }) {
       className="pr-snooze pr-tip"
       data-tip={label}
       aria-label={label}
+      {...NO_INHERITED_TITLE}
       onClick={() => (parked ? wake(key) : snooze(key)).catch(() => {})}
     >
       {parked ? <Sun /> : <Moon />}
@@ -526,6 +547,7 @@ function useFixControl(row: RowView) {
         type="button"
         className="pr-fix is-armed"
         aria-label="Confirm: ask Copilot to fix the conflict"
+        {...NO_INHERITED_TITLE}
         onClick={click}
       >
         Confirm
@@ -536,6 +558,7 @@ function useFixControl(row: RowView) {
         className="pr-fix pr-tip"
         data-tip="Fix with Copilot"
         aria-label="Fix with Copilot"
+        {...NO_INHERITED_TITLE}
         onClick={click}
       >
         <Wrench />
@@ -570,6 +593,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   return (
     <li
       className={row.snooze === null ? undefined : "pr-row-split"}
+      title={authorLabel(pr.author, botAuthor)}
       onPointerLeave={fix.standDown}
     >
       <button
@@ -672,7 +696,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
     </>
   );
   return (
-    <li className="pr-row-split">
+    <li className="pr-row-split" title={authorLabel(pr.author, false)}>
       <span className="pr-row-main">
         <button
           type="button"
@@ -717,6 +741,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
         type="button"
         className="pr-dismiss"
         aria-label="Dismiss"
+        {...NO_INHERITED_TITLE}
         onClick={() =>
           dismissMerged(prKey(pr)).catch(() => {})
         }

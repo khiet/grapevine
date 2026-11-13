@@ -1,5 +1,9 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
-import {
+import { EMPTY_SNAPSHOT, type MergedPr, type PullRequest } from "./backend";
+import { derivePopover, type ListView } from "./popoverView";
+import PrList, {
   DEFAULT_COLLAPSED,
   deployTip,
   formatLastSync,
@@ -106,4 +110,77 @@ test("the tooltip of a deploy under way has only the merge time to give", () => 
     url: RUN,
   });
   expect(tip).toBe("Merged 2 Jan 2026, 09:05\nDeploying");
+});
+
+// The rendered markup is the seam for what assistive tech is handed: the
+// author's handle has to be in each row's accessible name, which a button
+// computes from its content, and in the row's title.
+const openPr = {
+  number: 7,
+  title: "Fix the thing",
+  url: "https://github.com/acme/widgets/pull/7",
+  repo: "acme/widgets",
+  author: "octocat",
+  author_is_bot: false,
+  avatar_url: "",
+  owner_avatar_url: "",
+  created_at: "2026-07-10T12:00:00Z",
+  updated_at: "2026-07-11T09:30:00Z",
+  section: "participated",
+  blocked_reasons: [],
+  is_draft: false,
+  review_requested: false,
+  team_review_requested: false,
+  awaiting_review: false,
+  approved: false,
+  merge_queue_position: null,
+  failing_checks: [],
+  failing_checks_truncated: false,
+  checks_running: false,
+  auto_merge: false,
+  ready_to_merge: false,
+  turn: null,
+  turn_since: null,
+  can_fix_conflict: false,
+  fix_requested: false,
+  unread_count: 0,
+  bot_unread_count: 0,
+} satisfies PullRequest;
+
+const mergedPr = {
+  number: 90,
+  title: "Ship the release notes",
+  url: "https://github.com/acme/widgets/pull/90",
+  repo: "acme/widgets",
+  author: "hubot",
+  avatar_url: "",
+  owner_avatar_url: "",
+  merged_at: "2026-07-11T09:30:00Z",
+  deploy: null,
+} satisfies MergedPr;
+
+function renderRows(): string[] {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [openPr], merged: [mergedPr] },
+    "",
+    { ...DEFAULT_COLLAPSED },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  return html.match(/<li[\s\S]*?<\/li>/g) ?? [];
+}
+
+test("each row carries its author's handle in its title and accessible name", () => {
+  const [open, merged] = renderRows().filter((li) => li.includes("pr-row"));
+  for (const [li, handle] of [
+    [open, "@octocat"],
+    [merged, "@hubot"],
+  ]) {
+    expect(li).toMatch(new RegExp(`^<li[^>]* title="${handle}"`));
+    // Inside the row button, so the button's name includes it.
+    const button = li.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0];
+    expect(button).toContain(`aria-label="${handle}"`);
+  }
 });

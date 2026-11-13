@@ -157,6 +157,42 @@ test("one focus ring serves every control", () => {
   expect(recoloured.map((r) => r.selector)).toEqual([".update-banner"]);
 });
 
+const ruleFor = (selector: string) => {
+  const found = styleRules.filter((r) => r.selector === selector);
+  expect(found, selector).toHaveLength(1);
+  return new Map(declarations(found[0].body));
+};
+
+// A sticky header pins at the scroller's padding edge, so any top padding on
+// the list is a strip where scrolled rows show above the header.
+test("the list has no top padding for rows to show through", () => {
+  expect(ruleFor(".pr-list").get("padding")).toMatch(/^0 /);
+  expect(ruleFor(".pr-section-header").get("top")).toBe("0");
+});
+
+// In the flow it would reserve a column and push merged timestamps off the
+// right edge the other sections share.
+test("the merged dismiss button is out of the row's flow", () => {
+  const positions = styleRules
+    .filter((r) => r.selector.split(",").some((s) => s.trim() === ".pr-dismiss"))
+    .flatMap((r) => declarations(r.body))
+    .filter(([name]) => name === "position")
+    .map(([, value]) => value);
+  expect(positions).toEqual(["absolute"]);
+});
+
+test("the header icon buttons are 28px square", () => {
+  const icon = ruleFor(".header-icon");
+  expect(icon.get("width")).toBe("28px");
+  expect(icon.get("height")).toBe("28px");
+});
+
+test("the waiting label is accent-coloured and bold", () => {
+  const label = ruleFor(".pr-title-row.is-waiting .pr-updated");
+  expect(label.get("color")).toBe("var(--accent)");
+  expect(label.get("font-weight")).toBe("700");
+});
+
 // --- Contrast -------------------------------------------------------------
 
 type Rgba = [number, number, number, number];
