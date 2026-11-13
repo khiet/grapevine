@@ -99,3 +99,29 @@ test("a choice the backend refuses changes nothing on screen", async () => {
   await expect(appearance.choose("dark")).rejects.toBe("disk full");
   expect(shown[shown.length - 1]).toBe("light");
 });
+
+// A settings file that cannot be read must not leave the popover unthemed.
+test("settings that cannot be read leave the popover on the desktop's style", async () => {
+  setAdapter({
+    ...tauriAdapter,
+    invoke: async () => {
+      throw "settings.json is corrupt";
+    },
+  });
+  const { host, shown, switchTo } = desktop(true);
+  await createAppearance(host).start();
+  expect(shown[shown.length - 1]).toBe("dark");
+  switchTo("light");
+  expect(shown[shown.length - 1]).toBe("light");
+});
+
+// React's StrictMode mounts the app twice in development.
+test("starting twice follows the desktop once", async () => {
+  useFakeBackend();
+  const { host, shown, switchTo } = desktop(false);
+  const appearance = createAppearance(host);
+  await Promise.all([appearance.start(), appearance.start()]);
+  const before = shown.length;
+  switchTo("dark");
+  expect(shown.slice(before)).toEqual(["dark"]);
+});
