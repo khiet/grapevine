@@ -95,24 +95,28 @@ function list(
   return content;
 }
 
-function section(view: ListView, key: SectionKey): SectionView {
+function section(view: ListView, key: SectionView["key"]): SectionView {
   const found = view.sections.find((s) => s.key === key);
   if (!found) throw new Error(`no ${key} section`);
   return found;
 }
 
 // The PR rows of a flat section; fails on a grouped, merged or empty body.
-function rows(view: ListView, key: SectionKey): RowView[] {
+function rows(view: ListView, key: SectionView["key"]): RowView[] {
   const { body } = section(view, key);
   if (body.kind !== "rows") throw new Error(`${key} body is ${body.kind}`);
   return body.rows;
 }
 
-// The single row of a snapshot holding just this PR.
+// The single row of a snapshot holding just this PR, from Your turn when it
+// waits on the viewer and from Mine otherwise.
 const rowFor = (only: PullRequest): RowView =>
-  rows(list(synced({ prs: [only] })), "mine")[0];
+  rows(
+    list(synced({ prs: [only] })),
+    only.turn === "yours" ? "yours" : "mine",
+  )[0];
 
-const numbers = (view: ListView, key: SectionKey) =>
+const numbers = (view: ListView, key: SectionView["key"]) =>
   rows(view, key).map((row) => row.pr.number);
 
 test("marks run approved check, review glyph, merge queue mark, blocked pills", () => {
@@ -331,13 +335,15 @@ test("the merge queue tooltip states the position as an English ordinal", () => 
   expect(tip(22)).toBe("22nd in merge queue");
 });
 
-test("with no filter Mine, Participated and All are present even when empty", () => {
+test("with no filter Your turn, Mine, Participated and All are present even when empty", () => {
   const view = list(synced({ prs: [pr({ section: "participated" })] }));
   expect(view.sections.map((s) => [s.key, s.label, s.count])).toEqual([
+    ["yours", "Your turn", 0],
     ["mine", "Mine", 0],
     ["participated", "Participated", 1],
     ["all", "All", 0],
   ]);
+  expect(section(view, "yours").body).toEqual({ kind: "empty" });
   expect(section(view, "mine").body).toEqual({ kind: "empty" });
   expect(section(view, "all").body).toEqual({ kind: "empty" });
 });
@@ -346,6 +352,7 @@ test("Merged follows the PR sections while it holds rows", () => {
   const merged = [mergedPr({ number: 90 }), mergedPr({ number: 91 })];
   const view = list(synced({ merged }));
   expect(view.sections.map((s) => s.key)).toEqual([
+    "yours",
     "mine",
     "participated",
     "all",
@@ -498,11 +505,13 @@ test("multiple terms are AND'd across the searchable fields", () => {
 });
 
 // A whitespace-only query matches everything, so it must not force-expand or
-// drop the empty sections either.
+// drop the empty sections either. Your turn is open whatever is stored: it
+// has no collapse state.
 test("a whitespace-only query is no filter at all", () => {
   for (const query of ["", "   ", "\t \n"]) {
     const view = list(FILTER_FIXTURE, query, ALL_COLLAPSED);
     expect(view.sections.map((s) => [s.key, s.count, s.expanded])).toEqual([
+      ["yours", 0, true],
       ["mine", 2, false],
       ["participated", 1, false],
       ["all", 0, false],
@@ -566,6 +575,7 @@ test("before the first sync with nothing to show, the setup prompt", () => {
 test("a synced but empty snapshot shows the empty section scaffold", () => {
   const view = list(synced());
   expect(view.sections.map((s) => [s.key, s.body.kind])).toEqual([
+    ["yours", "empty"],
     ["mine", "empty"],
     ["participated", "empty"],
     ["all", "empty"],
@@ -679,36 +689,22 @@ test("Mark all read is offered when the only thing new is bot activity", () => {
   expect(derivePopover(snapshot, "", ALL_EXPANDED, NOW).offerMarkAllRead).toBe(true);
 });
 
-test("in Mine, your-turn rows lead, then team-requested rows, then the rest", () => {
+test("team-requested rows lead Mine and Participated, then the rest in the order sent", () => {
+  const participated = { section: "participated" } as const;
   const view = list(
     synced({
       prs: [
         pr({ number: 1 }),
         pr({ number: 2, team_review_requested: true }),
-        pr({ number: 3, turn: "yours", blocked_reasons: ["ci"] }),
-        pr({ number: 4, turn: "theirs", awaiting_review: true }),
-        pr({ number: 5, team_review_requested: true }),
-        pr({ number: 6, turn: "yours", ready_to_merge: true }),
+        pr({ number: 3, turn: "theirs", awaiting_review: true }),
+        pr({ number: 4, team_review_requested: true }),
+        pr({ ...participated, number: 5, turn: "theirs" }),
+        pr({ ...participated, number: 6, team_review_requested: true }),
       ],
     }),
   );
-  expect(numbers(view, "mine")).toEqual([3, 6, 2, 5, 1, 4]);
-});
-
-test("Participated orders by turn the same way", () => {
-  const participated = { section: "participated" } as const;
-  const view = list(
-    synced({
-      prs: [
-        pr({ ...participated, number: 1, turn: "theirs" }),
-        pr({ ...participated, number: 2 }),
-        pr({ ...participated, number: 3, team_review_requested: true }),
-        pr({ ...participated, number: 4, turn: "yours", review_requested: true }),
-        pr({ ...participated, number: 5, turn: "yours", review_requested: true }),
-      ],
-    }),
-  );
-  expect(numbers(view, "participated")).toEqual([4, 5, 3, 1, 2]);
+  expect(numbers(view, "mine")).toEqual([2, 4, 1, 3]);
+  expect(numbers(view, "participated")).toEqual([6, 5]);
 });
 
 test("a your-turn row asked for review tints the review glyph", () => {
@@ -797,9 +793,9 @@ function snoozedGroup(view: ListView, key: SectionKey) {
 
 test("snoozed rows leave the ordered rows for a folded group at the section's foot", () => {
   const view = list(SNOOZE_FIXTURE);
-  expect(numbers(view, "mine")).toEqual([3, 1]);
+  expect(numbers(view, "mine")).toEqual([1]);
   // The header still counts the snoozed row: it has not left the section.
-  expect(section(view, "mine").count).toBe(3);
+  expect(section(view, "mine").count).toBe(2);
   const group = snoozedGroup(view, "mine");
   expect(group.rows.map((row) => row.pr.number)).toEqual([2]);
   expect(group.label).toBe("1 snoozed");
@@ -833,7 +829,7 @@ test("a filter that matches no snoozed row leaves no folded group", () => {
 
 test("rows in Mine and Participated offer snooze, snoozed rows offer wake, All offers neither", () => {
   const view = list(SNOOZE_FIXTURE);
-  expect(rows(view, "mine").map((row) => row.snooze)).toEqual(["offer", "offer"]);
+  expect(rows(view, "mine").map((row) => row.snooze)).toEqual(["offer"]);
   expect(snoozedGroup(view, "mine").rows[0].snooze).toBe("wake");
   const { body } = section(view, "all");
   if (body.kind !== "groups") throw new Error("All is not grouped");
@@ -885,7 +881,7 @@ test("a row with a requested fix shows the Copilot fixing mark beside its confli
   expect(row.fix).toBeNull();
 });
 
-test("a row with a requested fix gives up the head of Mine and the your-turn count", () => {
+test("a row with a requested fix gives up its place in Your turn and the your-turn count", () => {
   const snapshot = synced({
     prs: [
       fixing({ number: 1 }),
@@ -893,14 +889,15 @@ test("a row with a requested fix gives up the head of Mine and the your-turn cou
       pr({ number: 3 }),
     ],
   });
-  expect(numbers(list(snapshot), "mine")).toEqual([2, 1, 3]);
+  expect(numbers(list(snapshot), "yours")).toEqual([2]);
+  expect(numbers(list(snapshot), "mine")).toEqual([1, 3]);
   expect(yourTurnCount(snapshot)).toBe(1);
 });
 
 test("a requested fix beside a review asked of you leaves the row yours, tinted on the review glyph", () => {
   const [row] = rows(
     list(synced({ prs: [fixing({ review_requested: true, turn: "yours" })] })),
-    "mine",
+    "yours",
   );
   expect(row.marks).toEqual([
     { kind: "review-requested", tip: "Review requested", yourTurn: true },
@@ -920,4 +917,75 @@ test("a snoozed row's unread stays off its collapsed section's badge", () => {
 
 test("the your-turn count leaves snoozed rows out", () => {
   expect(yourTurnCount(SNOOZE_FIXTURE)).toBe(1);
+});
+
+const YOUR_TURN_FIXTURE = synced({
+  prs: [
+    pr({ number: 1, title: "Flaky spec", turn: "yours" }),
+    pr({ number: 2, title: "Quiet one" }),
+    pr({ number: 3, title: "Review me", section: "participated", turn: "yours" }),
+    pr({ number: 4, title: "Org-wide ask", section: "all", turn: "yours" }),
+    pr({ number: 5, title: "Passing by", section: "all" }),
+  ],
+});
+
+test("Your turn leads the list and holds every row waiting on the viewer, in the order sent", () => {
+  const view = list(YOUR_TURN_FIXTURE);
+  expect(view.sections.map((s) => [s.key, s.label, s.count])).toEqual([
+    ["yours", "Your turn", 3],
+    ["mine", "Mine", 1],
+    ["participated", "Participated", 0],
+    ["all", "All", 1],
+  ]);
+  expect(numbers(view, "yours")).toEqual([1, 3, 4]);
+});
+
+test("a row in Your turn appears in no other section, and the other counts leave it out", () => {
+  const view = list(YOUR_TURN_FIXTURE);
+  expect(numbers(view, "mine")).toEqual([2]);
+  expect(section(view, "participated").body).toEqual({ kind: "empty" });
+  const { body } = section(view, "all");
+  if (body.kind !== "groups") throw new Error("All is not grouped");
+  expect(body.groups.flatMap((g) => g.rows.map((row) => row.pr.number))).toEqual([5]);
+});
+
+test("with no filter the Your turn count is the tray number", () => {
+  for (const [snapshot, tray] of [
+    [YOUR_TURN_FIXTURE, 3],
+    [SNOOZE_FIXTURE, 1],
+    [synced(), 0],
+  ] as const) {
+    expect(section(list(snapshot), "yours").count).toBe(tray);
+    expect(yourTurnCount(snapshot)).toBe(tray);
+  }
+});
+
+test("a snoozed your-turn row stays in its home section's fold until it is woken", () => {
+  const snoozed = list(SNOOZE_FIXTURE);
+  expect(numbers(snoozed, "yours")).toEqual([3]);
+  expect(snoozedGroup(snoozed, "mine").rows.map((row) => row.pr.number)).toEqual([2]);
+
+  const woken = { ...SNOOZE_FIXTURE, snoozed: ["acme/widgets#4"] };
+  expect(numbers(list(woken), "yours")).toEqual([2, 3]);
+  expect(section(list(woken), "mine").body).toMatchObject({ snoozed: null });
+  expect(yourTurnCount(woken)).toBe(2);
+});
+
+test("a row in Your turn keeps the snooze control of its home section", () => {
+  expect(rows(list(YOUR_TURN_FIXTURE), "yours").map((row) => row.snooze)).toEqual([
+    "offer",
+    "offer",
+    null,
+  ]);
+});
+
+test("a filter narrows Your turn to its matches and counts only those", () => {
+  const view = list(YOUR_TURN_FIXTURE, "review");
+  expect(view.sections.map((s) => [s.key, s.count])).toEqual([["yours", 1]]);
+  expect(numbers(view, "yours")).toEqual([3]);
+});
+
+test("a filter that matches nothing in Your turn hides it", () => {
+  const view = list(YOUR_TURN_FIXTURE, "quiet");
+  expect(view.sections.map((s) => [s.key, s.count])).toEqual([["mine", 1]]);
 });

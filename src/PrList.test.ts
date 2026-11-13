@@ -184,3 +184,19 @@ test("each row carries its author's handle in its title and accessible name", ()
     expect(button).toContain(`aria-label="${handle}"`);
   }
 });
+
+test("Your turn has a heading and no collapse toggle; the other sections keep theirs", () => {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [{ ...openPr, turn: "yours" }] },
+    "",
+    { ...DEFAULT_COLLAPSED },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  const [yours, mine] = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+  expect(yours).toMatch(/<h2[^>]*>.*Your turn/);
+  expect(yours).not.toContain("aria-expanded");
+  expect(mine).toContain("aria-expanded");
+});

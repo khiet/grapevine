@@ -24,6 +24,10 @@ const SECTIONS = [
  * deliberately not collapsible. */
 export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
 
+/** The pinned section of rows waiting on the viewer. Not a SectionKey: it is
+ * always open, so it has no collapse state to store. */
+export const YOUR_TURN_KEY = "yours";
+
 /** The keys of the PRs whose request for a Copilot fix is on its way to
  * GitHub. Held by fixConflict.ts. A request that got there is the backend's
  * to remember: it comes back as the PR's fix_requested. */
@@ -117,10 +121,12 @@ export type SectionBody =
   | { kind: "merged"; rows: MergedRowView[] };
 
 export interface SectionView {
-  key: SectionKey;
+  /** YOUR_TURN_KEY marks the one section with no collapse toggle. */
+  key: SectionKey | typeof YOUR_TURN_KEY;
   label: string;
   count: number;
-  /** The body is derived either way; it is shown only while expanded. */
+  /** The body is derived either way; it is shown only while expanded. Always
+   * true for Your turn. */
   expanded: boolean;
   /** Unread total to badge on the header: zero while expanded, when the rows
    * carry their own badges. */
@@ -267,7 +273,7 @@ function rowMarks(pr: PullRequest): Mark[] {
 // Flags the mark that explains a your-turn row: the review glyph when a
 // review is asked of you, else the primary blocked pill, else the ready pill.
 // That is the order the backend decides the turn in, so the tinted mark is
-// the reason the row leads. At most one mark is flagged; the +N pill never
+// the reason the row sits in Your turn. At most one mark is flagged; the +N pill never
 // is, since the primary pill already speaks for the blockage.
 function tintYourTurn(marks: Mark[]): void {
   for (const kind of ["review-requested", "blocked", "ready"] as const) {
@@ -325,12 +331,12 @@ const rowView = (
   fix: fixControl(pr, snooze, fixesPosting),
 });
 
-// Rows waiting on the viewer lead a section, then the ones asking the viewer's
-// team, then the rest. Array.prototype.sort is stable, so each group keeps
-// the order the backend sent.
-function byTurn(prs: PullRequest[]): PullRequest[] {
-  const rank = (pr: PullRequest) =>
-    pr.turn === "yours" ? 0 : pr.team_review_requested ? 1 : 2;
+// Rows asking the viewer's team lead a section, then the rest. Rows waiting
+// on the viewer are not here to rank: they sit in Your turn.
+// Array.prototype.sort is stable, so each group keeps the order the backend
+// sent.
+function teamRequestsFirst(prs: PullRequest[]): PullRequest[] {
+  const rank = (pr: PullRequest) => (pr.team_review_requested ? 0 : 1);
   return [...prs].sort((a, b) => rank(a) - rank(b));
 }
 
@@ -340,12 +346,17 @@ function totalUnread(prs: PullRequest[]): number {
   return prs.reduce((sum, pr) => sum + pr.unread_count, 0);
 }
 
+// The one membership rule shared by the Your turn section and the tray
+// number, so the two cannot disagree: the row waits on the viewer and is not
+// snoozed.
+const isYourTurn = (pr: PullRequest, snoozedKeys: ReadonlySet<string>) =>
+  pr.turn === "yours" && !snoozedKeys.has(prKey(pr));
+
 /** How many PRs wait on the viewer and are not snoozed; the tray shows the
- * same number. */
+ * same number, and so does the Your turn section while no filter is active. */
 export function yourTurnCount(snapshot: Snapshot): number {
-  return snapshot.prs.filter(
-    (pr) => pr.turn === "yours" && !snapshot.snoozed.includes(prKey(pr)),
-  ).length;
+  const snoozedKeys = new Set(snapshot.snoozed);
+  return snapshot.prs.filter((pr) => isYourTurn(pr, snoozedKeys)).length;
 }
 
 // The fields a filter term can match: title, repo, "#number", and author.
@@ -444,8 +455,38 @@ export function derivePopover(
   const snoozedKeys = new Set(snapshot.snoozed);
 
   const sections: SectionView[] = [];
+  // Your turn takes its rows out of their home sections, so a PR is listed
+  // and counted once. A snoozed row is not taken: it stays in its home
+  // section's fold. The rows keep the order the backend sent.
+  const yours = prs.filter((pr) => isYourTurn(pr, snoozedKeys));
+  // Pinned and always open, empty or not: an absent Your turn would leave the
+  // tray's zero with nothing to match. Hidden only by a filter with no match
+  // here, like every other section.
+  if (yours.length > 0 || !filtering) {
+    sections.push({
+      key: YOUR_TURN_KEY,
+      label: "Your turn",
+      count: yours.length,
+      expanded: true,
+      collapsedUnread: 0,
+      offerClearAll: false,
+      body:
+        yours.length === 0
+          ? { kind: "empty" }
+          : {
+              kind: "rows",
+              // A row keeps the snooze control of its home section.
+              rows: yours.map((pr) =>
+                rowView(pr, now, pr.section === "all" ? null : "offer", fixesPosting),
+              ),
+              snoozed: null,
+            },
+    });
+  }
   for (const { key, label } of SECTIONS) {
-    const rows = prs.filter((pr) => pr.section === key);
+    const rows = prs.filter(
+      (pr) => pr.section === key && !isYourTurn(pr, snoozedKeys),
+    );
     /* The three PR sections are always present, empty or not, so the popover
        keeps one stable scaffold (an absent "Mine" would read as broken, not
        empty). Filtering is the exception: an empty section there means "no
@@ -467,7 +508,7 @@ export function derivePopover(
     } else {
       body = {
         kind: "rows",
-        rows: byTurn(awake).map((pr) => rowView(pr, now, "offer", fixesPosting)),
+        rows: teamRequestsFirst(awake).map((pr) => rowView(pr, now, "offer", fixesPosting)),
         snoozed:
           snoozed.length === 0
             ? null
@@ -486,7 +527,7 @@ export function derivePopover(
       expanded,
       /* Rows the section hides still carry unread; without this a collapsed
          Mine looks read when it is not. Independent of the tray number, which
-         counts your-turn rows, so the two can disagree. */
+         counts the rows of Your turn, so the two can disagree. */
       collapsedUnread: expanded ? 0 : totalUnread(awake),
       offerClearAll: false,
       body,

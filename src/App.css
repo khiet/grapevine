@@ -252,8 +252,17 @@ body {
   text-align: left;
 }
 
-.pr-section:first-child .pr-section-toggle {
+.pr-section:first-child .pr-section-toggle,
+.pr-section:first-child .pr-section-pinned {
   padding-top: 18px;
+}
+
+/* Your turn's heading: the toggle's padding and gap without the button or
+   the chevron, so the header keeps the height of the sections below. */
+.pr-section-pinned {
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 6px;
 }
 
 .pr-section-chevron {
