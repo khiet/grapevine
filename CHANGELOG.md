@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/khiet/grapevine/compare/grapevine-v0.14.0...grapevine-v0.14.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* list keys work after a click drops focus ([#134](https://github.com/khiet/grapevine/issues/134)) ([cae7ce3](https://github.com/khiet/grapevine/commit/cae7ce34c8aa3f8d57a44245646e000419f3b25c)), closes [#133](https://github.com/khiet/grapevine/issues/133)
+
 ## [0.14.0](https://github.com/khiet/grapevine/compare/grapevine-v0.13.0...grapevine-v0.14.0) (2026-11-13)
 
 
