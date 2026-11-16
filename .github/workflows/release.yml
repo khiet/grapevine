@@ -10,9 +10,15 @@ name: release
 #
 # A release is built by one job per platform. Each attaches its own downloads
 # and hands over a fragment of the updater manifest; publish-manifest merges
-# the fragments and attaches the one manifest installed apps poll. The
-# manifest is the switch that offers a release to installed apps, so it is
-# published last and only when every platform built.
+# the fragments and attaches the one manifest installed apps poll.
+#
+# release-please cuts the release as a draft, and publish-release publishes it
+# last, only when every platform built. Installed apps poll the manifest of
+# the latest published release, so a release published before its manifest is
+# attached breaks their update check; a draft that fails anywhere above stays
+# invisible to them. The draft's tag is created up front (force-tag-creation
+# in release-please-config.json), because GitHub otherwise creates it only on
+# publish and both release-please and a manual rebuild need it to exist.
 #
 # workflow_dispatch is a manual escape hatch: rebuild and re-attach an existing
 # release tag without release-please. Use it when a release was cut but its
@@ -451,8 +457,8 @@ jobs:
   publish-manifest:
     needs: [build-macos, build-linux]
     # Both builds must have succeeded: a failed or skipped build publishes no
-    # manifest, so releases/latest/download/latest.json has nothing new to
-    # offer and installed apps stay on the release they run. The results are
+    # manifest, and publish-release then leaves the release a draft, so
+    # installed apps stay on the release they run. The results are
     # checked by hand because '!cancelled()', needed for the same skipped
     # release-please reason as the builds, also switches off the default
     # "every dependency succeeded" rule.
@@ -498,3 +504,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$TAG" latest.json --clobber
+
+  publish-release:
+    needs: [build-macos, build-linux, publish-manifest]
+    # A skipped publish-manifest still publishes: without the updater key there
+    # is no manifest to wait for, and a fork's release must not stay a draft
+    # forever. A failed one does not, since that release would break the update
+    # check. Results are checked by hand for the same '!cancelled()' reason as
+    # publish-manifest.
+    if: >-
+      ${{ !cancelled()
+      && needs.build-macos.result == 'success'
+      && needs.build-linux.result == 'success'
+      && (needs.publish-manifest.result == 'success'
+        || needs.publish-manifest.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      # Not the tag, for the same reason as publish-manifest.
+      - uses: actions/checkout@v5
+
+      - name: Resolve the release tag
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: .github/scripts/resolve-release-tag.sh
+
+      # A no-op on a manual rebuild of a release that is already published.
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$TAG" --draft=false

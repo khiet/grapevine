@@ -184,9 +184,10 @@ Releases are automated with
 [release-please](https://github.com/googleapis/release-please). Merging a
 Conventional Commit to `main` updates a standing release PR that bumps the
 version in `package.json` and writes `CHANGELOG.md`. Merging *that* PR tags
-the release, runs CI on it, then builds the macOS app and the Ubuntu `.deb`
-onto it, and publishes the updater manifest once both have built. A release
-whose CI run fails is tagged but never built. `package.json` is the only place
+a draft release, runs CI on it, then builds the macOS app and the Ubuntu
+`.deb` onto it, attaches the updater manifest once both have built, and only
+then publishes the release. A release whose CI run or build fails stays a
+draft, which installed apps never see. `package.json` is the only place
 the app version lives, so never bump a version by hand.
 
 ## Contributing
