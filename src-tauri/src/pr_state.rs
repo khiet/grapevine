@@ -2010,6 +2010,22 @@ mod tests {
         );
     }
 
+    /// A row can outlive its PR by one click: the sync that drops the PR
+    /// lands while the pointer is on its way to Confirm.
+    #[test]
+    fn a_pr_that_left_the_list_cannot_be_found_to_act_on() {
+        let state = PrState::default();
+        state.sync_succeeded(vec![pr("acme/widgets", 7, &[])], vec![], NOW_MS);
+        assert_eq!(state.find("acme/widgets#7").unwrap().number, 7);
+
+        state.sync_succeeded(vec![], vec![], NOW_MS);
+
+        assert_eq!(
+            state.find("acme/widgets#7").unwrap_err(),
+            "That PR is no longer in the list."
+        );
+    }
+
     #[test]
     fn departed_prs_that_did_not_merge_yield_no_entry() {
         let departed = vec![pr("acme/widgets", 7, &[])];
