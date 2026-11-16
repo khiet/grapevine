@@ -109,6 +109,10 @@ struct Inner {
     /// Keys whose fix request is on its way to GitHub, from
     /// [`PrState::begin_fix`] until it is recorded or abandoned.
     fixes_posting: HashSet<String>,
+    /// Keys of the PRs acted on since a sync last began. A sync that lands
+    /// while a key is here read its PR before the write, so what it says
+    /// that PR offers is out of date (see [`PrState::acted`]).
+    acted: HashSet<String>,
 }
 
 impl Inner {
@@ -222,6 +226,8 @@ impl PrState {
             return None;
         }
         inner.snapshot.syncing = true;
+        // The sync beginning now reads every PR after the writes so far.
+        inner.acted.clear();
         Some(inner.no_effects())
     }
 
@@ -253,6 +259,11 @@ impl PrState {
         );
         let read_changed = unread::apply(&mut prs, &mut inner.read_state);
         let snoozes_changed = snooze::apply(&prs, &mut inner.snoozes, now_epoch_ms);
+        for pr in &mut prs {
+            if inner.acted.contains(&unread::key(pr)) {
+                pr.actions.clear();
+            }
+        }
         inner.snapshot = Snapshot {
             prs,
             merged: inner.merged.clone(),
@@ -470,20 +481,32 @@ impl PrState {
     }
 
     /// The PR filed under `key` as the Snapshot has it, for a write to act
-    /// on. `Err` is the message the row shows.
-    pub fn find(&self, key: &str) -> Result<PullRequest, String> {
+    /// on. `head` is the head commit of the row the user confirmed. `Err` is
+    /// the message the row shows: the PR has left the Snapshot, it is
+    /// snoozed, or a sync has moved it past `head` since that row was drawn,
+    /// when the write would land on commits the user has not been shown.
+    pub fn to_act_on(&self, key: &str, head: &str) -> Result<PullRequest, String> {
         let inner = self.inner.lock().unwrap();
-        let pr = inner.snapshot.prs.iter().find(|pr| unread::key(pr) == key);
-        pr.cloned()
-            .ok_or_else(|| "That PR is no longer in the list.".into())
+        let Some(pr) = inner.snapshot.prs.iter().find(|pr| unread::key(pr) == key) else {
+            return Err("That PR is no longer in the list.".into());
+        };
+        if inner.snoozes.contains_key(key) {
+            return Err("That PR is snoozed. Wake it first.".into());
+        }
+        if pr.head_oid != head {
+            return Err("That PR has new commits. Check it, then try again.".into());
+        }
+        Ok(pr.clone())
     }
 
     /// One of the matching PR's actions was carried out on GitHub. The row
-    /// offers none from here until a sync says what the PR offers now: what
-    /// it offered was true of a PR that has just changed. Call it only after
-    /// the write went through.
+    /// offers none from here until a sync that began after the write says
+    /// what the PR offers now: what it offered was true of a PR that has
+    /// just changed, and so is the answer of a sync already under way. Call
+    /// it only after the write went through.
     pub fn acted(&self, key: &str) -> Effects {
         let mut inner = self.inner.lock().unwrap();
+        inner.acted.insert(key.to_string());
         if let Some(pr) = inner
             .snapshot
             .prs
@@ -645,7 +668,7 @@ mod tests {
             can_fix_conflict: false,
             fix_requested: false,
             actions: Vec::new(),
-            merge_method: crate::github::MergeMethod::Merge,
+            merge_method: MergeMethod::Merge,
             base_branch: String::new(),
             head_oid: String::new(),
             mergeability_unknown: false,
@@ -1982,7 +2005,6 @@ mod tests {
         assert_eq!(entries[0].merged_at, "2026-07-12T10:00:00Z");
     }
 
-    /// A PR closed without merging is absent from GitHub's answer.
     /// Until the next sync says what the PR offers now, a row that was just
     /// acted on offers nothing: the same write must not be asked for twice.
     #[test]
@@ -2003,6 +2025,7 @@ mod tests {
             vec![PrAction::Merge, PrAction::EnableAutoMerge]
         );
 
+        state.begin_sync();
         let synced = state.sync_succeeded(vec![offering(7), offering(8)], vec![], NOW_MS);
         assert_eq!(
             synced.snapshot.prs[0].actions,
@@ -2010,19 +2033,75 @@ mod tests {
         );
     }
 
+    /// A sync already under way read the PR before the write, so it would
+    /// put back the very action that was just carried out.
+    #[test]
+    fn a_sync_that_began_before_the_write_does_not_bring_the_actions_back() {
+        let offering = || PullRequest {
+            section: Section::Mine,
+            actions: vec![PrAction::Merge],
+            ..pr("acme/widgets", 7, &[])
+        };
+        let state = PrState::default();
+        state.sync_succeeded(vec![offering()], vec![], NOW_MS);
+        state.begin_sync();
+        state.acted("acme/widgets#7");
+
+        let stale = state.sync_succeeded(vec![offering()], vec![], NOW_MS);
+        assert_eq!(stale.snapshot.prs[0].actions, vec![]);
+
+        state.begin_sync();
+        let fresh = state.sync_succeeded(vec![offering()], vec![], NOW_MS);
+        assert_eq!(fresh.snapshot.prs[0].actions, vec![PrAction::Merge]);
+    }
+
     /// A row can outlive its PR by one click: the sync that drops the PR
     /// lands while the pointer is on its way to Confirm.
     #[test]
     fn a_pr_that_left_the_list_cannot_be_found_to_act_on() {
         let state = PrState::default();
-        state.sync_succeeded(vec![pr("acme/widgets", 7, &[])], vec![], NOW_MS);
-        assert_eq!(state.find("acme/widgets#7").unwrap().number, 7);
+        state.sync_succeeded(vec![at_head("abc123")], vec![], NOW_MS);
+        assert_eq!(state.to_act_on(KEY, "abc123").unwrap().number, 7);
 
         state.sync_succeeded(vec![], vec![], NOW_MS);
 
         assert_eq!(
-            state.find("acme/widgets#7").unwrap_err(),
+            state.to_act_on(KEY, "abc123").unwrap_err(),
             "That PR is no longer in the list."
+        );
+    }
+
+    fn at_head(head: &str) -> PullRequest {
+        PullRequest {
+            head_oid: head.into(),
+            ..pr("acme/widgets", 7, &[])
+        }
+    }
+
+    /// The row was confirmed at one head and a sync has since replaced it:
+    /// the write would land on commits the user was never shown.
+    #[test]
+    fn a_pr_that_moved_past_the_confirmed_row_cannot_be_acted_on() {
+        let state = PrState::default();
+        state.sync_succeeded(vec![at_head("abc123")], vec![], NOW_MS);
+        state.sync_succeeded(vec![at_head("def456")], vec![], NOW_MS);
+
+        assert_eq!(
+            state.to_act_on(KEY, "abc123").unwrap_err(),
+            "That PR has new commits. Check it, then try again."
+        );
+        assert!(state.to_act_on(KEY, "def456").is_ok());
+    }
+
+    #[test]
+    fn a_snoozed_pr_cannot_be_acted_on() {
+        let state = PrState::default();
+        state.sync_succeeded(vec![at_head("abc123")], vec![], NOW_MS);
+        state.snooze(KEY, NOW_MS + 60_000);
+
+        assert_eq!(
+            state.to_act_on(KEY, "abc123").unwrap_err(),
+            "That PR is snoozed. Wake it first."
         );
     }
 
@@ -2076,7 +2155,6 @@ mod tests {
                 ],
                 merge_method: MergeMethod::Rebase,
                 base_branch: "main".into(),
-                // Internal: what a write is checked against, never shown.
                 head_oid: "abc123".into(),
                 // Internal: says how to read the reasons, not what to show.
                 mergeability_unknown: true,
@@ -2150,6 +2228,7 @@ mod tests {
                     ],
                     "merge_method": "rebase",
                     "base_branch": "main",
+                    "head_oid": "abc123",
                     "unread_count": 3,
                     "bot_unread_count": 8
                 }],

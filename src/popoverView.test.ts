@@ -48,6 +48,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   actions: [],
   merge_method: "merge",
   base_branch: "main",
+  head_oid: "abc123",
   unread_count: 0,
   bot_unread_count: 0,
   ...overrides,

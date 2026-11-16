@@ -6,7 +6,7 @@
 // it, on the PR in the Snapshot it pushes.
 
 import { useSyncExternalStore } from "react";
-import { actOnPr, fixConflict } from "./backend";
+import { actOnPr, fixConflict, prKey, type PullRequest } from "./backend";
 import type { WriteId, WritesPending } from "./popoverView";
 
 // Replaced, never mutated: useSyncExternalStore compares by identity.
@@ -41,19 +41,21 @@ export function resetWritesPending(): void {
   pending = new Map();
 }
 
-/** Sends the write `id` for the PR filed under `key`. Resolves to null once
- * GitHub has taken it, or to the message to show on the row when it has not.
- * A PR with a write already on its way sends nothing more: what it offers is
- * about to change. Past that, the backend is what refuses a write the PR no
- * longer offers. */
+/** Sends the write `id` for `pr`, the PR as the row confirming it shows it.
+ * Resolves to null once GitHub has taken it, or to the message to show on
+ * the row when it has not. A PR with a write already on its way sends
+ * nothing more: what it offers is about to change. Past that, the backend
+ * is what refuses a write the PR no longer offers, and one confirmed on a
+ * row the PR has moved on from. */
 export async function requestWrite(
-  key: string,
+  pr: PullRequest,
   id: WriteId,
 ): Promise<string | null> {
+  const key = prKey(pr);
   if (pending.has(key)) return null;
   setPending(key, id);
   try {
-    await (id === "fix" ? fixConflict(key) : actOnPr(key, id));
+    await (id === "fix" ? fixConflict(key) : actOnPr(key, id, pr.head_oid));
     return null;
   } catch (error) {
     // The backend rejects with the message itself.
@@ -68,7 +70,7 @@ export async function requestWrite(
   }
 }
 
-/** A click on the control of write `id` on the PR filed under `key`, where
+/** A click on the control of write `id` on the row showing `pr`, where
  * `armed` is the write that row has armed, if any. The first click on a
  * write only arms it, and the second sends it: every one of them acts on
  * GitHub under the user's name, so one stray click must never send it.
@@ -77,11 +79,11 @@ export async function requestWrite(
  * requestWrite for what it resolves to). The caller holds `armed` and stands
  * it down on its own schedule. */
 export function clickWrite(
-  key: string,
+  pr: PullRequest,
   id: WriteId,
   armed: WriteId | null,
 ): { armed: WriteId | null; request: Promise<string | null> | null } {
   return armed === id
-    ? { armed: null, request: requestWrite(key, id) }
+    ? { armed: null, request: requestWrite(pr, id) }
     : { armed: id, request: null };
 }

@@ -102,6 +102,10 @@ export interface PullRequest {
   merge_method: MergeMethod;
   /** The branch the PR merges into, named in the confirm hint. */
   base_branch: string;
+  /** The head commit this row was built from. Never shown: it goes back
+   * with a write, so the backend can tell a row the user confirmed from a
+   * PR that has moved since. */
+  head_oid: string;
   /** New activity from people. The only count that badges a row or a
    * collapsed section. It does not feed the tray. */
   unread_count: number;
@@ -278,14 +282,15 @@ export const fixConflict = (key: string) =>
   adapter.invoke<void>("fix_conflict", { key });
 
 /** Does `action` to the PR on GitHub as the user: with fixConflict, the
- * commands that write there. Only the key and the action's name go over; the
- * backend picks the PR, the merge method and the commit it expects the PR to
- * be at, and refuses an action the PR does not list. Rejects with the
- * message to show on the row, GitHub's own when GitHub turned the write
- * down. A write that went through is answered with a Snapshot in which the
- * PR offers no actions, and then with a sync's. */
-export const actOnPr = (key: string, action: PrAction) =>
-  adapter.invoke<void>("act_on_pr", { key, action });
+ * commands that write there. The key and the action's name go over, with
+ * `head`, the head_oid of the row the user confirmed; the backend picks the
+ * PR and the merge method, and refuses an action the PR does not list, a
+ * snoozed PR, and a PR that is no longer at `head`. Rejects with the message
+ * to show on the row, GitHub's own when GitHub turned the write down. A
+ * write that went through is answered with a Snapshot in which the PR
+ * offers no actions. Either way a sync follows. */
+export const actOnPr = (key: string, action: PrAction, head: string) =>
+  adapter.invoke<void>("act_on_pr", { key, action, head });
 
 /** Epoch ms of the next local 08:00 strictly after `now`: when a snooze runs
  * out on its own. */

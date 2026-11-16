@@ -147,6 +147,7 @@ const openPr = {
   actions: [],
   merge_method: "merge",
   base_branch: "main",
+  head_oid: "abc123",
   unread_count: 0,
   bot_unread_count: 0,
 } satisfies PullRequest;
@@ -474,7 +475,6 @@ test("the bar words the merge, the queue and the branch update", () => {
   expect(barOf(behind)).toEqual(["Snooze", "Update branch"]);
 });
 
-// Arming and cancelling auto-merge are the menu's alone.
 test("the bar leaves auto-merge to the menu", () => {
   const [behind, armed] = renderList([
     { ...openPr, actions: ["update_branch", "enable_auto_merge"] },
