@@ -208,7 +208,7 @@ test("each state takes its tone: amber blocked, green ready and approved, neutra
   expect(tone({ team_review_requested: true })).toBe("neutral");
 });
 
-test("a draft shows the Draft pill and nothing the backend did not send", () => {
+test("a draft is marked as one and shows nothing the backend did not send", () => {
   const row = rowFor(pr({ is_draft: true }));
   expect(row.draft).toBe(true);
   expect(row.state).toBeNull();

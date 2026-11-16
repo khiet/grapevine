@@ -672,7 +672,7 @@ body {
 }
 
 /* Marks a machine author, on the one avatar corner the two badges leave free
-   at the bottom. Grey like the Draft pill: a property of the PR, not a
+   at the bottom. Grey like the word "Draft": a property of the PR, not a
    signal. The card-colour ring is the org badge's notch trick. Lowercase and
    pulled left: at the 11px floor an uppercase tag would run under the org
    badge on the opposite corner. */
@@ -797,9 +797,19 @@ body {
   white-space: nowrap;
 }
 
-/* A draft's pill already took the free space to its left. */
+/* "Draft" is a neutral state of its own, ahead of whatever state the row
+   has. It took the free space to its left, so the state after it takes
+   none. Plain words like every state: a filled shape here would pass for
+   the action bar's buttons, which open on this corner. */
 .pr-draft + .pr-state {
   margin-left: 0;
+}
+
+/* The hidden copies after the action bar sit .pr-row-end's 6px apart, and
+   the words they stand for .pr-origin's 8px: this makes up the difference,
+   so the bar opens clear of "Draft". */
+.pr-row-end .pr-draft + .pr-state {
+  margin-left: 2px;
 }
 
 /* Amber says "this PR is blocked", deliberately not the unread badge's red,
@@ -910,24 +920,6 @@ body {
   border-left-width: 0;
   border-left-color: transparent;
   border-right-color: var(--tip-bg);
-}
-
-/* The draft pill: a neutral grey fill, never a signal colour, since a draft
-   is the author's own choice, not something stuck. The label takes the
-   primary text colour because the secondary grey cannot hold 4.5:1 on a grey
-   fill over a hovered row. */
-.pr-draft {
-  flex: none;
-  align-self: center;
-  margin-left: auto;
-  padding: 0 5px;
-  border-radius: var(--radius-full);
-  background-color: var(--fill);
-  color: var(--text);
-  font-size: var(--text-s);
-  font-weight: 500;
-  line-height: 17px;
-  white-space: nowrap;
 }
 
 /* As tall as an icon button in both views, so the header keeps its height

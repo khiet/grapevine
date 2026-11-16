@@ -306,6 +306,16 @@ test("a row's state takes its tone from the text tokens", () => {
   expect(ruleFor(".pr-state-more").get("color")).toBe("var(--text-2)");
 });
 
+// Draft's hidden copy after the action bar must span what the row shows, or
+// the bar would open over the word. The row spaces Draft from its state by
+// the metadata line's gap; the bar's own gap is narrower.
+test("Draft and a state keep the metadata line's gap, in the row and in the hidden copy", () => {
+  expect(ruleFor(".pr-origin").get("gap")).toBe("8px");
+  expect(ruleFor(".pr-draft + .pr-state").get("margin-left")).toBe("0");
+  expect(ruleFor(".pr-row-end").get("gap")).toBe("6px");
+  expect(ruleFor(".pr-row-end .pr-draft + .pr-state").get("margin-left")).toBe("2px");
+});
+
 // --- Contrast -------------------------------------------------------------
 
 type Rgba = [number, number, number, number];

@@ -71,7 +71,7 @@ export interface RowAction {
 
 export interface RowView {
   pr: PullRequest;
-  /** The neutral Draft pill, shown beside `state` and never part of it. */
+  /** The word "Draft", shown ahead of `state` and never part of it. */
   draft: boolean;
   /** Null when the PR has no state to report, so a quiet row keeps meaning
    * "nothing is stuck". */
