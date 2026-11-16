@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0](https://github.com/khiet/grapevine/compare/grapevine-v0.15.0...grapevine-v0.16.0) (2026-11-16)
+
+
+### Features
+
+* merge, update branch and auto-merge from the row ([107e478](https://github.com/khiet/grapevine/commit/107e4786fbcd91c0886dd922c89c34db38509565)), closes [#142](https://github.com/khiet/grapevine/issues/142)
+* show Draft as a plain word on the row, not a pill ([#145](https://github.com/khiet/grapevine/issues/145)) ([4b68cf7](https://github.com/khiet/grapevine/commit/4b68cf7023fde4d8e0d6f5fdff09af587a80d58d)), closes [#144](https://github.com/khiet/grapevine/issues/144)
+
+
+### Bug Fixes
+
+* bind a row's write to the commit it was confirmed at ([ae5b911](https://github.com/khiet/grapevine/commit/ae5b9119f8e7a281b2ee87c0e77b638c8aaa26ac)), closes [#142](https://github.com/khiet/grapevine/issues/142)
+
 ## [0.15.0](https://github.com/khiet/grapevine/compare/grapevine-v0.14.1...grapevine-v0.15.0) (2026-11-16)
 
 
