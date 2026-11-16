@@ -133,7 +133,7 @@ request.
    "waiting" label is cut off mid-glyph or overlaps its neighbour; long ones
    end in an ellipsis. The red unread badge, the square org badge and the
    "bot" tag sit on the avatar's corners. The "Draft" pill and the worded
-   state ("CI failing", "Ready to merge" and the like, with a "+1" where
+   state ("CI failing", "Mergeable" and the like, with a "+1" where
    more is folded) share one line at the row's right edge. **Screenshot** of each screenful.
 4. Click each section header in turn, twice. **Expect:** the section folds
    and unfolds, the chevron turns with it, and the count pill, plus the red

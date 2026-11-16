@@ -45,6 +45,7 @@ const conflicted: PullRequest = {
   failing_checks_truncated: false,
   checks_running: false,
   auto_merge: false,
+  threads_open: false,
   ready_to_merge: false,
   turn: "yours",
   turn_since: null,

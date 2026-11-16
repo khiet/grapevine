@@ -406,54 +406,46 @@ body {
   text-align: left;
 }
 
-/* What floats over the end of the row's metadata line: the action bar. On
-   the last line, never the first, so the timestamp stays in view, and
-   .pr-updated is stacked above this where their boxes touch: a click on the
-   time always lands on the row button and opens the PR. `right` is .pr-row's
-   right padding. `bottom` is what centres the 24px bar on the metadata line
-   (14px tall, above .pr-row's 9px bottom padding). */
+/* What floats over the end of the row's metadata line: the action bar, and
+   on a merged row its deploy status after it. On the last line, never the
+   first, so the timestamp stays in view, and .pr-updated is stacked above
+   this where their boxes touch: a click on the time always lands on the row
+   button and opens the PR. `right` is .pr-row's right padding. `bottom` and
+   the height are what centre the 24px bar, or a status alone, on the
+   metadata line (14px tall, above .pr-row's 9px bottom padding). */
 .pr-row-end {
   position: absolute;
   bottom: 4px;
   right: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
 }
 
-/* A merged row's deploy status, a rocket and a time or a word, in the
-   timestamp's type so the deploy time reads as a second entry under the
-   merge time. Drawn over .pr-deploy-space, which holds its place in
-   .pr-times so a one-line title leaves it room. `top` is where that
-   placeholder lands: .pr-row's 9px top padding, the 1.5px by which the
-   title's baseline sets the merge time down, and the merge time's 16px
-   line. The control and its placeholder share the rule after this one, so
-   they keep one type and size and the control covers the placeholder
-   exactly. */
+/* A merged row's deploy status: words in the row's state slot, toned by
+   .pr-state like an open row's state, and a control that opens the workflow
+   run. It lies over .pr-deploy-space, the hidden copy inside the row button
+   that holds its place at the end of the metadata line; the two share the
+   metadata line's size and .pr-state's weight, so the control covers the
+   copy exactly. The grey is the neutral tone, which .pr-state leaves to
+   .pr-origin and a button outside it does not inherit. */
 .pr-deploy {
-  position: absolute;
-  top: 26.5px;
-  right: 11px;
   border: none;
   background: none;
   padding: 0;
   font: inherit;
+  font-weight: 500;
   color: var(--text-2);
 }
 
 .pr-deploy,
 .pr-deploy-space {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 16px;
-  font-size: var(--text-s);
-  white-space: nowrap;
+  font-size: var(--text-m);
 }
 
 .pr-deploy:hover {
   text-decoration: underline;
-}
-
-.pr-deploy.is-failed {
-  color: var(--danger);
 }
 
 .pr-deploy-space {
@@ -707,26 +699,6 @@ body {
   grid-template-columns: 1fr minmax(66px, max-content);
 }
 
-/* A merged row with a deploy status stacks it under the merge time. The
-   status can be a word wider than any timestamp ("Deploying"), so its column
-   grows to it. */
-.pr-title-row.has-deploy {
-  grid-template-columns: 1fr minmax(52px, max-content);
-}
-
-/* Both lines take a fixed height, which is what lets .pr-deploy be placed
-   from the row's top. The padding matters under a one-line title, where the
-   metadata line comes straight after: it keeps the status clear of the
-   action bar floating there, so a click meant for one never lands on the
-   other. */
-.pr-times {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  padding-bottom: 4px;
-  line-height: 16px;
-}
-
 /* The your-turn cue ("waiting 3h", "waiting"): the accent the app uses for
    things to act on, and bold so it reads apart from a plain timestamp. */
 .pr-title-row.is-waiting .pr-updated {
@@ -832,10 +804,9 @@ body {
   color: var(--ok);
 }
 
-/* The reason can carry a check's name ("CI failing: e2e-safari"), which is
-   as long as its author made it, so it is capped and clips with an ellipsis,
-   leaving the number and some of the repo their room. The clip is here and
-   not on .pr-state, where it would cut off the tooltip. */
+/* Every reason is two short words, so the cap is a backstop that keeps the
+   number and some of the repo their room whatever the copy becomes. The
+   clip is here and not on .pr-state, where it would cut off the tooltip. */
 .pr-state-reason {
   max-width: 180px;
   overflow: hidden;
