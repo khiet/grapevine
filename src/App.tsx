@@ -8,7 +8,7 @@ import {
   syncNow,
   type Snapshot,
 } from "./backend";
-import { useFixesPosting } from "./fixConflict";
+import { useWritesPending } from "./rowWrites";
 import type { KeyHint } from "./listKeys";
 import { derivePopover } from "./popoverView";
 import PrList, {
@@ -165,10 +165,10 @@ function App() {
   const updateState = useUpdateState();
 
   const [collapsed, toggleSection] = useCollapsedSections();
-  const fixesPosting = useFixesPosting();
+  const writesPending = useWritesPending();
 
   // Recomputed each render: what to show is a pure view over the snapshot,
-  // the filter, the collapse state, the Copilot fixes being asked for and the
+  // the filter, the collapse state, the writes on their way to GitHub and the
   // time.
   // Nothing ticks: the waiting labels are as fresh as the last render, and
   // every sync causes one.
@@ -177,7 +177,7 @@ function App() {
     filter,
     collapsed,
     Date.now(),
-    fixesPosting,
+    writesPending,
   );
 
   const listKeys = useListKeys(

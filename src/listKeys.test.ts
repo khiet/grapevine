@@ -87,9 +87,32 @@ test("Shift+Tab leaves the filter the ordinary way", () => {
   expect(filterCommand(key("Tab", { shiftKey: true }))).toBeNull();
 });
 
-const SNOOZE: RowAction = { id: "snooze", label: "Snooze", hint: null };
-const WAKE: RowAction = { id: "wake", label: "Wake", hint: null };
-const DISMISS: RowAction = { id: "dismiss", label: "Dismiss", hint: null };
+const action = (id: RowAction["id"], label: string): RowAction => ({
+  id,
+  label,
+  hint: null,
+  confirm: null,
+  menuOnly: false,
+});
+const SNOOZE = action("snooze", "Snooze");
+const WAKE = action("wake", "Wake");
+const DISMISS = action("dismiss", "Dismiss");
+
+// A write is a click or a menu pick, each confirmed: no single key reaches
+// one.
+test("no key runs a row's writes to GitHub, and the footer hints at none", () => {
+  const writes: RowAction[] = [
+    { ...action("merge", "Merge"), confirm: "Confirm: merge into main" },
+    { ...action("queue", "Queue"), confirm: "Confirm: add to the merge queue for main" },
+    { ...action("update_branch", "Update branch"), confirm: "Confirm: merge main into this branch" },
+    { ...action("enable_auto_merge", "Auto-merge"), confirm: "Confirm: turn on auto-merge into main" },
+    { ...action("disable_auto_merge", "Cancel auto-merge"), confirm: "Confirm: cancel auto-merge into main" },
+  ];
+  for (const pressed of ["m", "q", "u", "a", "c", "Enter", " ", "Delete"]) {
+    expect(rowCommand(key(pressed), writes)).toBeNull();
+  }
+  expect(keyHints("list", writes)).toEqual([{ keys: "Esc", label: "Filter" }]);
+});
 
 test("S snoozes a row that can be snoozed and wakes a snoozed one", () => {
   expect(rowCommand(key("s"), [SNOOZE])).toBe("snooze");
@@ -191,6 +214,9 @@ const openPr = {
   turn_since: null,
   can_fix_conflict: false,
   fix_requested: false,
+  actions: [],
+  merge_method: "merge",
+  base_branch: "main",
   unread_count: 0,
   bot_unread_count: 0,
 } satisfies PullRequest;
@@ -224,7 +250,13 @@ test("a row is found by its key, with the words a screen reader is given", () =>
   expect(findRow(view, "acme/widgets#7")).toEqual({
     label: "Fix the thing, #7 acme/widgets, Draft, Checks running, Approved",
     actions: [
-      { id: "snooze", label: "Snooze", hint: "Snooze until it changes" },
+      {
+        id: "snooze",
+        label: "Snooze",
+        hint: "Snooze until it changes",
+        confirm: null,
+        menuOnly: false,
+      },
     ],
   });
 });
@@ -244,7 +276,7 @@ test("rows are found wherever a section keeps them", () => {
   expect(findRow(view, "acme/widgets#90")).toEqual({
     label: "Ship the release notes, #90 acme/widgets, Merged",
     actions: [
-      { id: "dismiss", label: "Dismiss", hint: null },
+      { id: "dismiss", label: "Dismiss", hint: null, confirm: null, menuOnly: false },
     ],
   });
 });

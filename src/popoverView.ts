@@ -10,6 +10,7 @@ import {
   type Deploy,
   type DeployState,
   type MergedPr,
+  type PrAction,
   type PullRequest,
   type Snapshot,
 } from "./backend";
@@ -28,10 +29,14 @@ export type SectionKey = (typeof SECTIONS)[number]["key"] | "merged";
  * always open, so it has no collapse state to store. */
 export const YOUR_TURN_KEY = "yours";
 
-/** The keys of the PRs whose request for a Copilot fix is on its way to
- * GitHub. Held by fixConflict.ts. A request that got there is the backend's
- * to remember: it comes back as the PR's fix_requested. */
-export type FixesPosting = ReadonlySet<string>;
+/** A row action that writes to GitHub: the Copilot fix, which posts a
+ * comment, and everything the backend lists in the PR's `actions`. */
+export type WriteId = "fix" | PrAction;
+
+/** The write on its way to GitHub for each PR that has one, by PR key. Held
+ * by rowWrites.ts. A write that got there is the backend's to show: it comes
+ * back in the Snapshot. */
+export type WritesPending = ReadonlyMap<string, WriteId>;
 
 /** What colours a row's reason: the accent for a review asked of the viewer
  * on their turn, amber for blocked, green for ready and approved, neutral
@@ -57,16 +62,24 @@ export interface RowState {
   all: string[];
 }
 
-export type RowActionId = "snooze" | "wake" | "fix" | "dismiss";
+export type RowActionId = "snooze" | "wake" | "dismiss" | WriteId;
 
 /** Something a row offers to do beyond opening its PR, which is the click on
- * the row itself. The row's action bar and its right-click menu both list a
- * row's actions, in this order, under these labels; a row may have none. */
+ * the row itself. The row's right-click menu lists every action, in this
+ * order, under these labels, and its action bar all but the `menuOnly`
+ * ones; a row may have none. */
 export interface RowAction {
   id: RowActionId;
   label: string;
   /** What the label leaves unsaid, for a tooltip; null when it says it all. */
   hint: string | null;
+  /** Set on an action that writes to GitHub, which takes a second,
+   * confirming click: what that click confirms, said in full. Null on an
+   * action that runs at once. */
+  confirm: string | null;
+  /** Left out of the action bar, so a row never carries a long run of
+   * worded buttons. */
+  menuOnly: boolean;
 }
 
 export interface RowView {
@@ -86,10 +99,9 @@ export interface RowView {
    * time. Null when the turn is not the viewer's; the row keeps the updated
    * time then. */
   waiting: string | null;
-  /** Where the row stands on Fix with Copilot: "offer" when `actions` has
-   * the fix, "posting" while the request is on its way, null where the fix
-   * is not on offer. A request that was made is a state, not a control. */
-  fix: "offer" | "posting" | null;
+  /** The write on its way to GitHub from this row, in a word ("Merging");
+   * null when there is none. `actions` offers no write meanwhile. */
+  pending: string | null;
   /** Never empty: every row can at least be opened. */
   actions: RowAction[];
 }
@@ -298,38 +310,96 @@ function waitingLabel(pr: PullRequest, now: number): string | null {
   return `waiting ${Math.floor(elapsed / DAY_MS)}d`;
 }
 
-// Offered wherever the backend allows it, except on a row whose fix was
-// already requested, and on a snoozed row: that one was put out of the way,
-// and waking it is the only thing it offers. A request on its way shows in
-// the offer's place.
-function fixState(
-  pr: PullRequest,
-  snooze: Snooze,
-  fixesPosting: FixesPosting,
-): RowView["fix"] {
-  if (!pr.can_fix_conflict || pr.fix_requested || snooze === "wake") return null;
-  return fixesPosting.has(prKey(pr)) ? "posting" : "offer";
-}
-
 /** What a row can do about snoozing: "offer" to park it, "wake" to bring a
  * snoozed row back, null where rows cannot be snoozed (All). */
 type Snooze = "offer" | "wake" | null;
 
-const SNOOZE: RowAction = {
-  id: "snooze",
-  label: "Snooze",
-  hint: "Snooze until it changes",
-};
-const WAKE: RowAction = { id: "wake", label: "Wake", hint: null };
-const FIX: RowAction = { id: "fix", label: "Fix with Copilot", hint: null };
-const DISMISS: RowAction = { id: "dismiss", label: "Dismiss", hint: null };
+// An action that runs on its one click.
+const immediate = (
+  id: RowActionId,
+  label: string,
+  hint: string | null = null,
+): RowAction => ({ id, label, hint, confirm: null, menuOnly: false });
+
+const SNOOZE = immediate("snooze", "Snooze", "Snooze until it changes");
+const WAKE = immediate("wake", "Wake");
+const DISMISS = immediate("dismiss", "Dismiss");
 
 const MERGED_ACTIONS = [DISMISS];
 
-function rowActions(snooze: Snooze, fix: RowView["fix"]): RowAction[] {
+const WRITE_LABELS: Record<WriteId, string> = {
+  fix: "Fix with Copilot",
+  merge: "Merge",
+  queue: "Queue",
+  update_branch: "Update branch",
+  enable_auto_merge: "Auto-merge",
+  disable_auto_merge: "Cancel auto-merge",
+};
+
+// What the status in the bar reads while the write is on its way.
+const WRITE_PENDING: Record<WriteId, string> = {
+  fix: "Asking",
+  merge: "Merging",
+  queue: "Queueing",
+  update_branch: "Updating",
+  enable_auto_merge: "Arming",
+  disable_auto_merge: "Cancelling",
+};
+
+// Arming and cancelling auto-merge stay out of the bar: a behind row would
+// otherwise carry four worded buttons.
+const MENU_ONLY: ReadonlySet<WriteId> = new Set([
+  "enable_auto_merge",
+  "disable_auto_merge",
+]);
+
+// What the confirming click of a write confirms: the act and, for a write on
+// the merge, the branch it lands on. Only a direct merge names the method.
+// A queue merges by its own setting, and auto-merge ends in whichever of
+// the two the base branch has.
+function confirmHint(id: WriteId, pr: PullRequest): string {
+  const base = pr.base_branch;
+  switch (id) {
+    case "fix":
+      return "Confirm: ask Copilot to fix the conflict";
+    case "merge": {
+      const act = { merge: "merge", squash: "squash and merge", rebase: "rebase and merge" };
+      return `Confirm: ${act[pr.merge_method]} into ${base}`;
+    }
+    case "queue":
+      return `Confirm: add to the merge queue for ${base}`;
+    case "update_branch":
+      return `Confirm: merge ${base} into this branch`;
+    case "enable_auto_merge":
+      return `Confirm: turn on auto-merge into ${base}`;
+    case "disable_auto_merge":
+      return `Confirm: cancel auto-merge into ${base}`;
+  }
+}
+
+// The writes the row offers. None on a snoozed row: that one was put out of
+// the way, and waking it is the only thing it offers. None while one is on
+// its way either: what the PR offers then is about to change. The fix is
+// offered wherever the backend allows it and has not been asked for yet;
+// the rest are the backend's list as it stands.
+function writesFor(pr: PullRequest, snooze: Snooze, pending: boolean): WriteId[] {
+  if (snooze === "wake" || pending) return [];
+  const fix = pr.can_fix_conflict && !pr.fix_requested;
+  return [...(fix ? ["fix" as const] : []), ...pr.actions];
+}
+
+function rowActions(pr: PullRequest, snooze: Snooze, pending: boolean): RowAction[] {
   const actions: RowAction[] = [];
   if (snooze !== null) actions.push(snooze === "wake" ? WAKE : SNOOZE);
-  if (fix === "offer") actions.push(FIX);
+  for (const id of writesFor(pr, snooze, pending)) {
+    actions.push({
+      id,
+      label: WRITE_LABELS[id],
+      hint: null,
+      confirm: confirmHint(id, pr),
+      menuOnly: MENU_ONLY.has(id),
+    });
+  }
   return actions;
 }
 
@@ -337,9 +407,9 @@ function rowView(
   pr: PullRequest,
   now: number,
   snooze: Snooze,
-  fixesPosting: FixesPosting,
+  writesPending: WritesPending,
 ): RowView {
-  const fix = fixState(pr, snooze, fixesPosting);
+  const pending = writesPending.get(prKey(pr)) ?? null;
   return {
     pr,
     draft: pr.is_draft,
@@ -348,8 +418,8 @@ function rowView(
     botNote:
       pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
     waiting: waitingLabel(pr, now),
-    fix,
-    actions: rowActions(snooze, fix),
+    pending: pending && WRITE_PENDING[pending],
+    actions: rowActions(pr, snooze, pending !== null),
   };
 }
 
@@ -404,7 +474,7 @@ function matchesTerms(item: Filterable, terms: string[]): boolean {
 function groupByRepo(
   prs: PullRequest[],
   now: number,
-  fixesPosting: FixesPosting,
+  writesPending: WritesPending,
 ): RepoGroupView[] {
   const groups = new Map<string, PullRequest[]>();
   for (const pr of prs) {
@@ -418,7 +488,7 @@ function groupByRepo(
     .sort(([, a], [, b]) => latest(b) - latest(a))
     .map(([repo, rows]) => ({
       repo,
-      rows: rows.map((pr) => rowView(pr, now, null, fixesPosting)),
+      rows: rows.map((pr) => rowView(pr, now, null, writesPending)),
     }));
 }
 
@@ -445,8 +515,8 @@ export function derivePopover(
   collapsed: Record<SectionKey, boolean>,
   /** Epoch ms; what the waiting labels are measured against. */
   now: number,
-  /** The Copilot fixes being asked for right now; none when omitted. */
-  fixesPosting: FixesPosting = new Set(),
+  /** The writes on their way to GitHub right now; none when omitted. */
+  writesPending: WritesPending = new Map(),
 ): PopoverView {
   // Counts every PR, filtered out or not: the action clears them all. A bot
   // note counts too, since the action is the one way to clear every note at
@@ -499,7 +569,7 @@ export function derivePopover(
               kind: "rows",
               // A row keeps the snooze action of its home section.
               rows: yours.map((pr) =>
-                rowView(pr, now, pr.section === "all" ? null : "offer", fixesPosting),
+                rowView(pr, now, pr.section === "all" ? null : "offer", writesPending),
               ),
               snoozed: null,
             },
@@ -524,17 +594,17 @@ export function derivePopover(
     let body: SectionBody;
     if (rows.length === 0) body = { kind: "empty" };
     else if (key === "all") {
-      body = { kind: "groups", groups: groupByRepo(rows, now, fixesPosting) };
+      body = { kind: "groups", groups: groupByRepo(rows, now, writesPending) };
     } else {
       body = {
         kind: "rows",
-        rows: teamRequestsFirst(awake).map((pr) => rowView(pr, now, "offer", fixesPosting)),
+        rows: teamRequestsFirst(awake).map((pr) => rowView(pr, now, "offer", writesPending)),
         snoozed:
           snoozed.length === 0
             ? null
             : {
                 label: `${snoozed.length} snoozed`,
-                rows: snoozed.map((pr) => rowView(pr, now, "wake", fixesPosting)),
+                rows: snoozed.map((pr) => rowView(pr, now, "wake", writesPending)),
                 // A match folded out of sight would read as "no match".
                 forcedOpen: filtering,
               },

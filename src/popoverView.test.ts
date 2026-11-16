@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   EMPTY_SNAPSHOT,
   type MergedPr,
+  type PrAction,
   type PullRequest,
   type Snapshot,
 } from "./backend";
@@ -11,6 +12,7 @@ import {
   type RowView,
   type SectionKey,
   type SectionView,
+  type WriteId,
   yourTurnCount,
 } from "./popoverView";
 
@@ -43,6 +45,9 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   turn_since: null,
   can_fix_conflict: false,
   fix_requested: false,
+  actions: [],
+  merge_method: "merge",
+  base_branch: "main",
   unread_count: 0,
   bot_unread_count: 0,
   ...overrides,
@@ -926,7 +931,6 @@ test("a row the backend calls fixable offers the Copilot fix, and no other row d
   const view = list(
     synced({ prs: [fixable({ number: 1 }), pr({ number: 2, blocked_reasons: ["conflict"] })] }),
   );
-  expect(rows(view, "mine").map((row) => row.fix)).toEqual(["offer", null]);
   expect(rows(view, "mine").map(labels)).toEqual([
     ["Snooze", "Fix with Copilot"],
     ["Snooze"],
@@ -937,16 +941,16 @@ test("a snoozed row offers no Copilot fix", () => {
   const view = list(
     synced({ prs: [fixable({ number: 1 })], snoozed: ["acme/widgets#1"] }),
   );
-  expect(snoozedGroup(view, "mine").rows[0].fix).toBeNull();
+  expect(labels(snoozedGroup(view, "mine").rows[0])).toEqual(["Wake"]);
 });
 
 test("a row whose fix is being posted shows that in place of the offer", () => {
   const snapshot = synced({ prs: [fixable({ number: 1 }), fixable({ number: 2 })] });
-  const posting = new Set(["acme/widgets#1"]);
+  const posting = new Map([["acme/widgets#1", "fix" as const]]);
   const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, posting);
-  expect(rows(content as ListView, "mine").map((row) => row.fix)).toEqual([
-    "posting",
-    "offer",
+  expect(rows(content as ListView, "mine").map((row) => row.pending)).toEqual([
+    "Asking",
+    null,
   ]);
   // A request on its way is not something to ask for again.
   expect(rows(content as ListView, "mine").map(labels)).toEqual([
@@ -963,7 +967,7 @@ const fixing = (overrides: Partial<PullRequest> = {}) =>
 test("a row with a requested fix says Copilot is fixing after its conflict, and has no fix control", () => {
   const [row] = rows(list(synced({ prs: [fixing()] })), "mine");
   expect(row.state?.all).toEqual(["Merge conflict", "Copilot fixing"]);
-  expect(row.fix).toBeNull();
+  expect(labels(row)).toEqual(["Snooze"]);
 });
 
 test("a row with a requested fix leaves Todo and the your-turn count", () => {
@@ -989,6 +993,104 @@ test("a requested fix beside a review asked of you leaves the row yours, leading
     "Merge conflict",
     "Copilot fixing",
   ]);
+});
+
+test("a row lists the actions the backend offers, under their own words, after Snooze", () => {
+  const offering = (actions: PrAction[]) => labels(rowFor(pr({ actions })));
+  expect(offering(["merge"])).toEqual(["Snooze", "Merge"]);
+  expect(offering(["queue"])).toEqual(["Snooze", "Queue"]);
+  expect(offering(["update_branch", "enable_auto_merge"])).toEqual([
+    "Snooze",
+    "Update branch",
+    "Auto-merge",
+  ]);
+  expect(offering(["disable_auto_merge"])).toEqual(["Snooze", "Cancel auto-merge"]);
+});
+
+test("merging and updating are in the bar and the menu; auto-merge is in the menu only", () => {
+  const row = rowFor(
+    pr({
+      actions: [
+        "merge",
+        "queue",
+        "update_branch",
+        "enable_auto_merge",
+        "disable_auto_merge",
+      ],
+    }),
+  );
+  expect(
+    row.actions.filter((action) => action.menuOnly).map((action) => action.label),
+  ).toEqual(["Auto-merge", "Cancel auto-merge"]);
+});
+
+const confirmHint = (overrides: Partial<PullRequest>) =>
+  rowFor(pr(overrides)).actions.slice(-1)[0]?.confirm;
+
+test("the confirm hint of a merge names the repo's method and the base branch", () => {
+  const merge = (merge_method: PullRequest["merge_method"]) =>
+    confirmHint({ actions: ["merge"], merge_method, base_branch: "main" });
+  expect(merge("rebase")).toBe("Confirm: rebase and merge into main");
+  expect(merge("squash")).toBe("Confirm: squash and merge into main");
+  expect(merge("merge")).toBe("Confirm: merge into main");
+});
+
+test("every other write names its act and the base branch in its confirm hint", () => {
+  const hint = (action: PrAction) =>
+    confirmHint({ actions: [action], merge_method: "rebase", base_branch: "release" });
+  // The queue's own setting decides the method, so none is named.
+  expect(hint("queue")).toBe("Confirm: add to the merge queue for release");
+  expect(hint("update_branch")).toBe("Confirm: merge release into this branch");
+  expect(hint("enable_auto_merge")).toBe("Confirm: turn on auto-merge into release");
+  expect(hint("disable_auto_merge")).toBe("Confirm: cancel auto-merge into release");
+});
+
+test("only the actions that write to GitHub take a confirming click", () => {
+  const row = rowFor(fixable({ actions: ["merge"] }));
+  expect(row.actions.map((action) => [action.label, action.confirm !== null])).toEqual([
+    ["Snooze", false],
+    ["Fix with Copilot", true],
+    ["Merge", true],
+  ]);
+});
+
+test("a snoozed row offers none of the backend's actions", () => {
+  const view = list(
+    synced({
+      prs: [pr({ number: 1, actions: ["merge", "enable_auto_merge"] })],
+      snoozed: ["acme/widgets#1"],
+    }),
+  );
+  expect(labels(snoozedGroup(view, "mine").rows[0])).toEqual(["Wake"]);
+});
+
+test("a row with a write on its way says which, and offers no write until it lands", () => {
+  const snapshot = synced({
+    prs: [
+      pr({ number: 1, actions: ["update_branch", "enable_auto_merge"] }),
+      pr({ number: 2, actions: ["merge"] }),
+    ],
+  });
+  const pending = new Map([["acme/widgets#1", "update_branch" as const]]);
+  const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, pending);
+  const [updating, other] = rows(content as ListView, "mine");
+  expect(updating.pending).toBe("Updating");
+  expect(labels(updating)).toEqual(["Snooze"]);
+  expect(other.pending).toBeNull();
+  expect(labels(other)).toEqual(["Snooze", "Merge"]);
+});
+
+test("each write has its own word while it is on its way", () => {
+  const word = (id: WriteId) => {
+    const snapshot = synced({ prs: [pr()] });
+    const pending = new Map([["acme/widgets#7", id]]);
+    const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, pending);
+    return rows(content as ListView, "mine")[0].pending;
+  };
+  expect(word("merge")).toBe("Merging");
+  expect(word("queue")).toBe("Queueing");
+  expect(word("enable_auto_merge")).toBe("Arming");
+  expect(word("disable_auto_merge")).toBe("Cancelling");
 });
 
 test("a snoozed row's unread stays off its collapsed section's badge", () => {

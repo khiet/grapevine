@@ -469,6 +469,32 @@ impl PrState {
         }
     }
 
+    /// The PR filed under `key` as the Snapshot has it, for a write to act
+    /// on. `Err` is the message the row shows.
+    pub fn find(&self, key: &str) -> Result<PullRequest, String> {
+        let inner = self.inner.lock().unwrap();
+        let pr = inner.snapshot.prs.iter().find(|pr| unread::key(pr) == key);
+        pr.cloned()
+            .ok_or_else(|| "That PR is no longer in the list.".into())
+    }
+
+    /// One of the matching PR's actions was carried out on GitHub. The row
+    /// offers none from here until a sync says what the PR offers now: what
+    /// it offered was true of a PR that has just changed. Call it only after
+    /// the write went through.
+    pub fn acted(&self, key: &str) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(pr) = inner
+            .snapshot
+            .prs
+            .iter_mut()
+            .find(|pr| unread::key(pr) == key)
+        {
+            pr.actions.clear();
+        }
+        inner.no_effects()
+    }
+
     pub fn dismiss_merged(&self, key: &str) -> Effects {
         self.edit_merged(|merged| merged.retain(|e| merged::key(e) != key))
     }
@@ -580,7 +606,7 @@ fn merged_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{BlockedReason, Section, Turn};
+    use crate::github::{BlockedReason, MergeMethod, PrAction, Section, Turn};
     use serde_json::json;
 
     const T1: &str = "2026-07-02T00:00:00Z";
@@ -618,6 +644,10 @@ mod tests {
             turn_since: None,
             can_fix_conflict: false,
             fix_requested: false,
+            actions: Vec::new(),
+            merge_method: crate::github::MergeMethod::Merge,
+            base_branch: String::new(),
+            head_oid: String::new(),
             mergeability_unknown: false,
             node_id: String::new(),
             unread_count: 0,
@@ -1953,6 +1983,33 @@ mod tests {
     }
 
     /// A PR closed without merging is absent from GitHub's answer.
+    /// Until the next sync says what the PR offers now, a row that was just
+    /// acted on offers nothing: the same write must not be asked for twice.
+    #[test]
+    fn a_pr_that_was_acted_on_offers_nothing_until_the_next_sync() {
+        let offering = |number| PullRequest {
+            section: Section::Mine,
+            actions: vec![PrAction::Merge, PrAction::EnableAutoMerge],
+            ..pr("acme/widgets", number, &[])
+        };
+        let state = PrState::default();
+        state.sync_succeeded(vec![offering(7), offering(8)], vec![], NOW_MS);
+
+        let effects = state.acted("acme/widgets#7");
+
+        assert_eq!(effects.snapshot.prs[0].actions, vec![]);
+        assert_eq!(
+            effects.snapshot.prs[1].actions,
+            vec![PrAction::Merge, PrAction::EnableAutoMerge]
+        );
+
+        let synced = state.sync_succeeded(vec![offering(7), offering(8)], vec![], NOW_MS);
+        assert_eq!(
+            synced.snapshot.prs[0].actions,
+            vec![PrAction::Merge, PrAction::EnableAutoMerge]
+        );
+    }
+
     #[test]
     fn departed_prs_that_did_not_merge_yield_no_entry() {
         let departed = vec![pr("acme/widgets", 7, &[])];
@@ -1994,6 +2051,17 @@ mod tests {
                 turn_since: Some(1_784_205_000_000),
                 can_fix_conflict: true,
                 fix_requested: true,
+                actions: vec![
+                    PrAction::Merge,
+                    PrAction::Queue,
+                    PrAction::UpdateBranch,
+                    PrAction::EnableAutoMerge,
+                    PrAction::DisableAutoMerge,
+                ],
+                merge_method: MergeMethod::Rebase,
+                base_branch: "main".into(),
+                // Internal: what a write is checked against, never shown.
+                head_oid: "abc123".into(),
                 // Internal: says how to read the reasons, not what to show.
                 mergeability_unknown: true,
                 // Internal: the frontend names a PR by key, never by node id.
@@ -2057,6 +2125,15 @@ mod tests {
                     "turn_since": 1_784_205_000_000u64,
                     "can_fix_conflict": true,
                     "fix_requested": true,
+                    "actions": [
+                        "merge",
+                        "queue",
+                        "update_branch",
+                        "enable_auto_merge",
+                        "disable_auto_merge"
+                    ],
+                    "merge_method": "rebase",
+                    "base_branch": "main",
                     "unread_count": 3,
                     "bot_unread_count": 8
                 }],

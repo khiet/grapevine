@@ -50,6 +50,11 @@ impl SyncState {
         self.pr_state.begin_fix(key)
     }
 
+    /// See [`PrState::find`].
+    pub fn find(&self, key: &str) -> Result<PullRequest, String> {
+        self.pr_state.find(key)
+    }
+
     /// See [`PrState::abandon_fix`].
     pub fn abandon_fix(&self, key: &str) {
         self.pr_state.abandon_fix(key)

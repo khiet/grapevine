@@ -121,6 +121,46 @@ pub enum Turn {
     Theirs,
 }
 
+/// Something the viewer can do to one of their PRs from its row, each a write
+/// to GitHub made only on a confirmed click. Declaration order is the order
+/// the row lists them in.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrAction {
+    Merge,
+    /// Stands in for `Merge` where the base branch has a merge queue.
+    Queue,
+    UpdateBranch,
+    EnableAutoMerge,
+    DisableAutoMerge,
+}
+
+/// How a repo's PRs are merged from the row (see [`merge_method_for`]).
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+impl MergeMethod {
+    /// The value of GitHub's `PullRequestMergeMethod`.
+    fn graphql(self) -> &'static str {
+        match self {
+            MergeMethod::Merge => "MERGE",
+            MergeMethod::Squash => "SQUASH",
+            MergeMethod::Rebase => "REBASE",
+        }
+    }
+}
+
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
 /// Change both together.
 #[derive(Debug, Clone, Serialize)]
@@ -248,14 +288,29 @@ pub struct PullRequest {
     /// `updated_at`, which any unrelated comment moves.
     pub turn_since: Option<u64>,
     /// Whether the row may offer to ask Copilot to resolve the PR's merge
-    /// conflict (see [`can_fix_conflict`]). The one field that gates a write
-    /// to GitHub: [`Client::request_conflict_fix`] refuses a PR without it.
+    /// conflict (see [`can_fix_conflict`]). It gates that write to GitHub:
+    /// [`Client::request_conflict_fix`] refuses a PR without it.
     /// Same property-not-event rule as `blocked_reasons`.
     pub can_fix_conflict: bool,
     /// Copilot has been asked to resolve the conflict and the request is
     /// still live; filled in from the fix requests after fetch, always false
     /// out of this module. The row shows it in place of the fix control.
     pub fix_requested: bool,
+    /// What the row may offer to do to the PR on GitHub (see
+    /// [`actions_for`]); empty outside Mine and on a draft.
+    /// [`Client::act_on_pr`] refuses an action that is not listed here. Same
+    /// property-not-event rule as `blocked_reasons`.
+    pub actions: Vec<PrAction>,
+    /// The method `Merge` and `EnableAutoMerge` use in this PR's repo. The
+    /// row names it in the confirm hint; a queue ignores it.
+    pub merge_method: MergeMethod,
+    /// The branch the PR merges into, for the confirm hint.
+    pub base_branch: String,
+    /// The head commit this row was built from. Sent with a write as the
+    /// expected head, so a PR that moved since the sync is refused by GitHub
+    /// instead of being acted on unseen.
+    #[serde(skip)]
+    pub head_oid: String,
     /// GitHub had not worked mergeability out for this poll, so the empty
     /// `blocked_reasons` say nothing about a conflict either way.
     #[serde(skip)]
@@ -657,9 +712,8 @@ impl<T: Transport> Client<'_, T> {
     }
 
     /// Asks Copilot to resolve `pr`'s merge conflict by commenting on it as
-    /// the viewer. The only write this module makes. It posts nothing for a
-    /// PR the eligibility rule turns down, so no caller can widen what
-    /// Grapevine writes to.
+    /// the viewer. It posts nothing for a PR the eligibility rule turns
+    /// down, so no caller can widen what Grapevine writes to.
     async fn request_conflict_fix(&self, pr: &PullRequest) -> Result<(), GithubError> {
         if !pr.can_fix_conflict || pr.node_id.is_empty() {
             return Err(GithubError::Other(
@@ -680,6 +734,78 @@ impl<T: Transport> Client<'_, T> {
             .and_then(|d| d.pointer("/addComment/subject/id"))
             .is_some_and(|id| !id.is_null());
         if posted {
+            Ok(())
+        } else {
+            Err(error_from_graphql(response.errors))
+        }
+    }
+
+    /// Does `action` to `pr` on GitHub as the viewer. It sends nothing for an
+    /// action the row does not offer, so no caller can widen what Grapevine
+    /// writes. Every mutation that takes one carries the head commit the row
+    /// was built from, and GitHub turns the write down when the PR has moved
+    /// past it; cancelling auto-merge is the one whose input has no such
+    /// field.
+    async fn act_on_pr(&self, pr: &PullRequest, action: PrAction) -> Result<(), GithubError> {
+        let needs_head = action != PrAction::DisableAutoMerge;
+        if !pr.actions.contains(&action)
+            || pr.node_id.is_empty()
+            || (needs_head && pr.head_oid.is_empty())
+        {
+            return Err(GithubError::Other(
+                "That is no longer on offer for this PR.".into(),
+            ));
+        }
+        let method = pr.merge_method.graphql();
+        let (mutation, query, variables) = match action {
+            PrAction::Merge => (
+                "mergePullRequest",
+                "mutation($pr: ID!, $head: GitObjectID!, $method: PullRequestMergeMethod!) { \
+                   mergePullRequest(input: { pullRequestId: $pr, expectedHeadOid: $head, \
+                                             mergeMethod: $method }) { clientMutationId } \
+                 }",
+                json!({ "pr": pr.node_id, "head": pr.head_oid, "method": method }),
+            ),
+            PrAction::Queue => (
+                "enqueuePullRequest",
+                "mutation($pr: ID!, $head: GitObjectID!) { \
+                   enqueuePullRequest(input: { pullRequestId: $pr, expectedHeadOid: $head }) \
+                     { clientMutationId } \
+                 }",
+                json!({ "pr": pr.node_id, "head": pr.head_oid }),
+            ),
+            PrAction::UpdateBranch => (
+                "updatePullRequestBranch",
+                "mutation($pr: ID!, $head: GitObjectID!) { \
+                   updatePullRequestBranch(input: { pullRequestId: $pr, expectedHeadOid: $head, \
+                                                    updateMethod: MERGE }) { clientMutationId } \
+                 }",
+                json!({ "pr": pr.node_id, "head": pr.head_oid }),
+            ),
+            PrAction::EnableAutoMerge => (
+                "enablePullRequestAutoMerge",
+                "mutation($pr: ID!, $head: GitObjectID!, $method: PullRequestMergeMethod!) { \
+                   enablePullRequestAutoMerge(input: { pullRequestId: $pr, expectedHeadOid: $head, \
+                                                       mergeMethod: $method }) { clientMutationId } \
+                 }",
+                json!({ "pr": pr.node_id, "head": pr.head_oid, "method": method }),
+            ),
+            PrAction::DisableAutoMerge => (
+                "disablePullRequestAutoMerge",
+                "mutation($pr: ID!) { \
+                   disablePullRequestAutoMerge(input: { pullRequestId: $pr }) { clientMutationId } \
+                 }",
+                json!({ "pr": pr.node_id }),
+            ),
+        };
+        let response = self.graphql(query, variables).await?;
+        // A mutation GitHub turns down answers null where its payload goes.
+        let done = response
+            .data
+            .as_ref()
+            .and_then(|d| d.get(mutation))
+            .is_some_and(|payload| !payload.is_null());
+        if done {
             Ok(())
         } else {
             Err(error_from_graphql(response.errors))
@@ -922,6 +1048,12 @@ pub async fn request_conflict_fix(token: &str, pr: &PullRequest) -> Result<(), G
     Client::live(token).request_conflict_fix(pr).await
 }
 
+/// Does `action` to `pr` on GitHub as the token's user. Fails without writing
+/// when the row does not offer it.
+pub async fn act_on_pr(token: &str, pr: &PullRequest, action: PrAction) -> Result<(), GithubError> {
+    Client::live(token).act_on_pr(pr, action).await
+}
+
 /// Reads the `rateLimit` field out of a response; `None` rather than failing
 /// the sync when it is missing or malformed.
 fn collect_rate_limit(data: &Value) -> Option<RateLimit> {
@@ -1150,6 +1282,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot
         "{alias}: repository(owner: {owner}, name: {name}) {{ \
            nameWithOwner \
            owner {{ avatarUrl }} \
+           rebaseMergeAllowed viewerDefaultMergeMethod \
            {copilot}\
            pullRequests(states: OPEN, first: {PAGE_SIZE}{after}, \
                         orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
@@ -1157,6 +1290,8 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot
              nodes {{ \
                id number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
                isCrossRepository isDraft mergeable mergeStateStatus reviewDecision \
+               headRefOid baseRefName isMergeQueueEnabled \
+               viewerCanUpdateBranch viewerCanEnableAutoMerge viewerCanDisableAutoMerge \
                viewerLatestReview {{ state }} \
                mergeQueueEntry {{ position }} \
                autoMergeRequest {{ enabledAt }} \
@@ -1195,6 +1330,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         .and_then(Value::as_str)
         .unwrap_or_default();
     let copilot_enabled = copilot_enabled(repo);
+    let merge_method = merge_method_for(repo);
     let nodes = repo
         .pointer("/pullRequests/nodes")
         .and_then(Value::as_array);
@@ -1221,6 +1357,13 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         let ci_raised = blocked_reasons.contains(&BlockedReason::Ci);
         let can_fix_conflict =
             can_fix_conflict(node, section, is_draft, &blocked_reasons, copilot_enabled);
+        let actions = actions_for(node, section, is_draft, &blocked_reasons, ready_to_merge);
+        let text = |name: &str| {
+            node.get(name)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
         out.push(PullRequest {
             number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
             title: node
@@ -1303,6 +1446,10 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             turn_since: None,
             can_fix_conflict,
             fix_requested: false,
+            actions,
+            merge_method,
+            base_branch: text("baseRefName"),
+            head_oid: text("headRefOid"),
             mergeability_unknown: node.get("mergeable").and_then(Value::as_str) == Some("UNKNOWN"),
             node_id: node
                 .get("id")
@@ -1351,6 +1498,67 @@ fn can_fix_conflict(
         && blocked_reasons.contains(&BlockedReason::Conflict)
         && node.get("isCrossRepository").and_then(Value::as_bool) == Some(false)
         && copilot_enabled
+}
+
+/// The method the row merges by in this repo: rebase wherever the repo allows
+/// it, otherwise the method GitHub would preselect for the viewer. There is
+/// no picker, so this is the whole rule. A repo that reports neither merges
+/// by merge commit, which is what GitHub does when no method is sent.
+fn merge_method_for(repo: &Value) -> MergeMethod {
+    if repo.get("rebaseMergeAllowed").and_then(Value::as_bool) == Some(true) {
+        return MergeMethod::Rebase;
+    }
+    match repo.get("viewerDefaultMergeMethod").and_then(Value::as_str) {
+        Some("SQUASH") => MergeMethod::Squash,
+        Some("REBASE") => MergeMethod::Rebase,
+        _ => MergeMethod::Merge,
+    }
+}
+
+/// What the row may offer to do to the PR, in the order it lists them. Only
+/// the viewer's own PRs offer anything, and never a draft. Each action is
+/// offered on its own condition:
+///
+/// - the merge, on a PR that is ready for it; where the base branch has a
+///   merge queue the offer is the queue instead, since GitHub refuses a
+///   direct merge there;
+/// - the branch update, on a PR held up by being behind its base. GitHub
+///   allows the update on any PR whose base has moved, so its permission
+///   alone would put the offer on most rows;
+/// - arming and cancelling auto-merge, wherever GitHub says the viewer can.
+///   Cancelling also needs auto-merge to be armed: the permission alone is
+///   not that.
+///
+/// `reasons` and `ready` must be the ones read off this `node`.
+fn actions_for(
+    node: &Value,
+    section: Section,
+    is_draft: bool,
+    reasons: &[BlockedReason],
+    ready: bool,
+) -> Vec<PrAction> {
+    if section != Section::Mine || is_draft {
+        return Vec::new();
+    }
+    let allowed = |name: &str| node.get(name).and_then(Value::as_bool) == Some(true);
+    let mut actions = Vec::new();
+    if ready {
+        actions.push(if allowed("isMergeQueueEnabled") {
+            PrAction::Queue
+        } else {
+            PrAction::Merge
+        });
+    }
+    if reasons.contains(&BlockedReason::Behind) && allowed("viewerCanUpdateBranch") {
+        actions.push(PrAction::UpdateBranch);
+    }
+    if allowed("viewerCanEnableAutoMerge") {
+        actions.push(PrAction::EnableAutoMerge);
+    }
+    if is_set(node, "autoMergeRequest") && allowed("viewerCanDisableAutoMerge") {
+        actions.push(PrAction::DisableAutoMerge);
+    }
+    actions
 }
 
 /// A PR's unread-eligible activity as ascending timestamps, split by who
@@ -5153,6 +5361,305 @@ mod tests {
             failed,
             Err(GithubError::Other(
                 "GitHub error: Resource not accessible.".into()
+            ))
+        );
+    }
+
+    /// One fetch of a single PR in a watched repo with `repo_fields` laid
+    /// over the repo's own.
+    fn fetch_in_repo(repo_fields: Value, node: Value) -> PullRequest {
+        let repo = with(repo_named("acme/widgets", vec![node], None), repo_fields);
+        let github = Canned::new(vec![ok(prs_round(5000, vec![repo]))]);
+        fetch_open(&github, &["acme/widgets"])
+            .unwrap()
+            .prs
+            .remove(0)
+    }
+
+    fn actions(node: Value) -> Vec<PrAction> {
+        fetch_in_repo(json!({}), node).actions
+    }
+
+    fn armed_auto_merge() -> Value {
+        json!({ "enabledAt": "2026-07-11T09:00:00Z" })
+    }
+
+    #[test]
+    fn a_ready_pr_offers_the_merge() {
+        assert_eq!(actions(ready_node(json!({}))), vec![PrAction::Merge]);
+    }
+
+    #[test]
+    fn a_ready_pr_behind_a_merge_queue_offers_the_queue_in_place_of_the_merge() {
+        let queued_repo = ready_node(json!({ "isMergeQueueEnabled": true }));
+        assert_eq!(actions(queued_repo), vec![PrAction::Queue]);
+    }
+
+    #[test]
+    fn a_pr_that_is_not_ready_offers_neither_merge_nor_queue() {
+        let unreviewed = ready_node(json!({
+            "reviewDecision": "REVIEW_REQUIRED",
+            "isMergeQueueEnabled": true,
+        }));
+        assert_eq!(actions(unreviewed), vec![]);
+    }
+
+    #[test]
+    fn a_behind_pr_offers_the_branch_update_where_github_lets_the_viewer() {
+        let behind = |can: bool| {
+            ready_node(json!({ "mergeStateStatus": "BEHIND", "viewerCanUpdateBranch": can }))
+        };
+        assert_eq!(actions(behind(true)), vec![PrAction::UpdateBranch]);
+        assert_eq!(actions(behind(false)), vec![]);
+        // GitHub allows the update on any PR with a newer base; the row
+        // offers it only where being behind is what holds the PR up.
+        let current = ready_node(json!({ "viewerCanUpdateBranch": true }));
+        assert_eq!(actions(current), vec![PrAction::Merge]);
+    }
+
+    #[test]
+    fn auto_merge_is_offered_where_github_lets_the_viewer_arm_it() {
+        let waiting = ready_node(json!({
+            "reviewDecision": "REVIEW_REQUIRED",
+            "viewerCanEnableAutoMerge": true,
+        }));
+        assert_eq!(actions(waiting), vec![PrAction::EnableAutoMerge]);
+    }
+
+    #[test]
+    fn cancelling_is_offered_on_an_armed_pr_where_github_lets_the_viewer() {
+        let armed = |can: bool| {
+            ready_node(json!({
+                "autoMergeRequest": armed_auto_merge(),
+                "viewerCanDisableAutoMerge": can,
+            }))
+        };
+        assert_eq!(actions(armed(true)), vec![PrAction::DisableAutoMerge]);
+        assert_eq!(actions(armed(false)), vec![]);
+        // Permission alone is not an armed auto-merge.
+        let unarmed = ready_node(json!({
+            "reviewDecision": "REVIEW_REQUIRED",
+            "viewerCanDisableAutoMerge": true,
+        }));
+        assert_eq!(actions(unarmed), vec![]);
+    }
+
+    #[test]
+    fn a_behind_pr_lists_the_update_ahead_of_auto_merge() {
+        let behind = ready_node(json!({
+            "mergeStateStatus": "BEHIND",
+            "viewerCanUpdateBranch": true,
+            "viewerCanEnableAutoMerge": true,
+        }));
+        assert_eq!(
+            actions(behind),
+            vec![PrAction::UpdateBranch, PrAction::EnableAutoMerge]
+        );
+    }
+
+    /// Everything GitHub would allow, on a PR that is not the viewer's or is
+    /// a draft.
+    #[test]
+    fn nothing_is_offered_outside_mine_or_on_a_draft() {
+        let allowed = json!({
+            "mergeStateStatus": "BEHIND",
+            "viewerCanUpdateBranch": true,
+            "viewerCanEnableAutoMerge": true,
+            "viewerCanDisableAutoMerge": true,
+            "autoMergeRequest": armed_auto_merge(),
+        });
+        let participated = with(
+            allowed.clone(),
+            json!({ "viewerDidAuthor": false, "viewerSubscription": "SUBSCRIBED" }),
+        );
+        assert_eq!(actions(ready_node(participated)), vec![]);
+        let draft = with(allowed, json!({ "isDraft": true }));
+        assert_eq!(actions(ready_node(draft)), vec![]);
+    }
+
+    fn merge_method(repo_fields: Value) -> MergeMethod {
+        fetch_in_repo(repo_fields, ready_node(json!({}))).merge_method
+    }
+
+    #[test]
+    fn a_repo_that_allows_rebase_merges_by_rebase_whatever_its_default() {
+        for default in ["MERGE", "SQUASH", "REBASE"] {
+            let repo = json!({ "rebaseMergeAllowed": true, "viewerDefaultMergeMethod": default });
+            assert_eq!(merge_method(repo), MergeMethod::Rebase);
+        }
+    }
+
+    #[test]
+    fn a_repo_without_rebase_merges_by_its_default_method() {
+        let repo = |default: &str| json!({ "rebaseMergeAllowed": false, "viewerDefaultMergeMethod": default });
+        assert_eq!(merge_method(repo("SQUASH")), MergeMethod::Squash);
+        assert_eq!(merge_method(repo("MERGE")), MergeMethod::Merge);
+    }
+
+    /// A PR offering `action`, in a repo that merges by squash.
+    fn offering(action: PrAction) -> PullRequest {
+        let node = match action {
+            PrAction::Merge => json!({}),
+            PrAction::Queue => json!({ "isMergeQueueEnabled": true }),
+            PrAction::UpdateBranch => {
+                json!({ "mergeStateStatus": "BEHIND", "viewerCanUpdateBranch": true })
+            }
+            PrAction::EnableAutoMerge => json!({
+                "reviewDecision": "REVIEW_REQUIRED",
+                "viewerCanEnableAutoMerge": true,
+            }),
+            PrAction::DisableAutoMerge => json!({
+                "autoMergeRequest": armed_auto_merge(),
+                "viewerCanDisableAutoMerge": true,
+            }),
+        };
+        let node = with(
+            json!({ "id": "PR_kwDOready7", "headRefOid": "abc123", "baseRefName": "main" }),
+            node,
+        );
+        fetch_in_repo(
+            json!({ "rebaseMergeAllowed": false, "viewerDefaultMergeMethod": "SQUASH" }),
+            ready_node(node),
+        )
+    }
+
+    /// What GitHub answers a mutation that went through.
+    fn done(mutation: &str) -> HttpResponse {
+        ok(json!({ mutation: { "clientMutationId": null } }))
+    }
+
+    #[test]
+    fn the_base_branch_is_read_onto_the_row() {
+        assert_eq!(offering(PrAction::Merge).base_branch, "main");
+    }
+
+    #[test]
+    fn merging_sends_the_repos_method_and_the_head_the_row_was_built_from() {
+        let github = Canned::new(vec![done("mergePullRequest")]);
+
+        run(github
+            .client()
+            .act_on_pr(&offering(PrAction::Merge), PrAction::Merge))
+        .unwrap();
+
+        assert_eq!(github.request_count(), 1);
+        assert!(github.query(0).contains(
+            "mergePullRequest(input: { pullRequestId: $pr, expectedHeadOid: $head, \
+             mergeMethod: $method })"
+        ));
+        assert_eq!(
+            github.variables(0),
+            json!({ "pr": "PR_kwDOready7", "head": "abc123", "method": "SQUASH" })
+        );
+    }
+
+    #[test]
+    fn queueing_sends_the_head_and_no_method() {
+        let github = Canned::new(vec![done("enqueuePullRequest")]);
+
+        run(github
+            .client()
+            .act_on_pr(&offering(PrAction::Queue), PrAction::Queue))
+        .unwrap();
+
+        assert!(github
+            .query(0)
+            .contains("enqueuePullRequest(input: { pullRequestId: $pr, expectedHeadOid: $head })"));
+        assert_eq!(
+            github.variables(0),
+            json!({ "pr": "PR_kwDOready7", "head": "abc123" })
+        );
+    }
+
+    #[test]
+    fn updating_the_branch_merges_the_base_in_at_the_head_the_row_was_built_from() {
+        let github = Canned::new(vec![done("updatePullRequestBranch")]);
+        let pr = offering(PrAction::UpdateBranch);
+
+        run(github.client().act_on_pr(&pr, PrAction::UpdateBranch)).unwrap();
+
+        assert!(github.query(0).contains(
+            "updatePullRequestBranch(input: { pullRequestId: $pr, expectedHeadOid: $head, \
+             updateMethod: MERGE })"
+        ));
+        assert_eq!(
+            github.variables(0),
+            json!({ "pr": "PR_kwDOready7", "head": "abc123" })
+        );
+    }
+
+    #[test]
+    fn arming_auto_merge_sends_the_same_method_a_merge_would() {
+        let github = Canned::new(vec![done("enablePullRequestAutoMerge")]);
+        let pr = offering(PrAction::EnableAutoMerge);
+
+        run(github.client().act_on_pr(&pr, PrAction::EnableAutoMerge)).unwrap();
+
+        assert!(github.query(0).contains(
+            "enablePullRequestAutoMerge(input: { pullRequestId: $pr, expectedHeadOid: $head, \
+             mergeMethod: $method })"
+        ));
+        assert_eq!(
+            github.variables(0),
+            json!({ "pr": "PR_kwDOready7", "head": "abc123", "method": "SQUASH" })
+        );
+    }
+
+    /// GitHub's input for this one takes no expected head.
+    #[test]
+    fn cancelling_auto_merge_names_the_pr_alone() {
+        let github = Canned::new(vec![done("disablePullRequestAutoMerge")]);
+        let pr = offering(PrAction::DisableAutoMerge);
+
+        run(github.client().act_on_pr(&pr, PrAction::DisableAutoMerge)).unwrap();
+
+        assert!(github
+            .query(0)
+            .contains("disablePullRequestAutoMerge(input: { pullRequestId: $pr })"));
+        assert_eq!(github.variables(0), json!({ "pr": "PR_kwDOready7" }));
+    }
+
+    #[test]
+    fn an_action_the_row_does_not_offer_is_refused_and_nothing_is_sent() {
+        let github = Canned::new(vec![]);
+
+        let refused = run(github
+            .client()
+            .act_on_pr(&offering(PrAction::UpdateBranch), PrAction::Merge));
+
+        assert_eq!(
+            refused,
+            Err(GithubError::Other(
+                "That is no longer on offer for this PR.".into()
+            ))
+        );
+        assert_eq!(github.request_count(), 0);
+    }
+
+    /// How GitHub answers a head that moved since the row was built: a null
+    /// payload and the reason, with the PR left as it was.
+    #[test]
+    fn a_pr_that_moved_since_the_row_was_built_fails_with_githubs_message() {
+        let github = Canned::new(vec![answer(
+            200,
+            &[],
+            json!({
+                "data": { "mergePullRequest": null },
+                "errors": [{
+                    "type": "UNPROCESSABLE",
+                    "message": "Head branch was modified. Review and try the merge again."
+                }]
+            }),
+        )]);
+
+        let failed = run(github
+            .client()
+            .act_on_pr(&offering(PrAction::Merge), PrAction::Merge));
+
+        assert_eq!(
+            failed,
+            Err(GithubError::Other(
+                "GitHub error: Head branch was modified. Review and try the merge again.".into()
             ))
         );
     }

@@ -180,6 +180,7 @@ pub fn run() {
             commands::snooze,
             commands::wake,
             commands::fix_conflict,
+            commands::act_on_pr,
             commands::get_poll_interval,
             commands::set_poll_interval,
             commands::get_appearance,
