@@ -2105,6 +2105,7 @@ mod tests {
         );
     }
 
+    /// A PR closed without merging is absent from GitHub's answer.
     #[test]
     fn departed_prs_that_did_not_merge_yield_no_entry() {
         let departed = vec![pr("acme/widgets", 7, &[])];
