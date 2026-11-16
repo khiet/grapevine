@@ -51,7 +51,7 @@ export interface RowState {
   more: string | null;
   /** Whether `all` says more than the row does: states are folded, or one
    * has a longer form than the row has room for. */
-  tip: boolean;
+  hasTip: boolean;
   /** Every state in priority order, the reason first, each in its full
    * form: a failing check is named here and nowhere on the row. */
   all: string[];
@@ -277,7 +277,7 @@ function rowState(pr: PullRequest): RowState | null {
     reason: first.text,
     tone: first.tone,
     more: rest.length > 0 ? `+${rest.length}` : null,
-    tip: rest.length > 0 || states.some((state) => state.detail !== null),
+    hasTip: rest.length > 0 || states.some((state) => state.detail !== null),
     all: states.map((state) => state.detail ?? state.text),
   };
 }

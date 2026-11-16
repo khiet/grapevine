@@ -509,7 +509,7 @@ export function GlyphSvg({
 function StateView({ state }: { state: RowState }) {
   const className = `pr-state is-${state.tone}`;
   const reason = <span className="pr-state-reason">{state.reason}</span>;
-  if (!state.tip) return <span className={className}>{reason}</span>;
+  if (!state.hasTip) return <span className={className}>{reason}</span>;
   return (
     <span
       className={`${className} pr-tip`}

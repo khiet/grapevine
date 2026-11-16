@@ -351,15 +351,13 @@ test("each deploy state reads in words in its tone", () => {
   ]);
 });
 
-// The visible copy is the name: no aria-label to drift from it. The title
-// is where the exact times live.
-test("the deploy status is named by its own words and tips the exact times", () => {
+// The row abbreviates; the title is where the exact times live.
+test("the deploy status tips the exact merge and deploy times", () => {
   const { status } = renderDeploy({
     state: "deployed",
     completed_at: at(2026, 7, 11, 12, 0).toISOString(),
     url: RUN,
   });
-  expect(status).not.toContain("aria-label");
   expect(status).toMatch(/title="Merged [^"]*\nDeployed 11 Jul 2026, 12:00"/);
 });
 
@@ -377,7 +375,7 @@ test("the deploy control sits outside the row button, over a hidden copy in the 
   expect(row).toMatch(
     /<span class="pr-origin">.*<span class="pr-state is-warn pr-deploy-space" aria-hidden="true">Deploy failed<\/span><\/span>/,
   );
-  // The merge time is alone at the top right again.
+  // The merge time has the top right to itself.
   expect(row).toMatch(
     /<span class="pr-title">[^<]*<\/span><span class="pr-updated">[^<]+<\/span><\/span>/,
   );

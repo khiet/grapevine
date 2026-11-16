@@ -50,7 +50,7 @@ export interface PullRequest {
    * when the PR is not queued. Reads "Queued 2nd". */
   merge_queue_position: number | null;
   /** Names of the failed checks behind the "ci" reason, GitHub's order; the
-   * CI reason names the first. Empty when "ci" is not raised, and when it is
+   * state's tooltip names the first. Empty when "ci" is not raised, and when it is
    * raised with no check to name. */
   failing_checks: string[];
   /** The PR has more checks than the backend read, so failing_checks may be

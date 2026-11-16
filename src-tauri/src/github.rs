@@ -206,13 +206,13 @@ pub struct PullRequest {
     /// never counts as unread.
     pub merge_queue_position: Option<u64>,
     /// Names of the failed checks behind the `Ci` reason, in GitHub's order;
-    /// the CI pill names the first. Only the checks that gate the merge are
+    /// the state's tooltip names the first. Only the checks that gate the merge are
     /// listed (see [`checks_for`]). Empty whenever `Ci` is not raised, and
     /// also when it is raised from the rollup alone, with no check to name.
     pub failing_checks: Vec<String>,
     /// Whether the PR has more checks than the one page read, so
-    /// `failing_checks` may be short of the full list. The pill then says
-    /// "+ more" and never a count.
+    /// `failing_checks` may be short of the full list. The tooltip then
+    /// says "and more" and never a count.
     pub failing_checks_truncated: bool,
     /// Whether a check that gates the merge is still running and none has
     /// failed. Renders as the neutral Running mark. Suppressed on drafts.
@@ -1474,10 +1474,10 @@ fn blocked_reasons_for(node: &Value, checks: &Checks) -> Vec<BlockedReason> {
     // An unresolved thread blocks only where the base branch says it does;
     // elsewhere it is the neutral `threads_open` note. Where it blocks, it
     // flags independently of the other signals: the thread needs an answer
-    // whether or not reviews or CI are done, so the pill coexists with any
-    // other reason (and with the green check). The draft/UNKNOWN suppression
-    // above gates it, as it does every reason here, so the pill sits out the
-    // poll after a push while GitHub recomputes mergeability.
+    // whether or not reviews or CI are done, so the reason coexists with any
+    // other (and with an approval). The draft/UNKNOWN suppression above gates
+    // it, as it does every reason here, so it sits out the poll after a push
+    // while GitHub recomputes mergeability.
     if has_unresolved_thread(node) && requires_thread_resolution(node) {
         reasons.push(BlockedReason::Threads);
     }

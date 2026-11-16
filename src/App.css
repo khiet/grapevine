@@ -751,8 +751,7 @@ body {
 }
 
 .pr-repo {
-  /* Gives way well before a check name in the row's state does: on a row
-     with a failing check, the name is the news. */
+  /* Gives way well before the row's state does: the state is the news. */
   flex-shrink: 8;
   overflow: hidden;
   text-overflow: ellipsis;

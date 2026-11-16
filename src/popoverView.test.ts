@@ -127,7 +127,7 @@ test("a row with one state shows it in words, with nothing folded", () => {
     reason: "Approved",
     tone: "ok",
     more: null,
-    tip: false,
+    hasTip: false,
     all: ["Approved"],
   });
 });
@@ -145,7 +145,7 @@ test("a row that is approved, running checks and blocked at once leads with the 
     reason: "Unresolved threads",
     tone: "warn",
     more: "+2",
-    tip: true,
+    hasTip: true,
     all: ["Unresolved threads", "Checks running", "Approved"],
   });
 });
@@ -166,7 +166,7 @@ test("states run blockers, queue, Copilot, checks, auto-merge, open threads, app
     reason: "Merge conflict",
     tone: "warn",
     more: "+8",
-    tip: true,
+    hasTip: true,
     all: [
       "Merge conflict",
       "Behind base",
@@ -237,7 +237,7 @@ test("several blockers keep the backend's severity order", () => {
     reason: "CI failing",
     tone: "warn",
     more: "+2",
-    tip: true,
+    hasTip: true,
     all: ["CI failing", "Changes requested", "Behind base"],
   });
 });
@@ -251,7 +251,7 @@ test("the row says CI failing and leaves the check's name to the tooltip", () =>
     reason: "CI failing",
     tone: "warn",
     more: null,
-    tip: true,
+    hasTip: true,
     all: ["CI failing: e2e-safari"],
   });
 });
@@ -261,7 +261,7 @@ test("a CI failure with no check to name has nothing more to say", () => {
     reason: "CI failing",
     tone: "warn",
     more: null,
-    tip: false,
+    hasTip: false,
     all: ["CI failing"],
   });
 });
@@ -274,7 +274,7 @@ test("with several checks failing the tooltip names the first and says there are
     tone: "warn",
     // Further failing checks are not further states.
     more: null,
-    tip: true,
+    hasTip: true,
     all: ["CI failing: e2e-safari and more"],
   });
 });
@@ -307,14 +307,14 @@ test("an open thread that blocks nothing is neutral, after auto-merge and ahead 
     reason: "Auto-merge on",
     tone: "neutral",
     more: "+2",
-    tip: true,
+    hasTip: true,
     all: ["Auto-merge on", "Unresolved threads", "Approved"],
   });
   expect(state({ threads_open: true })).toEqual({
     reason: "Unresolved threads",
     tone: "neutral",
     more: null,
-    tip: false,
+    hasTip: false,
     all: ["Unresolved threads"],
   });
 });
@@ -776,7 +776,7 @@ test("a your-turn row asked for review leads with the request, in the accent", (
     reason: "Review requested",
     tone: "accent",
     more: "+2",
-    tip: true,
+    hasTip: true,
     all: ["Review requested", "CI failing", "Approved"],
   });
 });
@@ -793,7 +793,7 @@ test("a blocked your-turn row leads with its primary blocker", () => {
     reason: "Merge conflict",
     tone: "warn",
     more: "+3",
-    tip: true,
+    hasTip: true,
     all: ["Merge conflict", "Unresolved threads", "Queued 1st", "Approved"],
   });
 });
@@ -805,7 +805,7 @@ test("a ready your-turn row leads with Mergeable", () => {
     reason: "Mergeable",
     tone: "ok",
     more: "+2",
-    tip: true,
+    hasTip: true,
     all: ["Mergeable", "Auto-merge on", "Approved"],
   });
 });
