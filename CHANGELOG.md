@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/khiet/grapevine/compare/grapevine-v0.14.1...grapevine-v0.15.0) (2026-11-16)
+
+
+### Features
+
+* shorter row states, required-only thread blocker, deploy status in words ([#139](https://github.com/khiet/grapevine/issues/139)) ([73dc376](https://github.com/khiet/grapevine/commit/73dc3762de0cb69777ba205575eff384bb8784fc)), closes [#138](https://github.com/khiet/grapevine/issues/138)
+
 ## [0.14.1](https://github.com/khiet/grapevine/compare/grapevine-v0.14.0...grapevine-v0.14.1) (2026-11-13)
 
 
