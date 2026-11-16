@@ -4,16 +4,30 @@ name: release
 # Nothing is built until that PR is merged: the merge is the deliberate
 # "ship it" signal, and it alone marks a release created and gates the builds.
 #
+# A cut release is built only after the full CI suite passes on that same
+# commit. The ci run that the push itself triggers cannot serve as that gate:
+# it is a separate workflow run, and a later push to main cancels it.
+#
 # A release is built by one job per platform. Each attaches its own downloads
 # and hands over a fragment of the updater manifest; publish-manifest merges
-# the fragments and attaches the one manifest installed apps poll. The
-# manifest is the switch that offers a release to installed apps, so it is
-# published last and only when every platform built.
+# the fragments and attaches the one manifest installed apps poll.
+#
+# release-please cuts the release as a draft, and publish-release publishes it
+# last, only when every platform built. Installed apps poll the manifest of
+# the latest published release, so a release published before its manifest is
+# attached breaks their update check; a draft that fails anywhere above stays
+# invisible to them. The draft's tag is created up front (force-tag-creation
+# in release-please-config.json), because GitHub otherwise creates it only on
+# publish and both release-please and a manual rebuild need it to exist.
 #
 # workflow_dispatch is a manual escape hatch: rebuild and re-attach an existing
 # release tag without release-please. Use it when a release was cut but its
 # build failed (e.g. a transient notarization network error) and the tag and
 # GitHub release still exist, so re-running the push flow would skip the build.
+# It does not run the CI gate, and nothing checks that the tag ever passed it:
+# release-please cuts the tag before the gate runs. Rebuilding a tag whose gate
+# failed is the caller's call. When the gate fails on a flake, re-run the
+# failed jobs of that run instead, which keeps the gate.
 on:
   push:
     branches: [main]
@@ -54,18 +68,27 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build-macos:
+  ci:
+    # Only when a release was cut: an ordinary push to main is already covered
+    # by the standalone ci run. A manual rebuild skips release-please, and this
+    # job with it.
     needs: release-please
-    # Build on a push only when release-please actually cut a release, or on any
-    # manual rebuild. '!cancelled()' lets this run even though release-please is
-    # skipped on a workflow_dispatch (a skipped dependency would otherwise skip
-    # this job too).
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # A called workflow inherits the caller's token; tests need no write access.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  build-macos:
+    needs: ci
+    # Build when the gate passed, which only happens on a push that cut a
+    # release, or on any manual rebuild. '!cancelled()' lets this run even
+    # though ci is skipped on a workflow_dispatch (a skipped dependency would
+    # otherwise skip this job too); it also switches off the default "every
+    # dependency succeeded" rule, so the ci result is checked by hand.
     if: >-
       ${{ !cancelled()
-      && (
-        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
-        || github.event_name == 'workflow_dispatch'
-      ) }}
+      && (needs.ci.result == 'success' || github.event_name == 'workflow_dispatch') }}
     runs-on: macos-latest
     outputs:
       updater: ${{ steps.signing.outputs.updater }}
@@ -297,14 +320,11 @@ jobs:
           gh release edit "$TAG" --notes-file notes.md
 
   build-linux:
-    needs: release-please
+    needs: ci
     # Same gate as build-macos.
     if: >-
       ${{ !cancelled()
-      && (
-        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
-        || github.event_name == 'workflow_dispatch'
-      ) }}
+      && (needs.ci.result == 'success' || github.event_name == 'workflow_dispatch') }}
     # One LTS behind current, so the .deb links against a glibc that current
     # Ubuntu also satisfies. Keep in step with test-ubuntu in ci.yml: the .deb
     # built there is the one CI proves installs on current Ubuntu.
@@ -437,8 +457,8 @@ jobs:
   publish-manifest:
     needs: [build-macos, build-linux]
     # Both builds must have succeeded: a failed or skipped build publishes no
-    # manifest, so releases/latest/download/latest.json has nothing new to
-    # offer and installed apps stay on the release they run. The results are
+    # manifest, and publish-release then leaves the release a draft, so
+    # installed apps stay on the release they run. The results are
     # checked by hand because '!cancelled()', needed for the same skipped
     # release-please reason as the builds, also switches off the default
     # "every dependency succeeded" rule.
@@ -484,3 +504,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$TAG" latest.json --clobber
+
+  publish-release:
+    needs: [build-macos, build-linux, publish-manifest]
+    # A skipped publish-manifest still publishes: without the updater key there
+    # is no manifest to wait for, and a fork's release must not stay a draft
+    # forever. A failed one does not, since that release would break the update
+    # check. Results are checked by hand for the same '!cancelled()' reason as
+    # publish-manifest.
+    if: >-
+      ${{ !cancelled()
+      && needs.build-macos.result == 'success'
+      && needs.build-linux.result == 'success'
+      && (needs.publish-manifest.result == 'success'
+        || needs.publish-manifest.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      # Not the tag, for the same reason as publish-manifest.
+      - uses: actions/checkout@v5
+
+      - name: Resolve the release tag
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: .github/scripts/resolve-release-tag.sh
+
+      # A no-op on a manual rebuild of a release that is already published.
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$TAG" --draft=false
