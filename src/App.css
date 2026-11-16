@@ -805,9 +805,9 @@ body {
   margin-left: 0;
 }
 
-/* The hidden copies after the action bar sit .pr-row-end's 6px apart, and
-   the words they stand for .pr-origin's 8px: this makes up the difference,
-   so the bar opens clear of "Draft". */
+/* The hidden copies after the action bar sit .pr-row-end's gap apart, which
+   is narrower than .pr-origin's gap between the words they stand for. This
+   makes up the difference, so the bar opens clear of "Draft". */
 .pr-row-end .pr-draft + .pr-state {
   margin-left: 2px;
 }
