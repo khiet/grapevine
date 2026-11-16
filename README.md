@@ -19,7 +19,7 @@
   </p>
 </p>
 
-![Grapevine demo: the menubar icon opens a popover of fictional pull requests, and labels land on it one at a time: the tray number is the PRs waiting on you, Todo is the tray number, your turn comes first with how long it has waited, only required checks count as failing, ready to merge, merge queue position, your team was asked to review, deploy status after merge, the filter across every repo, unread from people and never bots, drive it from the keyboard, snooze until it changes, and ask Copilot to fix a conflict. The loop rests on all of them, with macOS and Ubuntu badges under the tagline, then turns the popover dark under a last label: light or dark.](docs/assets/grapevine.gif)
+![Grapevine demo: the menubar icon opens a popover of fictional pull requests, and labels land on it one at a time: the tray number is the PRs waiting on you, Todo is the tray number, your turn comes first with how long it has waited, only required checks count as failing, merge queue position, your team was asked to review, deploy status after merge, the filter across every repo, unread from people and never bots, merge it from the row, drive it from the keyboard, snooze until it changes, and ask Copilot to fix a conflict. The loop rests on all of them, with macOS and Ubuntu badges under the tagline, then turns the popover dark under a last label: light or dark.](docs/assets/grapevine.gif)
 
 ## How it works
 

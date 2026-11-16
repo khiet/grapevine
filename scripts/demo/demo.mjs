@@ -100,24 +100,36 @@ async function capture(baseUrl, dir) {
   // The fixture is sized so every target fits the popover without scrolling;
   // a target that slipped under the footer or off an edge would be ringed
   // where nothing shows.
+  // `target` is one locator, or several that one ring takes in together.
   async function label(target, side, text, chipY) {
-    const inView = await target.evaluate((el) => {
-      // Not a hit test: a row's hidden action bar lies over its state.
-      const { left, top, right, bottom } = el.getBoundingClientRect();
-      const footer = document.querySelector(".sync-status");
-      const floor =
-        footer && !footer.contains(el) ? footer.getBoundingClientRect().top : window.innerHeight;
-      return left >= 0 && right <= window.innerWidth && top >= 0 && bottom <= floor;
-    });
-    if (!inView) throw new Error(`"${text}" has no visible target`);
-    await page.evaluate((args) => window.callout(...args), [
-      await target.boundingBox(),
-      side,
-      text,
-      chipY ?? null,
-    ]);
+    const boxes = [];
+    for (const part of [target].flat()) {
+      const inView = await part.evaluate((el) => {
+        // Not a hit test: it would miss a target another element lies over.
+        const { left, top, right, bottom } = el.getBoundingClientRect();
+        const footer = document.querySelector(".sync-status");
+        const floor =
+          footer && !footer.contains(el) ? footer.getBoundingClientRect().top : window.innerHeight;
+        return left >= 0 && right <= window.innerWidth && top >= 0 && bottom <= floor;
+      });
+      if (!inView) throw new Error(`"${text}" has no visible target`);
+      boxes.push(await part.boundingBox());
+    }
+    const x = Math.min(...boxes.map((box) => box.x));
+    const y = Math.min(...boxes.map((box) => box.y));
+    const union = {
+      x,
+      y,
+      width: Math.max(...boxes.map((box) => box.x + box.width)) - x,
+      height: Math.max(...boxes.map((box) => box.y + box.height)) - y,
+    };
+    await page.evaluate((args) => window.callout(...args), [union, side, text, chipY ?? null]);
   }
   const row = (number) => app.locator("li", { hasText: number });
+  // The state the row shows. Its end bar holds an unseen copy of the words,
+  // which keeps the action bar from opening over them.
+  const state = (number) => row(number).locator(".pr-row .pr-state");
+  const action = (number, name) => row(number).locator(".pr-action", { hasText: name });
 
   // Mine starts folded; it is opened off-camera so every labelled row is in
   // view without scrolling. Down from the filter then selects the first row,
@@ -149,13 +161,11 @@ async function capture(baseUrl, dir) {
   await snap(BEAT);
   await label(row("#415").locator(".pr-updated"), "right", "Your turn first, and for how long", 150);
   await snap(BEAT);
-  await label(row("#415").locator(".pr-state"), "right", "Only required checks count", 190);
+  await label(state("#415"), "right", "Only required checks count", 190);
   await snap(BEAT);
-  await label(row("#1295").locator(".pr-state"), "right", "Ready to merge", 230);
+  await label(state("#2320"), "right", "Merge queue position");
   await snap(BEAT);
-  await label(row("#2320").locator(".pr-state"), "right", "Merge queue position");
-  await snap(BEAT);
-  await label(row("#2317").locator(".pr-state"), "right", "Your team was asked to review");
+  await label(state("#2317"), "right", "Your team was asked to review");
   await snap(BEAT);
   await label(app.locator(".pr-deploy"), "right", "Deploy status after merge");
   await snap(BEAT);
@@ -163,17 +173,27 @@ async function capture(baseUrl, dir) {
   await snap(BEAT);
   await label(row("#1284").locator(".pr-unread"), "left", "Unread from people, never bots", 150);
   await snap(BEAT);
+  // A row's action bar shows while the row is hovered or holds keyboard
+  // focus, so two rows can have theirs open at once: #1295 by focus, #2322
+  // under the pointer. The bar opens beside the row's state, and a write's
+  // ring takes in both, so its line never crosses the state. Snooze is the
+  // inner button of its bar, so its chip sits below the row: its line then
+  // meets the bottom corner of its ring instead of crossing Copilot's.
+  await action("#1295", "Merge").focus();
+  await label([action("#1295", "Merge"), state("#1295")], "right", "Merge it from the row");
+  await snap(BEAT);
+  // Focus in a row changes the keys the footer offers, so the footer is
+  // ringed only now, around the hints it rests on.
   await label(app.locator(".key-hints"), "left", "Drive it from the keyboard");
   await snap(BEAT);
-  // The action bar only shows on a hovered row, so its two labels share
-  // one. Snooze is the inner of the two, so its chip sits below the row:
-  // its line then meets the bottom corner of its ring instead of crossing
-  // Copilot's.
   await row("#2322").hover();
-  const action = (name) => row("#2322").locator(".pr-action", { hasText: name });
-  await label(action("Snooze"), "right", "Snooze until it changes", 366);
+  await label(action("#2322", "Snooze"), "right", "Snooze until it changes", 366);
   await snap(BEAT);
-  await label(action("Fix with Copilot"), "right", "Ask Copilot to fix a conflict");
+  await label(
+    [action("#2322", "Fix with Copilot"), state("#2322")],
+    "right",
+    "Ask Copilot to fix a conflict",
+  );
   await snap(BEAT);
   await page.evaluate(() => document.getElementById("os").removeAttribute("hidden"));
   // The loop rests on the summary, then shows it again in the dark palette.
