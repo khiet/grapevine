@@ -39,6 +39,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     failing_checks_truncated: false,
     checks_running: false,
     auto_merge: false,
+    threads_open: false,
     ready_to_merge: false,
     turn: null,
     turn_since: null,

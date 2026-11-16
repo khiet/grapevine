@@ -56,6 +56,10 @@ const REVIEW_PAGE: usize = 20;
 const REVIEW_COMMENT_PAGE: usize = 10;
 /// GitHub caps a PR at ten assignees, so one page always holds them all.
 const ASSIGNEE_PAGE: usize = 10;
+/// Rules read off a PR's base branch. Only the pull-request rule matters (see
+/// [`requires_thread_resolution`]); a branch with more rules than this ahead
+/// of it reads as not requiring resolution.
+const BASE_RULE_PAGE: usize = 10;
 /// Search hits per page; 100 is GitHub's maximum, and a viewer with more
 /// team requests than that across the watched repos is paged.
 const TEAM_SEARCH_PAGE: usize = 100;
@@ -202,13 +206,13 @@ pub struct PullRequest {
     /// never counts as unread.
     pub merge_queue_position: Option<u64>,
     /// Names of the failed checks behind the `Ci` reason, in GitHub's order;
-    /// the CI pill names the first. Only the checks that gate the merge are
+    /// the state's tooltip names the first. Only the checks that gate the merge are
     /// listed (see [`checks_for`]). Empty whenever `Ci` is not raised, and
     /// also when it is raised from the rollup alone, with no check to name.
     pub failing_checks: Vec<String>,
     /// Whether the PR has more checks than the one page read, so
-    /// `failing_checks` may be short of the full list. The pill then says
-    /// "+ more" and never a count.
+    /// `failing_checks` may be short of the full list. The tooltip then
+    /// says "and more" and never a count.
     pub failing_checks_truncated: bool,
     /// Whether a check that gates the merge is still running and none has
     /// failed. Renders as the neutral Running mark. Suppressed on drafts.
@@ -218,9 +222,17 @@ pub struct PullRequest {
     /// requirements are met. Renders as the Auto mark. Suppressed on drafts.
     /// Same property-not-event rule as `blocked_reasons`.
     pub auto_merge: bool,
+    /// Whether a review thread is unresolved on a PR whose base branch does
+    /// not require resolution before merging (see
+    /// [`requires_thread_resolution`]). A note, not an obstacle: it never
+    /// blocks `ready_to_merge` and never makes a turn. Where resolution is
+    /// required the thread raises [`BlockedReason::Threads`] instead, so the
+    /// two are never set together. Suppressed on drafts. Same
+    /// property-not-event rule as `blocked_reasons`.
+    pub threads_open: bool,
     /// Whether nothing stands between the PR and its merge but the viewer
     /// pressing the button (see [`ready_to_merge`]). Only ever set in Mine.
-    /// Renders as the Ready to merge pill. Same property-not-event rule as
+    /// Reads "Mergeable". Same property-not-event rule as
     /// `blocked_reasons`.
     pub ready_to_merge: bool,
     /// Whose move the PR waits on (see [`turn_for`]); `None` when there is no
@@ -1153,6 +1165,11 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot
                commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} \
                reviewRequests(first: 50) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} }} }} }} \
                reviewThreads(last: 10) {{ nodes {{ isResolved }} }} \
+               baseRef {{ \
+                 refUpdateRule {{ requiresConversationResolution }} \
+                 rules(first: {BASE_RULE_PAGE}) {{ nodes {{ type parameters {{ \
+                   ... on PullRequestParameters {{ requiredReviewThreadResolution }} }} }} }} \
+               }} \
                comments(last: {COMMENT_PAGE}) {{ nodes {{ createdAt author {{ __typename login }} }} }} \
                reviews(last: {REVIEW_PAGE}) {{ nodes {{ state submittedAt author {{ __typename login }} \
                  comments(last: {REVIEW_COMMENT_PAGE}) {{ nodes {{ createdAt author {{ __typename login }} }} }} }} }} \
@@ -1276,6 +1293,11 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 Vec::new()
             },
             auto_merge: !is_draft && is_set(node, "autoMergeRequest"),
+            // Where resolution is required the thread is a blocked reason
+            // instead, so the two never show together.
+            threads_open: !is_draft
+                && has_unresolved_thread(node)
+                && !requires_thread_resolution(node),
             ready_to_merge,
             turn,
             turn_since: None,
@@ -1405,7 +1427,8 @@ fn list<'a>(node: &'a Value, pointer: &str) -> &'a [Value] {
 
 /// Composes the row's blocked indicator from mergeability, the head commit's
 /// checks (see [`checks_for`]), the review decision, unresolved review
-/// threads, and the merge-state status, in the fixed severity order. Only
+/// threads where the base branch requires resolving them, and the
+/// merge-state status, in the fixed severity order. Only
 /// negative states
 /// light it: a mergeable, in-flight, or quiet PR yields an empty list so an
 /// undecorated row keeps meaning "nothing is stuck".
@@ -1448,26 +1471,50 @@ fn blocked_reasons_for(node: &Value, checks: &Checks) -> Vec<BlockedReason> {
     if field("reviewDecision") == Some("CHANGES_REQUESTED") {
         reasons.push(BlockedReason::Review);
     }
-    // Unresolved threads flag independently of the other signals: an open
-    // thread needs an answer whether or not reviews or CI are done, so the
-    // pill coexists with any other reason (and with the green check). Only
-    // the draft/UNKNOWN suppression above gates it, as it does every reason
-    // here, so the pill sits out the poll after a push while GitHub
-    // recomputes mergeability. Reads the
-    // newest 10 threads (the query pages from the end, where the still-open
-    // threads skew; a full-history page would also bloat the batched query's
-    // node budget); a PR whose unresolved threads all sit deeper than that is
-    // beyond what one page can see.
-    let unresolved = list(node, "/reviewThreads/nodes")
-        .iter()
-        .any(|t| t.get("isResolved").and_then(Value::as_bool) == Some(false));
-    if unresolved {
+    // An unresolved thread blocks only where the base branch says it does;
+    // elsewhere it is the neutral `threads_open` note. Where it blocks, it
+    // flags independently of the other signals: the thread needs an answer
+    // whether or not reviews or CI are done, so the reason coexists with any
+    // other (and with an approval). The draft/UNKNOWN suppression above gates
+    // it, as it does every reason here, so it sits out the poll after a push
+    // while GitHub recomputes mergeability.
+    if has_unresolved_thread(node) && requires_thread_resolution(node) {
         reasons.push(BlockedReason::Threads);
     }
     if field("mergeStateStatus") == Some("BEHIND") {
         reasons.push(BlockedReason::Behind);
     }
     reasons
+}
+
+/// Whether any review thread in sight is unresolved. Sight is the newest 10
+/// threads: the query pages from the end, where the still-open threads skew,
+/// and a full-history page would bloat the batched query's node budget. A PR
+/// whose unresolved threads all sit deeper than that reads as having none.
+fn has_unresolved_thread(node: &Value) -> bool {
+    list(node, "/reviewThreads/nodes")
+        .iter()
+        .any(|t| t.get("isResolved").and_then(Value::as_bool) == Some(false))
+}
+
+/// Whether the PR's base branch refuses a merge while a review thread is
+/// unresolved. Two sources can say so and either is enough: a ruleset's
+/// pull-request rule, or classic branch protection.
+///
+/// Anything missing answers false: a null `baseRef` (a deleted base branch),
+/// null rules, or a rule beyond the one page read. Most repos do not require
+/// resolution, so a guess of "required" would be wrong far more often than
+/// the miss this accepts.
+fn requires_thread_resolution(node: &Value) -> bool {
+    let flag = |value: &Value, pointer: &str| {
+        value.pointer(pointer).and_then(Value::as_bool) == Some(true)
+    };
+    flag(
+        node,
+        "/baseRef/refUpdateRule/requiresConversationResolution",
+    ) || list(node, "/baseRef/rules/nodes")
+        .iter()
+        .any(|rule| flag(rule, "/parameters/requiredReviewThreadResolution"))
 }
 
 /// What the head commit's checks say about merging the PR.
@@ -2043,6 +2090,126 @@ mod tests {
         json!({ "nodes": nodes })
     }
 
+    /// A `baseRef` whose ruleset `PULL_REQUEST` rule sets thread resolution
+    /// to `required`, beside a rule of another type.
+    fn ruleset_base(required: bool) -> Value {
+        json!({
+            "refUpdateRule": null,
+            "rules": { "nodes": [
+                { "type": "DELETION", "parameters": null },
+                {
+                    "type": "PULL_REQUEST",
+                    "parameters": { "requiredReviewThreadResolution": required }
+                }
+            ] }
+        })
+    }
+
+    /// A `baseRef` under classic branch protection, with no rulesets.
+    fn classic_base(required: bool) -> Value {
+        json!({
+            "refUpdateRule": { "requiresConversationResolution": required },
+            "rules": { "nodes": [] }
+        })
+    }
+
+    /// A PR with one unresolved thread on the given `baseRef`.
+    fn unresolved_on(base: Value) -> Value {
+        json!({ "reviewThreads": review_threads(&[false]), "baseRef": base })
+    }
+
+    #[test]
+    fn a_ruleset_requiring_thread_resolution_makes_an_unresolved_thread_a_blocker() {
+        let pr = row(unresolved_on(ruleset_base(true)));
+        assert_eq!(pr.blocked_reasons, [BlockedReason::Threads]);
+        assert!(!pr.threads_open);
+    }
+
+    #[test]
+    fn a_ruleset_not_requiring_thread_resolution_leaves_the_thread_merely_open() {
+        let pr = row(unresolved_on(ruleset_base(false)));
+        assert_eq!(pr.blocked_reasons, []);
+        assert!(pr.threads_open);
+    }
+
+    #[test]
+    fn classic_protection_requiring_conversation_resolution_makes_the_thread_a_blocker() {
+        let pr = row(unresolved_on(classic_base(true)));
+        assert_eq!(pr.blocked_reasons, [BlockedReason::Threads]);
+        assert!(!pr.threads_open);
+    }
+
+    #[test]
+    fn classic_protection_not_requiring_it_leaves_the_thread_merely_open() {
+        let pr = row(unresolved_on(classic_base(false)));
+        assert_eq!(pr.blocked_reasons, []);
+        assert!(pr.threads_open);
+    }
+
+    /// Either source is enough: a repo can carry both, and they need not
+    /// agree.
+    #[test]
+    fn one_requiring_source_is_enough_when_the_other_does_not_require() {
+        let mut base = classic_base(false);
+        base["rules"] = ruleset_base(true)["rules"].clone();
+        assert_eq!(
+            row(unresolved_on(base)).blocked_reasons,
+            [BlockedReason::Threads]
+        );
+    }
+
+    /// Missing is not "required": with no `baseRef` or no rules to read, the
+    /// thread stays a neutral note.
+    #[test]
+    fn a_missing_base_ref_or_unreadable_rules_leave_the_thread_merely_open() {
+        for base in [Value::Null, json!({ "refUpdateRule": null, "rules": null })] {
+            let pr = row(unresolved_on(base));
+            assert_eq!(pr.blocked_reasons, []);
+            assert!(pr.threads_open);
+        }
+        let absent = row(json!({ "reviewThreads": review_threads(&[false]) }));
+        assert_eq!(absent.blocked_reasons, []);
+        assert!(absent.threads_open);
+    }
+
+    #[test]
+    fn resolved_threads_are_never_open() {
+        let resolved = json!({ "reviewThreads": review_threads(&[true, true]) });
+        assert!(!row(resolved).threads_open);
+        assert!(!row(json!({})).threads_open);
+    }
+
+    #[test]
+    fn a_draft_shows_no_open_threads() {
+        let draft = row(json!({
+            "isDraft": true,
+            "reviewThreads": review_threads(&[false]),
+        }));
+        assert!(!draft.threads_open);
+    }
+
+    /// The thread is a note, not an obstacle: with resolution not required
+    /// the viewer's approved PR is still theirs to merge, and one with
+    /// nothing else decided is not theirs to act on.
+    #[test]
+    fn a_merely_open_thread_neither_blocks_ready_nor_makes_the_turn() {
+        let ready = row(ready_node(unresolved_on(classic_base(false))));
+        assert!(ready.threads_open);
+        assert!(ready.ready_to_merge);
+
+        // Review is still owed and nobody is asked: no verdict either way.
+        let mut undecided = mine_node(unresolved_on(classic_base(false)));
+        undecided["reviewDecision"] = json!("REVIEW_REQUIRED");
+        assert_eq!(turn(undecided), None);
+    }
+
+    #[test]
+    fn the_paged_query_asks_whether_the_base_branch_requires_thread_resolution() {
+        let query = repo_field("r0", "acme", "widgets", None, true);
+        assert!(query.contains("refUpdateRule { requiresConversationResolution }"));
+        assert!(query.contains("... on PullRequestParameters { requiredReviewThreadResolution }"));
+    }
+
     #[test]
     fn each_blocked_trigger_lights_the_marker_on_its_own() {
         let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
@@ -2067,29 +2234,36 @@ mod tests {
             vec![BlockedReason::Behind]
         );
         assert_eq!(
-            reasons(json!({ "reviewThreads": review_threads(&[true, false]) })),
+            reasons(
+                json!({ "reviewThreads": review_threads(&[true, false]), "baseRef": classic_base(true) })
+            ),
             vec![BlockedReason::Threads]
         );
     }
 
-    /// Threads are their own signal: an open thread needs an answer whether
-    /// or not reviews or CI are done, so no other state gates it; the fixed
-    /// severity order still lists harder reasons first.
+    /// Where resolution is required, threads are their own signal: an open
+    /// thread needs an answer whether or not reviews or CI are done, so no
+    /// other state gates it; the fixed severity order still lists harder
+    /// reasons first.
     #[test]
     fn unresolved_threads_flag_independently_of_other_signals() {
-        let reasons = |overrides: Value| blocked_reasons(&pr_node(overrides));
+        // Every case sits on a base branch that requires resolution.
+        let reasons = |overrides: Value| {
+            let on_requiring_base = with(json!({ "baseRef": classic_base(true) }), overrides);
+            blocked_reasons(&pr_node(on_requiring_base))
+        };
         let unresolved = || review_threads(&[false]);
         assert_eq!(
             reasons(json!({
                 "reviewDecision": "CHANGES_REQUESTED",
-                "reviewThreads": unresolved()
+                "reviewThreads": unresolved(),
             })),
             vec![BlockedReason::Review, BlockedReason::Threads]
         );
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("FAILURE"),
-                "reviewThreads": unresolved()
+                "reviewThreads": unresolved(),
             })),
             vec![BlockedReason::Ci, BlockedReason::Threads]
         );
@@ -2098,7 +2272,7 @@ mod tests {
         assert_eq!(
             reasons(json!({
                 "reviewDecision": "REVIEW_REQUIRED",
-                "reviewThreads": unresolved()
+                "reviewThreads": unresolved(),
             })),
             vec![BlockedReason::Threads]
         );
@@ -2109,7 +2283,7 @@ mod tests {
         assert_eq!(
             reasons(json!({
                 "commits": ci_commits("PENDING"),
-                "reviewThreads": unresolved()
+                "reviewThreads": unresolved(),
             })),
             vec![BlockedReason::Threads]
         );
@@ -2118,7 +2292,7 @@ mod tests {
             reasons(json!({
                 "reviewDecision": "APPROVED",
                 "commits": ci_commits("SUCCESS"),
-                "reviewThreads": review_threads(&[true, true])
+                "reviewThreads": review_threads(&[true, true]),
             })),
             Vec::new()
         );
@@ -2127,7 +2301,7 @@ mod tests {
             reasons(json!({
                 "reviewDecision": "APPROVED",
                 "commits": ci_commits("SUCCESS"),
-                "reviewThreads": unresolved()
+                "reviewThreads": unresolved(),
             })),
             vec![BlockedReason::Threads]
         );
@@ -2182,6 +2356,7 @@ mod tests {
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
             "reviewThreads": review_threads(&[false]),
+            "baseRef": classic_base(true),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(
@@ -2206,6 +2381,7 @@ mod tests {
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
             "reviewThreads": review_threads(&[false]),
+            "baseRef": classic_base(true),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons(&node), Vec::new());
@@ -2220,6 +2396,7 @@ mod tests {
             "commits": ci_commits("FAILURE"),
             "reviewDecision": "CHANGES_REQUESTED",
             "reviewThreads": review_threads(&[false]),
+            "baseRef": classic_base(true),
             "mergeStateStatus": "BEHIND"
         }));
         assert_eq!(blocked_reasons(&node), Vec::new());
@@ -2476,7 +2653,9 @@ mod tests {
 
     #[test]
     fn any_blocked_reason_keeps_an_approved_pr_from_ready() {
-        let unresolved = ready_node(json!({ "reviewThreads": review_threads(&[false]) }));
+        let unresolved = ready_node(
+            json!({ "reviewThreads": review_threads(&[false]), "baseRef": classic_base(true) }),
+        );
         assert!(!row(unresolved).ready_to_merge);
         let behind = ready_node(json!({ "mergeStateStatus": "BEHIND" }));
         assert!(!row(behind).ready_to_merge);
@@ -2600,7 +2779,9 @@ mod tests {
         assert_eq!(turn(behind), Some(Turn::Yours));
         let failing = mine_node(json!({ "commits": ci_commits("FAILURE") }));
         assert_eq!(turn(failing), Some(Turn::Yours));
-        let threads = mine_node(json!({ "reviewThreads": review_threads(&[false]) }));
+        let threads = mine_node(
+            json!({ "reviewThreads": review_threads(&[false]), "baseRef": classic_base(true) }),
+        );
         assert_eq!(turn(threads), Some(Turn::Yours));
     }
 
@@ -2699,6 +2880,7 @@ mod tests {
             "mergeable": "UNKNOWN",
             "reviewDecision": "CHANGES_REQUESTED",
             "reviewThreads": review_threads(&[false]),
+            "baseRef": classic_base(true),
         }));
         assert_eq!(turn(unsettled), None);
     }
@@ -2708,7 +2890,7 @@ mod tests {
     #[test]
     fn an_approved_pr_with_an_unresolved_thread_is_the_viewers_turn_as_blocked() {
         let pr = row(ready_node(
-            json!({ "reviewThreads": review_threads(&[false]) }),
+            json!({ "reviewThreads": review_threads(&[false]), "baseRef": classic_base(true) }),
         ));
         assert_eq!(pr.turn, Some(Turn::Yours));
         assert_eq!(pr.blocked_reasons, [BlockedReason::Threads]);
@@ -3789,6 +3971,7 @@ mod tests {
                             "commits": ci_commits("FAILURE"),
                             "reviewDecision": "CHANGES_REQUESTED",
                             "reviewThreads": review_threads(&[false]),
+                            "baseRef": classic_base(true),
                         })),
                         pr_node(json!({
                             "number": 2,
@@ -4114,11 +4297,13 @@ mod tests {
                         "number": 1,
                         "updatedAt": "2026-07-11T02:00:00Z",
                         "reviewThreads": review_threads(&out_of_window),
+                        "baseRef": classic_base(true),
                     })),
                     pr_node(json!({
                         "number": 2,
                         "updatedAt": "2026-07-11T01:00:00Z",
                         "reviewThreads": review_threads(&in_window),
+                        "baseRef": classic_base(true),
                     })),
                 ],
                 None,

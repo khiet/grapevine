@@ -39,8 +39,8 @@ export type FixesPosting = ReadonlySet<string>;
  * viewer's turn too: Todo already says whose move it is. */
 export type Tone = "accent" | "warn" | "ok" | "neutral";
 
-/** A row's states, in words. A row shows `reason` and `more`; the rest is
- * for the tooltip and the accessible name. */
+/** A row's states, in words. A row shows `reason` and `more`; `all` is for
+ * the tooltip and the accessible name. */
 export interface RowState {
   /** The highest-priority state. On a your-turn row, the one the backend
    * decided the turn on. */
@@ -49,7 +49,11 @@ export interface RowState {
   /** "+N" for the N states folded behind the reason; null when it stands
    * alone. */
   more: string | null;
-  /** Every state in priority order, the reason first. */
+  /** Whether `all` says more than the row does: states are folded, or one
+   * has a longer form than the row has room for. */
+  hasTip: boolean;
+  /** Every state in priority order, the reason first, each in its full
+   * form: a failing check is named here and nowhere on the row. */
   all: string[];
 }
 
@@ -108,16 +112,14 @@ export interface RepoGroupView {
 /** The deploy status of a Merged row: its own control, which opens the
  * workflow run rather than the PR. */
 export interface DeployView {
-  /** The status in full, for the tooltip and the accessible name. */
+  /** The status in words, as the row shows it in its state slot. */
   label: string;
-  /** The status as the row words it beside the deploy glyph, which already
-   * says "deploy". */
-  brief: string;
-  /** Whether the row shows `completedAt` in place of `brief`; only a deploy
-   * that landed does. */
+  /** Green once landed and amber when failed, as an open row's states are
+   * toned; neutral otherwise. */
+  tone: Tone;
+  /** Whether the row shows `completedAt` after `label`; only a deploy that
+   * landed does. */
   showsTime: boolean;
-  /** The one state in the failure color; the rest stay metadata grey. */
-  failed: boolean;
   /** When the run finished (ISO-8601 UTC); null while deploying. */
   completedAt: string | null;
   url: string;
@@ -186,14 +188,13 @@ const BLOCKED_LABELS: Record<BlockedReason, string> = {
   behind: "Behind base",
 };
 
-// The CI reason names the check when the backend could: the first failing
-// one, then "and more" for any others. Never a count: on a truncated list the
-// number seen is not the number failing, and "and more" is true either way.
-// In words because a "+" here would read as the row's "+N".
-function blockedLabel(reason: BlockedReason, pr: PullRequest): string {
-  if (reason !== "ci" || pr.failing_checks.length === 0) {
-    return BLOCKED_LABELS[reason];
-  }
+// A blocker's full form, for the tooltip. Only CI has one: it names the check
+// when the backend could, the first failing one, then "and more" for any
+// others. Never a count: on a truncated list the number seen is not the
+// number failing, and "and more" is true either way. In words because a "+"
+// here would read as the row's "+N". Null when the row's words say it all.
+function blockedDetail(reason: BlockedReason, pr: PullRequest): string | null {
+  if (reason !== "ci" || pr.failing_checks.length === 0) return null;
   const more = pr.failing_checks.length > 1 || pr.failing_checks_truncated;
   return `CI failing: ${pr.failing_checks[0]}${more ? " and more" : ""}`;
 }
@@ -207,18 +208,22 @@ function ordinal(n: number): string {
 }
 
 interface TonedState {
+  /** What the row shows: GitHub's own wording, two words at most. */
   text: string;
   tone: Tone;
+  /** The longer form the tooltip gives; null when `text` is all there is. */
+  detail: string | null;
 }
 
 // Every state the PR is in, in priority order; the row shows the first and
 // folds the rest. A new signal needs one line here, placed where it ranks.
 //
 // The head of the order (a review asked of you, then the blockers in the
-// backend's severity order, then ready to merge) is the order the backend
+// backend's severity order, then mergeable) is the order the backend
 // decides the turn in, so on a your-turn row the first state is the reason
 // the row sits in Todo. After it the order runs from under way (queue,
-// Copilot, checks, auto-merge) to done (approved) to waiting on others.
+// Copilot, checks, auto-merge) to loose ends (threads nothing requires
+// resolving) to done (approved) to waiting on others.
 //
 // Drafts need no special case: the backend suppresses the approval, the
 // review states, the blockers and the merge states other than the queue
@@ -227,42 +232,53 @@ interface TonedState {
 // required reviews is ready without an approval.
 function rowStates(pr: PullRequest): TonedState[] {
   const states: TonedState[] = [];
-  const add = (text: string, tone: Tone = "neutral") => states.push({ text, tone });
+  const add = (
+    text: string,
+    tone: Tone = "neutral",
+    detail: string | null = null,
+  ) => states.push({ text, tone, detail });
   // The accent is the viewer's turn, not the request: the same words on a row
   // that does not wait on them are plain news.
   if (pr.review_requested) {
     add("Review requested", pr.turn === "yours" ? "accent" : "neutral");
   }
-  for (const reason of pr.blocked_reasons) add(blockedLabel(reason, pr), "warn");
-  if (pr.ready_to_merge) add("Ready to merge", "ok");
+  for (const reason of pr.blocked_reasons) {
+    add(BLOCKED_LABELS[reason], "warn", blockedDetail(reason, pr));
+  }
+  if (pr.ready_to_merge) add("Mergeable", "ok");
   // Position only: the entry's state and the queue's size are deliberately
   // not shown.
   if (pr.merge_queue_position !== null) {
-    add(`In merge queue, ${ordinal(pr.merge_queue_position)}`);
+    add(`Queued ${ordinal(pr.merge_queue_position)}`);
   }
   // After the conflict it answers: the PR is still conflicting, and this
   // says who is on it.
   if (pr.fix_requested) add("Copilot fixing");
   if (pr.checks_running) add("Checks running");
-  if (pr.auto_merge) add("Auto-merge armed");
+  if (pr.auto_merge) add("Auto-merge on");
+  // The same words as the blocker, in the neutral tone: the backend sends
+  // one or the other, by whether the base branch requires resolution.
+  if (pr.threads_open) add(BLOCKED_LABELS.threads);
   if (pr.approved) add("Approved", "ok");
   // The backend sends at most one of the three review directions; this holds
   // the row to one regardless, a request naming you first.
   if (!pr.review_requested) {
     if (pr.awaiting_review) add("Awaiting review");
-    else if (pr.team_review_requested) add("Team review requested");
+    else if (pr.team_review_requested) add("Team review");
   }
   return states;
 }
 
 function rowState(pr: PullRequest): RowState | null {
-  const [first, ...rest] = rowStates(pr);
+  const states = rowStates(pr);
+  const [first, ...rest] = states;
   if (!first) return null;
   return {
     reason: first.text,
     tone: first.tone,
     more: rest.length > 0 ? `+${rest.length}` : null,
-    all: [first.text, ...rest.map((state) => state.text)],
+    hasTip: rest.length > 0 || states.some((state) => state.detail !== null),
+    all: states.map((state) => state.detail ?? state.text),
   };
 }
 
@@ -406,11 +422,11 @@ function groupByRepo(
     }));
 }
 
-const DEPLOY_WORDS: Record<DeployState, { label: string; brief: string }> = {
-  deploying: { label: "Deploying", brief: "Deploying" },
-  deployed: { label: "Deployed", brief: "Deployed" },
-  failed: { label: "Deploy failed", brief: "Failed" },
-  cancelled: { label: "Deploy cancelled", brief: "Cancelled" },
+const DEPLOY_WORDS: Record<DeployState, { label: string; tone: Tone }> = {
+  deploying: { label: "Deploying", tone: "neutral" },
+  deployed: { label: "Deployed", tone: "ok" },
+  failed: { label: "Deploy failed", tone: "warn" },
+  cancelled: { label: "Deploy cancelled", tone: "neutral" },
 };
 
 function deployView(deploy: Deploy | null): DeployView | null {
@@ -418,7 +434,6 @@ function deployView(deploy: Deploy | null): DeployView | null {
   return {
     ...DEPLOY_WORDS[deploy.state],
     showsTime: deploy.state === "deployed",
-    failed: deploy.state === "failed",
     completedAt: deploy.completed_at,
     url: deploy.url,
   };

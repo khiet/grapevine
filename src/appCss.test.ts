@@ -205,20 +205,32 @@ test("no rule hides the timestamp", () => {
   expect(hiding).toEqual([]);
 });
 
-// The deploy status is a button beside the row button, drawn over a
-// placeholder inside it. The two coincide only while they share a size and
-// the lines of the stack keep one fixed height.
-test("a merged row's deploy status sits on its placeholder under the merge time", () => {
-  const times = ruleFor(".pr-times");
-  expect(times.get("flex-direction")).toBe("column");
-  const line = px(times.get("line-height"));
-  const both = ruleFor(".pr-deploy,\n.pr-deploy-space");
-  expect(px(both.get("height"))).toBe(line);
-  expect(both.has("font-size")).toBe(true);
+// The deploy status is a button beside the row button, drawn over a hidden
+// copy of its words inside it. The two coincide only while they share a
+// type size and weight, and the bar the control rides in is centred on the
+// metadata line the copy sits in.
+test("a merged row's deploy status covers its hidden copy in the state slot", () => {
+  const both = ruleFor(".pr-deploy,\n.pr-state-space");
+  expect(both.get("font-size")).toBe(ruleFor(".pr-origin").get("font-size"));
   const status = ruleFor(".pr-deploy");
-  expect(status.get("position")).toBe("absolute");
-  expect(status.get("right")).toBe(ruleFor(".pr-row-end").get("right"));
-  expect(ruleFor(".pr-deploy-space").get("visibility")).toBe("hidden");
+  expect(status.get("font-weight")).toBe(ruleFor(".pr-state").get("font-weight"));
+  expect(ruleFor(".pr-state-space").get("visibility")).toBe("hidden");
+  const end = ruleFor(".pr-row-end");
+  expect(end.get("align-items")).toBe("center");
+  expect(px(end.get("min-height"))).toBe(px(ruleFor(".pr-action").get("height")));
+});
+
+// The bar's box spans the state on an open row. Only its controls may take
+// the pointer, or the state under it could never be hovered for its tooltip.
+test("the row's end bar lets the pointer through to the state beneath it", () => {
+  expect(ruleFor(".pr-row-end").get("pointer-events")).toBe("none");
+  expect(ruleFor(".pr-actions,\n.pr-deploy").get("pointer-events")).toBe("auto");
+});
+
+// Outside .pr-origin the neutral tone has no grey to inherit, and the toned
+// states must still win over it.
+test("a neutral deploy status is the metadata grey", () => {
+  expect(ruleFor(".pr-deploy").get("color")).toBe(ruleFor(".pr-origin").get("color"));
 });
 
 const px = (value: string | undefined) => Number(value?.match(/^(\d+)px$/)?.[1]);

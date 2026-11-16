@@ -33,7 +33,7 @@ export interface PullRequest {
    * once the viewer reviews. */
   review_requested: boolean;
   /** A review is outstanding from one of the viewer's teams, with no request
-   * naming the viewer; reads "Team review requested". Never set
+   * naming the viewer; reads "Team review". Never set
    * beside review_requested or awaiting_review, suppressed on drafts,
    * self-clearing once a team member reviews, and never part of the unread
    * count. */
@@ -47,10 +47,10 @@ export interface PullRequest {
    * Backend-computed and suppressed on drafts, like the review states. */
   approved: boolean;
   /** 1-based position in the repo's merge queue as GitHub reports it; null
-   * when the PR is not queued. Reads "In merge queue, 2nd". */
+   * when the PR is not queued. Reads "Queued 2nd". */
   merge_queue_position: number | null;
   /** Names of the failed checks behind the "ci" reason, GitHub's order; the
-   * CI reason names the first. Empty when "ci" is not raised, and when it is
+   * state's tooltip names the first. Empty when "ci" is not raised, and when it is
    * raised with no check to name. */
   failing_checks: string[];
   /** The PR has more checks than the backend read, so failing_checks may be
@@ -59,9 +59,14 @@ export interface PullRequest {
   /** A check that gates the merge is still running and none has failed;
    * reads "Checks running". Suppressed on drafts. */
   checks_running: boolean;
-  /** Auto-merge is armed; reads "Auto-merge armed". Suppressed on drafts. */
+  /** Auto-merge is armed; reads "Auto-merge on". Suppressed on drafts. */
   auto_merge: boolean;
-  /** Nothing is left but pressing merge; reads "Ready to merge".
+  /** A review thread is unresolved and the base branch does not require
+   * resolution; reads "Unresolved threads" in the neutral tone. Never set
+   * beside the "threads" blocked reason, which is the same thread where
+   * resolution is required. Suppressed on drafts. */
+  threads_open: boolean;
+  /** Nothing is left but pressing merge; reads "Mergeable".
    * Backend-computed and only ever set in Mine. */
   ready_to_merge: boolean;
   /** Whose move the PR waits on; null when there is no verdict, always so on

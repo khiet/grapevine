@@ -93,9 +93,8 @@ const RUN = "https://github.com/acme/widgets/actions/runs/1";
 test("the deploy tooltip gives the exact local merge and deploy times", () => {
   const tip = deployTip(at(2026, 7, 16, 14, 59).toISOString(), {
     label: "Deployed",
-    brief: "Deployed",
+    tone: "ok",
     showsTime: true,
-    failed: false,
     completedAt: at(2026, 7, 16, 15, 4).toISOString(),
     url: RUN,
   });
@@ -105,9 +104,8 @@ test("the deploy tooltip gives the exact local merge and deploy times", () => {
 test("the tooltip of a deploy under way has only the merge time to give", () => {
   const tip = deployTip(at(2026, 1, 2, 9, 5).toISOString(), {
     label: "Deploying",
-    brief: "Deploying",
+    tone: "neutral",
     showsTime: false,
-    failed: false,
     completedAt: null,
     url: RUN,
   });
@@ -140,6 +138,7 @@ const openPr = {
   failing_checks_truncated: false,
   checks_running: false,
   auto_merge: false,
+  threads_open: false,
   ready_to_merge: false,
   turn: null,
   turn_since: null,
@@ -260,6 +259,49 @@ test("a row with several states shows one reason and +N, and names them all in i
   );
 });
 
+// The action bar opens beside the state, never over it, or the tooltip
+// could not be reached with a pointer. The bar is outside the row button, so
+// what pushes it aside is a hidden copy of the state's words after it.
+test("an open row's action bar is followed by a hidden copy of the state", () => {
+  const [li] = renderList([
+    { ...openPr, approved: true, checks_running: true },
+  ]);
+  expect(li).toContain(
+    '</span><span class="pr-state pr-state-space" aria-hidden="true">' +
+      '<span class="pr-state-reason">Checks running</span>' +
+      '<span class="pr-state-more">+1</span></span></span></li>',
+  );
+  expect(li).toMatch(/<span class="pr-row-end"><span class="pr-actions"/);
+});
+
+test("a row with no state has nothing after its action bar", () => {
+  const [li] = renderList([openPr]);
+  expect(li).not.toContain("pr-state");
+});
+
+// The row has no room for a check's name, so a lone CI failure gets the
+// tooltip and the label a folded row gets, and they name the check.
+test("a row whose only state is CI failing says so, and names the check in its tooltip and label", () => {
+  const row = renderOpenRow({
+    blocked_reasons: ["ci"],
+    failing_checks: ["e2e-safari", "lint"],
+  });
+  expect(row).toContain(
+    '<span class="pr-state is-warn pr-tip" role="img"' +
+      ' data-tip="CI failing: e2e-safari and more"' +
+      ' aria-label="CI failing: e2e-safari and more">' +
+      '<span class="pr-state-reason">CI failing</span></span>',
+  );
+});
+
+test("an open thread nothing requires resolving reads in the neutral tone", () => {
+  const row = renderOpenRow({ threads_open: true });
+  expect(row).toContain(
+    '<span class="pr-state is-neutral">' +
+      '<span class="pr-state-reason">Unresolved threads</span></span>',
+  );
+});
+
 // The bar is the row's visible route to its actions, so its buttons are read
 // off the rendered row: each is a real button with its label as text.
 function barOf(li: string): string[] {
@@ -300,26 +342,68 @@ test("each kind of row words its actions in a bar", () => {
   expect(barOf(merged)).toEqual(["Dismiss"]);
 });
 
-// The status is its own button beside the row button, and what it shows is
-// a glyph and a time, so its name spells out what the time is of.
-test("a deployed row shows a rocket and the deploy time, named in full", () => {
-  const deploy = {
-    state: "deployed" as const,
-    completed_at: at(2026, 7, 11, 12, 0).toISOString(),
-    url: RUN,
-  };
+// The deploy status of a merged row: the control that opens the run, and
+// the row button it must stay out of.
+function renderDeploy(deploy: MergedPr["deploy"]) {
   const [li] = renderList([], [{ ...mergedPr, deploy }]);
-  const status = li.match(/<button[^>]*class="pr-deploy"[\s\S]*?<\/button>/)?.[0];
-  expect(status).toMatch(/aria-label="Deployed 11 Jul"/);
-  expect(status).toMatch(/<svg[^>]*aria-hidden="true"[\s\S]*<\/svg>11 Jul<\/button>$/);
+  const row = li.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0] ?? "";
+  const status = li.match(/<button[^>]*class="[^"]*pr-deploy"[\s\S]*?<\/button>/)?.[0];
+  return { row, status };
+}
+
+// The status reads in the state slot the way an open row's state does:
+// words in a tone and nothing else in the button. The time is the row's own
+// timestamp format.
+test("each deploy state reads in words in its tone", () => {
+  const done = at(2026, 7, 11, 12, 0).toISOString();
+  const shown = (["deploying", "deployed", "failed", "cancelled"] as const).map(
+    (state) => {
+      const completed_at = state === "deploying" ? null : done;
+      const { status } = renderDeploy({ state, completed_at, url: RUN });
+      return status?.match(/class="([^"]*)"[^>]*>([^<]*)<\/button>$/)?.slice(1);
+    },
+  );
+  expect(shown).toEqual([
+    ["pr-state is-neutral pr-deploy", "Deploying"],
+    ["pr-state is-ok pr-deploy", "Deployed 11 Jul"],
+    ["pr-state is-warn pr-deploy", "Deploy failed"],
+    ["pr-state is-neutral pr-deploy", "Deploy cancelled"],
+  ]);
 });
 
-test("a deploy that has not landed is worded briefly beside the rocket", () => {
-  const deploy = { state: "failed" as const, completed_at: null, url: RUN };
-  const [li] = renderList([], [{ ...mergedPr, deploy }]);
-  const status = li.match(/<button[^>]*class="pr-deploy is-failed"[\s\S]*?<\/button>/)?.[0];
-  expect(status).toMatch(/aria-label="Deploy failed"/);
-  expect(status).toMatch(/<\/svg>Failed<\/button>$/);
+// The row abbreviates; the title is where the exact times live.
+test("the deploy status tips the exact merge and deploy times", () => {
+  const { status } = renderDeploy({
+    state: "deployed",
+    completed_at: at(2026, 7, 11, 12, 0).toISOString(),
+    url: RUN,
+  });
+  expect(status).toMatch(/title="Merged [^"]*\nDeployed 11 Jul 2026, 12:00"/);
+});
+
+// A button inside the row button is invalid HTML, so the control sits
+// beside it and the row keeps a hidden copy of the words to hold their place
+// at the end of the metadata line.
+test("the deploy control sits outside the row button, over a hidden copy in the state slot", () => {
+  const { row, status } = renderDeploy({
+    state: "failed",
+    completed_at: null,
+    url: RUN,
+  });
+  expect(status).toBeDefined();
+  expect(row.match(/<button/g)).toHaveLength(1);
+  expect(row).toMatch(
+    /<span class="pr-origin">.*<span class="pr-state is-warn pr-state-space" aria-hidden="true">Deploy failed<\/span><\/span>/,
+  );
+  expect(row).toMatch(
+    /<span class="pr-title">[^<]*<\/span><span class="pr-updated">[^<]+<\/span><\/span>/,
+  );
+});
+
+test("a merged row with no deploy run shows nothing in the state slot", () => {
+  const { row, status } = renderDeploy(null);
+  expect(status).toBeUndefined();
+  expect(row).not.toContain("pr-state");
 });
 
 // The timestamp is part of the row button, never a control of its own, so a

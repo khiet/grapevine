@@ -37,6 +37,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   failing_checks_truncated: false,
   checks_running: false,
   auto_merge: false,
+  threads_open: false,
   ready_to_merge: false,
   turn: null,
   turn_since: null,
@@ -126,6 +127,7 @@ test("a row with one state shows it in words, with nothing folded", () => {
     reason: "Approved",
     tone: "ok",
     more: null,
+    hasTip: false,
     all: ["Approved"],
   });
 });
@@ -143,11 +145,12 @@ test("a row that is approved, running checks and blocked at once leads with the 
     reason: "Unresolved threads",
     tone: "warn",
     more: "+2",
+    hasTip: true,
     all: ["Unresolved threads", "Checks running", "Approved"],
   });
 });
 
-test("states run blockers, queue, Copilot, checks, auto-merge, approved, awaiting review", () => {
+test("states run blockers, queue, Copilot, checks, auto-merge, open threads, approved, awaiting review", () => {
   expect(
     state({
       blocked_reasons: ["conflict", "behind"],
@@ -155,20 +158,23 @@ test("states run blockers, queue, Copilot, checks, auto-merge, approved, awaitin
       fix_requested: true,
       checks_running: true,
       auto_merge: true,
+      threads_open: true,
       approved: true,
       awaiting_review: true,
     }),
   ).toEqual({
     reason: "Merge conflict",
     tone: "warn",
-    more: "+7",
+    more: "+8",
+    hasTip: true,
     all: [
       "Merge conflict",
       "Behind base",
-      "In merge queue, 2nd",
+      "Queued 2nd",
       "Copilot fixing",
       "Checks running",
-      "Auto-merge armed",
+      "Auto-merge on",
+      "Unresolved threads",
       "Approved",
       "Awaiting review",
     ],
@@ -178,7 +184,7 @@ test("states run blockers, queue, Copilot, checks, auto-merge, approved, awaitin
 test("a review requested from your team comes last", () => {
   expect(state({ approved: true, team_review_requested: true })?.all).toEqual([
     "Approved",
-    "Team review requested",
+    "Team review",
   ]);
 });
 
@@ -197,6 +203,7 @@ test("each state takes its tone: amber blocked, green ready and approved, neutra
   expect(tone({ fix_requested: true })).toBe("neutral");
   expect(tone({ checks_running: true })).toBe("neutral");
   expect(tone({ auto_merge: true })).toBe("neutral");
+  expect(tone({ threads_open: true })).toBe("neutral");
   expect(tone({ awaiting_review: true })).toBe("neutral");
   expect(tone({ team_review_requested: true })).toBe("neutral");
 });
@@ -210,7 +217,7 @@ test("a draft shows the Draft pill and nothing the backend did not send", () => 
 test("a draft still shows a state the backend sends for it", () => {
   const row = rowFor(pr({ is_draft: true, merge_queue_position: 2 }));
   expect(row.draft).toBe(true);
-  expect(row.state?.reason).toBe("In merge queue, 2nd");
+  expect(row.state?.reason).toBe("Queued 2nd");
 });
 
 // The keys are the wire contract with the Rust BlockedReason enum; the labels
@@ -230,24 +237,44 @@ test("several blockers keep the backend's severity order", () => {
     reason: "CI failing",
     tone: "warn",
     more: "+2",
+    hasTip: true,
     all: ["CI failing", "Changes requested", "Behind base"],
   });
 });
 
-test("the CI reason names the failing check", () => {
+// A check's name is as long as its author made it, so the row never shows
+// it; the tooltip and the accessible name do.
+test("the row says CI failing and leaves the check's name to the tooltip", () => {
   expect(
-    state({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari"] })?.reason,
-  ).toBe("CI failing: e2e-safari");
+    state({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari"] }),
+  ).toEqual({
+    reason: "CI failing",
+    tone: "warn",
+    more: null,
+    hasTip: true,
+    all: ["CI failing: e2e-safari"],
+  });
 });
 
-test("with several checks failing the CI reason names the first and says there are more", () => {
+test("a CI failure with no check to name has nothing more to say", () => {
+  expect(state({ blocked_reasons: ["ci"] })).toEqual({
+    reason: "CI failing",
+    tone: "warn",
+    more: null,
+    hasTip: false,
+    all: ["CI failing"],
+  });
+});
+
+test("with several checks failing the tooltip names the first and says there are more", () => {
   expect(
     state({ blocked_reasons: ["ci"], failing_checks: ["e2e-safari", "lint"] }),
   ).toEqual({
-    reason: "CI failing: e2e-safari and more",
+    reason: "CI failing",
     tone: "warn",
     // Further failing checks are not further states.
     more: null,
+    hasTip: true,
     all: ["CI failing: e2e-safari and more"],
   });
 });
@@ -260,8 +287,8 @@ test("a truncated list of failing checks says there are more even with one name"
       blocked_reasons: ["ci"],
       failing_checks: ["e2e-safari"],
       failing_checks_truncated: true,
-    })?.reason,
-  ).toBe("CI failing: e2e-safari and more");
+    })?.all,
+  ).toEqual(["CI failing: e2e-safari and more"]);
 });
 
 test("a folded CI blocker names the failing check too", () => {
@@ -271,14 +298,82 @@ test("a folded CI blocker names the failing check too", () => {
   ).toEqual(["Merge conflict", "CI failing: e2e-safari"]);
 });
 
+// Where the base branch does not require resolution the backend sends the
+// thread as a property, not a blocker, and it ranks with the news.
+test("an open thread that blocks nothing is neutral, after auto-merge and ahead of the approval", () => {
+  expect(
+    state({ auto_merge: true, threads_open: true, approved: true }),
+  ).toEqual({
+    reason: "Auto-merge on",
+    tone: "neutral",
+    more: "+2",
+    hasTip: true,
+    all: ["Auto-merge on", "Unresolved threads", "Approved"],
+  });
+  expect(state({ threads_open: true })).toEqual({
+    reason: "Unresolved threads",
+    tone: "neutral",
+    more: null,
+    hasTip: false,
+    all: ["Unresolved threads"],
+  });
+});
+
+test("a mergeable PR with an open thread still leads with Mergeable", () => {
+  expect(state({ ready_to_merge: true, threads_open: true })?.all).toEqual([
+    "Mergeable",
+    "Unresolved threads",
+  ]);
+});
+
+// GitHub's wording, two words at most: the ordinal rides on "Queued" and
+// "auto-merge" is one word. Each state is read as the row shows it when it
+// leads, a named failing check included.
+test("every state reads on the row in at most two words", () => {
+  const leading: Partial<PullRequest>[] = [
+    { review_requested: true },
+    { blocked_reasons: ["conflict"] },
+    { blocked_reasons: ["ci"], failing_checks: ["e2e-safari", "lint"] },
+    { blocked_reasons: ["review"] },
+    { blocked_reasons: ["threads"] },
+    { blocked_reasons: ["behind"] },
+    { ready_to_merge: true },
+    { merge_queue_position: 21 },
+    { fix_requested: true },
+    { checks_running: true },
+    { auto_merge: true },
+    { threads_open: true },
+    { approved: true },
+    { awaiting_review: true },
+    { team_review_requested: true },
+  ];
+  expect(leading.map((overrides) => state(overrides)?.reason)).toEqual([
+    "Review requested",
+    "Merge conflict",
+    "CI failing",
+    "Changes requested",
+    "Unresolved threads",
+    "Behind base",
+    "Mergeable",
+    "Queued 21st",
+    "Copilot fixing",
+    "Checks running",
+    "Auto-merge on",
+    "Unresolved threads",
+    "Approved",
+    "Awaiting review",
+    "Team review",
+  ]);
+});
+
 // Ready is the backend's call and does not imply an approval: a repo with no
 // required reviews is ready without one.
-test("a ready PR leads with Ready to merge, ahead of its approval", () => {
+test("a ready PR leads with Mergeable, ahead of its approval", () => {
   expect(state({ approved: true, ready_to_merge: true })?.all).toEqual([
-    "Ready to merge",
+    "Mergeable",
     "Approved",
   ]);
-  expect(state({ ready_to_merge: true })?.all).toEqual(["Ready to merge"]);
+  expect(state({ ready_to_merge: true })?.all).toEqual(["Mergeable"]);
 });
 
 // The teens are the trap: 11, 12 and 13 take "th" although they end in 1, 2
@@ -286,15 +381,15 @@ test("a ready PR leads with Ready to merge, ahead of its approval", () => {
 test("the merge queue reason states the position as an English ordinal", () => {
   const reason = (position: number) =>
     state({ merge_queue_position: position })?.reason;
-  expect(reason(1)).toBe("In merge queue, 1st");
-  expect(reason(2)).toBe("In merge queue, 2nd");
-  expect(reason(3)).toBe("In merge queue, 3rd");
-  expect(reason(4)).toBe("In merge queue, 4th");
-  expect(reason(11)).toBe("In merge queue, 11th");
-  expect(reason(12)).toBe("In merge queue, 12th");
-  expect(reason(13)).toBe("In merge queue, 13th");
-  expect(reason(21)).toBe("In merge queue, 21st");
-  expect(reason(22)).toBe("In merge queue, 22nd");
+  expect(reason(1)).toBe("Queued 1st");
+  expect(reason(2)).toBe("Queued 2nd");
+  expect(reason(3)).toBe("Queued 3rd");
+  expect(reason(4)).toBe("Queued 4th");
+  expect(reason(11)).toBe("Queued 11th");
+  expect(reason(12)).toBe("Queued 12th");
+  expect(reason(13)).toBe("Queued 13th");
+  expect(reason(21)).toBe("Queued 21st");
+  expect(reason(22)).toBe("Queued 22nd");
 });
 
 test("with no filter Todo, Mine, Participated and All are present even when empty", () => {
@@ -339,7 +434,9 @@ const deployFor = (only: MergedPr) => {
   return body.rows[0].deploy;
 };
 
-test("a merged row with a deploy under way says Deploying", () => {
+const DEPLOY_DONE = "2026-07-11T09:42:00Z";
+
+test("a merged row with a deploy under way says Deploying, in the neutral tone", () => {
   const deploy = deployFor(
     mergedPr({
       deploy: { state: "deploying", completed_at: null, url: RUN_URL },
@@ -347,17 +444,14 @@ test("a merged row with a deploy under way says Deploying", () => {
   );
   expect(deploy).toEqual({
     label: "Deploying",
-    brief: "Deploying",
+    tone: "neutral",
     showsTime: false,
-    failed: false,
     completedAt: null,
     url: RUN_URL,
   });
 });
 
-const DEPLOY_DONE = "2026-07-11T09:42:00Z";
-
-test("a deployed row says Deployed and when the deploy landed", () => {
+test("a deployed row says Deployed in green, and is the one status that shows its time", () => {
   const deploy = deployFor(
     mergedPr({
       deploy: { state: "deployed", completed_at: DEPLOY_DONE, url: RUN_URL },
@@ -365,15 +459,14 @@ test("a deployed row says Deployed and when the deploy landed", () => {
   );
   expect(deploy).toEqual({
     label: "Deployed",
-    brief: "Deployed",
+    tone: "ok",
     showsTime: true,
-    failed: false,
     completedAt: DEPLOY_DONE,
     url: RUN_URL,
   });
 });
 
-test("a failed deploy is the one status in the failure color", () => {
+test("a failed deploy says Deploy failed in amber, like a blocked row", () => {
   const deploy = deployFor(
     mergedPr({
       deploy: { state: "failed", completed_at: DEPLOY_DONE, url: RUN_URL },
@@ -381,15 +474,14 @@ test("a failed deploy is the one status in the failure color", () => {
   );
   expect(deploy).toEqual({
     label: "Deploy failed",
-    brief: "Failed",
+    tone: "warn",
     showsTime: false,
-    failed: true,
     completedAt: DEPLOY_DONE,
     url: RUN_URL,
   });
 });
 
-test("a cancelled deploy is named without the failure color", () => {
+test("a cancelled deploy says Deploy cancelled, in the neutral tone", () => {
   const deploy = deployFor(
     mergedPr({
       deploy: { state: "cancelled", completed_at: DEPLOY_DONE, url: RUN_URL },
@@ -397,9 +489,8 @@ test("a cancelled deploy is named without the failure color", () => {
   );
   expect(deploy).toEqual({
     label: "Deploy cancelled",
-    brief: "Cancelled",
+    tone: "neutral",
     showsTime: false,
-    failed: false,
     completedAt: DEPLOY_DONE,
     url: RUN_URL,
   });
@@ -685,6 +776,7 @@ test("a your-turn row asked for review leads with the request, in the accent", (
     reason: "Review requested",
     tone: "accent",
     more: "+2",
+    hasTip: true,
     all: ["Review requested", "CI failing", "Approved"],
   });
 });
@@ -701,18 +793,20 @@ test("a blocked your-turn row leads with its primary blocker", () => {
     reason: "Merge conflict",
     tone: "warn",
     more: "+3",
-    all: ["Merge conflict", "Unresolved threads", "In merge queue, 1st", "Approved"],
+    hasTip: true,
+    all: ["Merge conflict", "Unresolved threads", "Queued 1st", "Approved"],
   });
 });
 
-test("a ready your-turn row leads with Ready to merge", () => {
+test("a ready your-turn row leads with Mergeable", () => {
   expect(
     state({ turn: "yours", approved: true, auto_merge: true, ready_to_merge: true }),
   ).toEqual({
-    reason: "Ready to merge",
+    reason: "Mergeable",
     tone: "ok",
     more: "+2",
-    all: ["Ready to merge", "Auto-merge armed", "Approved"],
+    hasTip: true,
+    all: ["Mergeable", "Auto-merge on", "Approved"],
   });
 });
 

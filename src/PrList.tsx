@@ -502,13 +502,14 @@ export function GlyphSvg({
 }
 
 /* The row's state in words: one reason in its tone, then "+N" when further
-   states are folded behind it. Which states a row has, and their order, is
-   decided by the popover view. Only a folded row gets the tooltip and the
-   label, each listing every state; a lone reason is its own label. */
+   states are folded behind it. Which states a row has, their order, and
+   whether there is more to say than the row shows, is decided by the popover
+   view. Only then does the row get the tooltip and the label, each listing
+   every state in full; otherwise the reason is its own label. */
 function StateView({ state }: { state: RowState }) {
   const className = `pr-state is-${state.tone}`;
   const reason = <span className="pr-state-reason">{state.reason}</span>;
-  if (state.more === null) return <span className={className}>{reason}</span>;
+  if (!state.hasTip) return <span className={className}>{reason}</span>;
   return (
     <span
       className={`${className} pr-tip`}
@@ -517,7 +518,7 @@ function StateView({ state }: { state: RowState }) {
       aria-label={state.all.join(", ")}
     >
       {reason}
-      <span className="pr-state-more">{state.more}</span>
+      {state.more && <span className="pr-state-more">{state.more}</span>}
     </span>
   );
 }
@@ -764,6 +765,15 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           status={row.fix === "posting" ? "Asking" : null}
           onPick={run}
         />
+        {/* Holds the state's width after the bar, so the bar opens beside
+            the state in the row and never over it: its tooltip stays within
+            the pointer's reach. */}
+        {state && (
+          <span className="pr-state pr-state-space" aria-hidden="true">
+            <span className="pr-state-reason">{state.reason}</span>
+            {state.more && <span className="pr-state-more">{state.more}</span>}
+          </span>
+        )}
       </span>
       {menu.at && (
         <MenuLayer
@@ -811,19 +821,6 @@ function SnoozedGroup({ group }: { group: SnoozedGroupView }) {
   );
 }
 
-// A rocket, for a merged row's deploy status. Inherits the status's colour,
-// so a failed deploy's is red.
-function DeployGlyph() {
-  return (
-    <GlyphSvg strokeWidth={2} size={12}>
-      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
-      <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
-      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
-      <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
-    </GlyphSvg>
-  );
-}
-
 /* The deploy status is a control of its own (it opens the workflow run, the
    row opens the PR), so like the action bar it is a sibling of the row
    button, not nested in it, which would be invalid HTML. No mark_read here:
@@ -831,18 +828,14 @@ function DeployGlyph() {
 function MergedRow({ row }: { row: MergedRowView }) {
   const { pr, deploy } = row;
   const menu = useRowMenu(row.actions.length > 0);
-  // A deploy that landed shows when, under the merge time; any other says
-  // where it stands. The glyph is what says "deploy" in either.
-  const landedAt =
-    deploy?.showsTime && deploy.completedAt
-      ? formatUpdated(deploy.completedAt)
-      : null;
-  const status = deploy && (
-    <>
-      <DeployGlyph />
-      {landedAt ?? deploy.brief}
-    </>
-  );
+  // The status in the row's state slot, toned like an open row's state. A
+  // deploy that landed says when, in the row's own timestamp format.
+  const status =
+    deploy &&
+    (deploy.showsTime && deploy.completedAt
+      ? `${deploy.label} ${formatUpdated(deploy.completedAt)}`
+      : deploy.label);
+  const stateClass = deploy && `pr-state is-${deploy.tone}`;
   const open = () => openUrl(pr.url).catch(() => {});
   const run = (id: RowActionId) => {
     if (id === "dismiss") dismissMerged(prKey(pr)).catch(() => {});
@@ -866,44 +859,42 @@ function MergedRow({ row }: { row: MergedRowView }) {
           author={pr.author}
         />
         <span className="pr-text">
-          <span
-            className={status ? "pr-title-row has-deploy" : "pr-title-row"}
-          >
+          <span className="pr-title-row">
             <span className="pr-title">{pr.title}</span>
-            <span className="pr-times">
-              <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
-              {/* Holds the status's place under the merge time, so a
-                  one-line title leaves it room; the real control floats
-                  over this spot. */}
-              {status && (
-                <span className="pr-deploy-space" aria-hidden="true">
-                  {status}
-                </span>
-              )}
-            </span>
+            <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
           </span>
           <span className="pr-origin">
             <span className="pr-number">#{pr.number}</span>
             <span className="pr-repo">{pr.repo}</span>
+            {/* Holds the status's place in the state slot, so the repo
+                truncates clear of it; the real control lies over this
+                spot. */}
+            {deploy && (
+              <span
+                className={`${stateClass} pr-state-space`}
+                aria-hidden="true"
+              >
+                {status}
+              </span>
+            )}
           </span>
         </span>
       </button>
+      {/* The action bar opens to the left of the status, never over it, so
+          the run stays one click away on a hovered row. */}
       <span className="pr-row-end">
         <ActionBar actions={row.actions} onPick={run} />
+        {deploy && (
+          <button
+            type="button"
+            className={`${stateClass} pr-deploy`}
+            title={deployTip(pr.merged_at, deploy)}
+            onClick={() => openUrl(deploy.url).catch(() => {})}
+          >
+            {status}
+          </button>
+        )}
       </span>
-      {deploy && (
-        <button
-          type="button"
-          className={deploy.failed ? "pr-deploy is-failed" : "pr-deploy"}
-          title={deployTip(pr.merged_at, deploy)}
-          // The glyph is unseen by assistive tech, and a bare time would
-          // not say what it is the time of.
-          aria-label={landedAt ? `${deploy.label} ${landedAt}` : deploy.label}
-          onClick={() => openUrl(deploy.url).catch(() => {})}
-        >
-          {status}
-        </button>
-      )}
       {menu.at && (
         <MenuLayer
           at={menu.at}
