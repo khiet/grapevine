@@ -398,7 +398,6 @@ const PAIRS: [string, string[]][] = [
   ...onRow("--warn"),
   ...onRow("--danger"),
   ...onRow("--ok"),
-  ...onRow("--text", "--fill"),
   ...onRow("--text-2", "--fill-solid"),
   // The action bar's labels, plain and under the pointer.
   ...onRow("--text", "--fill-solid"),

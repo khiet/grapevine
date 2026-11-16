@@ -29,10 +29,11 @@
   --window: #f2f2f7;
   --card: #ffffff;
   --line: rgba(0, 0, 0, 0.1);
-  /* Translucent neutral for pills and the filter field, and its opaque
-     sibling for counts and tags that must cover what is under them. The
-     strong one is for shapes that sit on the window or carry no text of
-     their own, where the lighter fill would vanish. */
+  /* Translucent neutral for the filter field, key caps and hovered header
+     and footer controls, and its opaque sibling for counts and tags that
+     must cover what is under them. The strong one is for shapes that sit on
+     the window or carry no text of their own, where the lighter fill would
+     vanish. */
   --fill: rgba(120, 120, 128, 0.12);
   --fill-solid: #e5e5ea;
   --fill-strong: #d8d8dc;
@@ -80,8 +81,8 @@
   --window: #1e1e1e;
   --card: #2c2c2e;
   --line: rgba(255, 255, 255, 0.12);
-  /* The light-mode fills sink into the dark card; stronger ones keep a
-     pill legible without brightening its text into a signal. */
+  /* The light-mode fills sink into the dark surfaces; stronger ones keep a
+     filled shape legible without brightening its text into a signal. */
   --fill: rgba(120, 120, 128, 0.32);
   --fill-solid: #3a3a3c;
   --fill-strong: #3a3a3c;
@@ -783,7 +784,8 @@ body {
 }
 
 /* The row's state in words, pinned at the row's right edge, out of the
-   metadata's way. Plain text in its tone, not a pill. The neutral tone is
+   metadata's way. Plain text in its tone, never a filled shape, which would
+   pass for the action bar's buttons on the same corner. The neutral tone is
    the metadata line's own grey, so it sets no colour. position: relative
    anchors the tooltip. It never shrinks: the repo beside it gives way
    instead, since the state is the news. */
@@ -797,10 +799,8 @@ body {
   white-space: nowrap;
 }
 
-/* "Draft" is a neutral state of its own, ahead of whatever state the row
-   has. It took the free space to its left, so the state after it takes
-   none. Plain words like every state: a filled shape here would pass for
-   the action bar's buttons, which open on this corner. */
+/* "Draft" is a .pr-state of its own, ahead of whatever state the row has.
+   It took the free space to its left, so the state after it takes none. */
 .pr-draft + .pr-state {
   margin-left: 0;
 }
