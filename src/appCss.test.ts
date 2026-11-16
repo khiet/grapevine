@@ -210,14 +210,21 @@ test("no rule hides the timestamp", () => {
 // type size and weight, and the bar the control rides in is centred on the
 // metadata line the copy sits in.
 test("a merged row's deploy status covers its hidden copy in the state slot", () => {
-  const both = ruleFor(".pr-deploy,\n.pr-deploy-space");
+  const both = ruleFor(".pr-deploy,\n.pr-state-space");
   expect(both.get("font-size")).toBe(ruleFor(".pr-origin").get("font-size"));
   const status = ruleFor(".pr-deploy");
   expect(status.get("font-weight")).toBe(ruleFor(".pr-state").get("font-weight"));
-  expect(ruleFor(".pr-deploy-space").get("visibility")).toBe("hidden");
+  expect(ruleFor(".pr-state-space").get("visibility")).toBe("hidden");
   const end = ruleFor(".pr-row-end");
   expect(end.get("align-items")).toBe("center");
   expect(px(end.get("min-height"))).toBe(px(ruleFor(".pr-action").get("height")));
+});
+
+// The bar's box spans the state on an open row. Only its controls may take
+// the pointer, or the state under it could never be hovered for its tooltip.
+test("the row's end bar lets the pointer through to the state beneath it", () => {
+  expect(ruleFor(".pr-row-end").get("pointer-events")).toBe("none");
+  expect(ruleFor(".pr-actions,\n.pr-deploy").get("pointer-events")).toBe("auto");
 });
 
 // Outside .pr-origin the neutral tone has no grey to inherit, and the toned

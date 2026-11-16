@@ -259,6 +259,26 @@ test("a row with several states shows one reason and +N, and names them all in i
   );
 });
 
+// The action bar opens beside the state, never over it, or the tooltip
+// could not be reached with a pointer. The bar is outside the row button, so
+// what pushes it aside is a hidden copy of the state's words after it.
+test("an open row's action bar is followed by a hidden copy of the state", () => {
+  const [li] = renderList([
+    { ...openPr, approved: true, checks_running: true },
+  ]);
+  expect(li).toContain(
+    '</span><span class="pr-state pr-state-space" aria-hidden="true">' +
+      '<span class="pr-state-reason">Checks running</span>' +
+      '<span class="pr-state-more">+1</span></span></span></li>',
+  );
+  expect(li).toMatch(/<span class="pr-row-end"><span class="pr-actions"/);
+});
+
+test("a row with no state has nothing after its action bar", () => {
+  const [li] = renderList([openPr]);
+  expect(li).not.toContain("pr-state");
+});
+
 // The row has no room for a check's name, so a lone CI failure gets the
 // tooltip and the label a folded row gets, and they name the check.
 test("a row whose only state is CI failing says so, and names the check in its tooltip and label", () => {
@@ -373,7 +393,7 @@ test("the deploy control sits outside the row button, over a hidden copy in the 
   expect(status).toBeDefined();
   expect(row.match(/<button/g)).toHaveLength(1);
   expect(row).toMatch(
-    /<span class="pr-origin">.*<span class="pr-state is-warn pr-deploy-space" aria-hidden="true">Deploy failed<\/span><\/span>/,
+    /<span class="pr-origin">.*<span class="pr-state is-warn pr-state-space" aria-hidden="true">Deploy failed<\/span><\/span>/,
   );
   expect(row).toMatch(
     /<span class="pr-title">[^<]*<\/span><span class="pr-updated">[^<]+<\/span><\/span>/,

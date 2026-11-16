@@ -765,6 +765,15 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           status={row.fix === "posting" ? "Asking" : null}
           onPick={run}
         />
+        {/* Holds the state's width after the bar, so the bar opens beside
+            the state in the row and never over it: its tooltip stays within
+            the pointer's reach. */}
+        {state && (
+          <span className="pr-state pr-state-space" aria-hidden="true">
+            <span className="pr-state-reason">{state.reason}</span>
+            {state.more && <span className="pr-state-more">{state.more}</span>}
+          </span>
+        )}
       </span>
       {menu.at && (
         <MenuLayer
@@ -862,7 +871,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
                 spot. */}
             {deploy && (
               <span
-                className={`${stateClass} pr-deploy-space`}
+                className={`${stateClass} pr-state-space`}
                 aria-hidden="true"
               >
                 {status}

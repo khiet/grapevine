@@ -406,13 +406,20 @@ body {
   text-align: left;
 }
 
-/* What floats over the end of the row's metadata line: the action bar, and
-   on a merged row its deploy status after it. On the last line, never the
-   first, so the timestamp stays in view, and .pr-updated is stacked above
-   this where their boxes touch: a click on the time always lands on the row
-   button and opens the PR. `right` is .pr-row's right padding. `bottom` and
-   the height are what centre the 24px bar, or a status alone, on the
-   metadata line (14px tall, above .pr-row's 9px bottom padding). */
+/* What floats over the end of the row's metadata line: the action bar, then
+   whatever fills the row's state slot, so the bar opens beside the state and
+   never over it. On an open row that is a hidden copy of the state, which is
+   in the row button beneath; on a merged row it is the deploy status itself.
+   The box spans the state either way, so it takes no pointer events of its
+   own and its controls take theirs back: the state beneath stays hoverable
+   for its tooltip.
+
+   On the last line, never the first, so the timestamp stays in view, and
+   .pr-updated is stacked above this where their boxes touch: a click on the
+   time always lands on the row button and opens the PR. `right` is .pr-row's
+   right padding. `bottom` and the height are what centre the 24px bar, or a
+   status alone, on the metadata line (14px tall, above .pr-row's 9px bottom
+   padding). */
 .pr-row-end {
   position: absolute;
   bottom: 4px;
@@ -421,15 +428,19 @@ body {
   align-items: center;
   gap: 6px;
   min-height: 24px;
+  pointer-events: none;
+}
+
+.pr-actions,
+.pr-deploy {
+  pointer-events: auto;
 }
 
 /* A merged row's deploy status: words in the row's state slot, toned by
    .pr-state like an open row's state, and a control that opens the workflow
-   run. It lies over .pr-deploy-space, the hidden copy inside the row button
-   that holds its place at the end of the metadata line; the two share the
-   metadata line's size and .pr-state's weight, so the control covers the
-   copy exactly. The grey is the neutral tone, which .pr-state leaves to
-   .pr-origin and a button outside it does not inherit. */
+   run. It lies over a hidden copy inside the row button that holds its place
+   at the end of the metadata line. The grey is the neutral tone, which
+   .pr-state leaves to .pr-origin and a button outside it does not inherit. */
 .pr-deploy {
   border: none;
   background: none;
@@ -439,8 +450,12 @@ body {
   color: var(--text-2);
 }
 
+/* A hidden copy of the state slot's words, holding their width on the other
+   side of the row button's edge from the words shown. The copy and what it
+   stands for share the metadata line's size and .pr-state's weight, so the
+   two are the same width. */
 .pr-deploy,
-.pr-deploy-space {
+.pr-state-space {
   font-size: var(--text-m);
 }
 
@@ -448,7 +463,7 @@ body {
   text-decoration: underline;
 }
 
-.pr-deploy-space {
+.pr-state-space {
   visibility: hidden;
 }
 
