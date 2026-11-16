@@ -51,6 +51,12 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   conflict, ask Copilot to resolve it from the row. Two clicks, and only in
   repos where Copilot's cloud agent is enabled. The PR then waits on Copilot,
   not on you, until the conflict clears or an hour passes.
+- **Finish it from the row.** On your own PRs: merge one that is ready (or
+  add it to the merge queue), update a branch that is behind its base, and
+  turn auto-merge on or off from the right-click menu. Two clicks each. A
+  merge is a rebase where the repo allows it, otherwise the repo's default
+  method. If the PR has moved since the last sync, GitHub refuses and
+  nothing changes.
 
 ## Install
 
@@ -111,9 +117,10 @@ Open the popover and go to settings.
 About token scopes:
 
 - `repo` is needed for private repos. It grants read *and write* access to
-  all of them. Grapevine writes one thing, and only when you confirm it: the
-  comment that asks Copilot to resolve a merge conflict on your own PR.
-  Everything else is a read.
+  all of them. Grapevine writes only to your own PRs, and each write only
+  when you confirm it: the comment that asks Copilot to resolve a merge
+  conflict, a merge, an entry in the merge queue, a branch update from the
+  base, and auto-merge turned on or off. Everything else is a read.
 - If you only watch public repos, `public_repo` is the tighter choice.
   Grapevine tells you when a saved token cannot see private repos.
 - Fine-grained tokens are not recommended. Each one covers a single user or

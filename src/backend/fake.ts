@@ -3,6 +3,8 @@ import {
   SNAPSHOT_EVENT,
   type Adapter,
   type Appearance,
+  type PrAction,
+  type PullRequest,
   type Snapshot,
 } from "./index";
 
@@ -93,6 +95,65 @@ export function createFakeBackend(
                 turn_since: waitsOnCopilot ? null : pr.turn_since,
               }
             : candidate,
+        ),
+      });
+    },
+    // Refuses what the backend would, then leaves the PR as GitHub would
+    // have it after the write, as far as the fake can tell: it has no sync
+    // to learn the rest from.
+    act_on_pr: ({ key, action }) => {
+      const pr = snapshot.prs.find((candidate) => prKey(candidate) === key);
+      if (!pr) throw "That PR is no longer in the list.";
+      if (!pr.actions.includes(action as PrAction)) {
+        throw "That is no longer on offer for this PR.";
+      }
+      if (action === "merge") {
+        publish({
+          ...snapshot,
+          prs: snapshot.prs.filter((candidate) => candidate !== pr),
+          snoozed: snapshot.snoozed.filter((k) => k !== key),
+          merged: [
+            {
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+              repo: pr.repo,
+              author: pr.author,
+              avatar_url: pr.avatar_url,
+              owner_avatar_url: pr.owner_avatar_url,
+              // The fake has no clock; the PR's last update stands in.
+              merged_at: pr.updated_at,
+              deploy: null,
+            },
+            ...snapshot.merged,
+          ],
+        });
+        return;
+      }
+      // A merge under way waits on GitHub, not on the viewer.
+      const underWay = {
+        ready_to_merge: false,
+        turn: "theirs",
+        turn_since: null,
+      } as const;
+      const after: Record<Exclude<PrAction, "merge">, Partial<PullRequest>> = {
+        queue: { ...underWay, merge_queue_position: 1, actions: [] },
+        update_branch: {
+          blocked_reasons: pr.blocked_reasons.filter((r) => r !== "behind"),
+          actions: pr.actions.filter((a) => a !== "update_branch"),
+        },
+        enable_auto_merge: {
+          ...underWay,
+          auto_merge: true,
+          actions: ["disable_auto_merge"],
+        },
+        disable_auto_merge: { auto_merge: false, actions: ["enable_auto_merge"] },
+      };
+      const changes = after[action as Exclude<PrAction, "merge">];
+      publish({
+        ...snapshot,
+        prs: snapshot.prs.map((candidate) =>
+          candidate === pr ? { ...pr, ...changes } : candidate,
         ),
       });
     },

@@ -90,6 +90,18 @@ export interface PullRequest {
    * Such a PR waits on Copilot: its turn is never "yours" unless a review is
    * asked of the viewer by name. */
   fix_requested: boolean;
+  /** What the row may offer to do to the PR on GitHub, in the order it lists
+   * them. Backend-computed from what GitHub lets the viewer do: only ever
+   * set in Mine, never on a draft, and "queue" stands in for "merge" where
+   * the base branch has a merge queue. The backend checks it again before
+   * writing, so this only decides what is offered. */
+  actions: PrAction[];
+  /** How "merge" and "enable_auto_merge" merge in this PR's repo: rebase
+   * where the repo allows it, otherwise the repo's default for the viewer.
+   * Named in the confirm hint; there is no picker. */
+  merge_method: MergeMethod;
+  /** The branch the PR merges into, named in the confirm hint. */
+  base_branch: string;
   /** New activity from people. The only count that badges a row or a
    * collapsed section. It does not feed the tray. */
   unread_count: number;
@@ -103,6 +115,15 @@ export interface PullRequest {
 export type Section = "mine" | "participated" | "all";
 
 export type Turn = "yours" | "theirs";
+
+export type PrAction =
+  | "merge"
+  | "queue"
+  | "update_branch"
+  | "enable_auto_merge"
+  | "disable_auto_merge";
+
+export type MergeMethod = "merge" | "squash" | "rebase";
 
 export type BlockedReason = "conflict" | "ci" | "review" | "threads" | "behind";
 
@@ -248,13 +269,23 @@ export const snooze = (key: string) =>
 export const wake = (key: string) => adapter.invoke<void>("wake", { key });
 
 /** Asks Copilot to resolve the PR's merge conflict, with a comment posted on
- * GitHub as the user: the one command that writes there. Only the key goes
+ * GitHub as the user. Only the key goes
  * over; the backend picks the PR and the words. Rejects with the message to
  * show on the row. A posted comment is answered with a Snapshot in which the
  * PR has fix_requested set; the backend refuses a second one while that
  * lasts. */
 export const fixConflict = (key: string) =>
   adapter.invoke<void>("fix_conflict", { key });
+
+/** Does `action` to the PR on GitHub as the user: with fixConflict, the
+ * commands that write there. Only the key and the action's name go over; the
+ * backend picks the PR, the merge method and the commit it expects the PR to
+ * be at, and refuses an action the PR does not list. Rejects with the
+ * message to show on the row, GitHub's own when GitHub turned the write
+ * down. A write that went through is answered with a Snapshot in which the
+ * PR offers no actions, and then with a sync's. */
+export const actOnPr = (key: string, action: PrAction) =>
+  adapter.invoke<void>("act_on_pr", { key, action });
 
 /** Epoch ms of the next local 08:00 strictly after `now`: when a snooze runs
  * out on its own. */

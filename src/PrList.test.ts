@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 import { EMPTY_SNAPSHOT, type MergedPr, type PullRequest } from "./backend";
-import { derivePopover, type ListView } from "./popoverView";
+import { derivePopover, type ListView, type WritesPending } from "./popoverView";
 import PrList, {
   DEFAULT_COLLAPSED,
   deployTip,
@@ -144,6 +144,9 @@ const openPr = {
   turn_since: null,
   can_fix_conflict: false,
   fix_requested: false,
+  actions: [],
+  merge_method: "merge",
+  base_branch: "main",
   unread_count: 0,
   bot_unread_count: 0,
 } satisfies PullRequest;
@@ -337,14 +340,14 @@ function barOf(li: string): string[] {
 function renderList(
   prs: PullRequest[],
   merged: MergedPr[] = [],
-  fixesPosting: ReadonlySet<string> = new Set(),
+  writesPending: WritesPending = new Map(),
 ): string[] {
   const { content } = derivePopover(
     { ...EMPTY_SNAPSHOT, has_synced: true, prs, merged },
     "",
     { mine: false, participated: false, all: false, merged: false },
     NOW.getTime(),
-    fixesPosting,
+    writesPending,
   );
   const html = renderToStaticMarkup(
     createElement(PrList, { view: content as ListView, onToggle: () => {} }),
@@ -454,9 +457,40 @@ test("a row whose Copilot fix is being posted says Asking in place of the fix", 
   const [li] = renderList(
     [{ ...openPr, can_fix_conflict: true, blocked_reasons: ["conflict"] }],
     [],
-    new Set(["acme/widgets#7"]),
+    new Map([["acme/widgets#7", "fix"]]),
   );
   expect(li).toContain('<span class="pr-action-status" role="status">Asking</span>');
+  expect(barOf(li)).toEqual(["Snooze"]);
+});
+
+test("the bar words the merge, the queue and the branch update", () => {
+  const [ready, queued, behind] = renderList([
+    { ...openPr, actions: ["merge"] },
+    { ...openPr, number: 8, actions: ["queue"] },
+    { ...openPr, number: 9, actions: ["update_branch"] },
+  ]);
+  expect(barOf(ready)).toEqual(["Snooze", "Merge"]);
+  expect(barOf(queued)).toEqual(["Snooze", "Queue"]);
+  expect(barOf(behind)).toEqual(["Snooze", "Update branch"]);
+});
+
+// Arming and cancelling auto-merge are the menu's alone.
+test("the bar leaves auto-merge to the menu", () => {
+  const [behind, armed] = renderList([
+    { ...openPr, actions: ["update_branch", "enable_auto_merge"] },
+    { ...openPr, number: 8, actions: ["disable_auto_merge"] },
+  ]);
+  expect(barOf(behind)).toEqual(["Snooze", "Update branch"]);
+  expect(barOf(armed)).toEqual(["Snooze"]);
+});
+
+test("a row whose merge is on its way says Merging in place of its writes", () => {
+  const [li] = renderList(
+    [{ ...openPr, actions: ["merge", "enable_auto_merge"] }],
+    [],
+    new Map([["acme/widgets#7", "merge"]]),
+  );
+  expect(li).toContain('<span class="pr-action-status" role="status">Merging</span>');
   expect(barOf(li)).toEqual(["Snooze"]);
 });
 

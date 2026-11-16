@@ -344,8 +344,9 @@ function SettingsView() {
               Create one on GitHub
             </button>
             . <strong>repo</strong> grants read and write access to all your
-            private repositories. Grapevine only reads, except that Fix with
-            Copilot posts one comment when you confirm it. If you watch public
+            private repositories. Grapevine only reads, except for what you
+            confirm on a row of your own: a Copilot fix, a merge, a branch
+            update, auto-merge. If you watch public
             repositories only, <strong>public_repo</strong> is enough.
           </p>
         </div>

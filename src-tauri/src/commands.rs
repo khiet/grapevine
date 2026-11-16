@@ -87,6 +87,34 @@ async fn post_conflict_fix(pr: &github::PullRequest) -> Result<(), String> {
     Ok(github::request_conflict_fix(&token, pr).await?)
 }
 
+/// Does `action` to the PR filed under `key` on GitHub, as the user. The key
+/// and the action's name are all the webview supplies: the PR comes from the
+/// Snapshot, and [`github::act_on_pr`] holds the rule for what may be done to
+/// it. `Err` is the message the row shows. A write that went through takes
+/// the row's actions away and starts a sync, which says what the PR offers
+/// now.
+#[tauri::command]
+pub async fn act_on_pr(
+    app: AppHandle,
+    key: String,
+    action: github::PrAction,
+) -> Result<(), String> {
+    let pr = app.state::<sync::SyncState>().find(&key)?;
+    let Some(token) = keychain::load()? else {
+        return Err("Save a valid GitHub token first.".into());
+    };
+    github::act_on_pr(&token, &pr, action).await?;
+    // The write is done, so a failed delivery must not read as a failed
+    // write: the row would offer it again.
+    if let Err(e) = sync::transition(&app, |prs| prs.acted(&key)) {
+        eprintln!("cannot deliver the acted-on row: {e}");
+    }
+    // Not `sync_now`, which stands down while a sync is under way: that sync
+    // may have read the PR before the write, and one must follow it.
+    request_sync(&app);
+    Ok(())
+}
+
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
 /// Change both together.
 #[derive(Serialize)]

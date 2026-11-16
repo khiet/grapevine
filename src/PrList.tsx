@@ -21,7 +21,6 @@ import {
   snooze,
   wake,
 } from "./backend";
-import { clickFix } from "./fixConflict";
 import {
   filterCommand,
   findRow,
@@ -35,6 +34,7 @@ import {
   type Zone,
 } from "./listKeys";
 import RowMenu, { opensMenu, type Point } from "./RowMenu";
+import { clickWrite } from "./rowWrites";
 import {
   YOUR_TURN_KEY,
   type DeployView,
@@ -47,6 +47,7 @@ import {
   type SectionKey,
   type SectionView,
   type SnoozedGroupView,
+  type WriteId,
 } from "./popoverView";
 
 /* Mine and All start collapsed: they are ambient context, not act-now queues,
@@ -523,37 +524,50 @@ function StateView({ state }: { state: RowState }) {
   );
 }
 
-// What the bare "Confirm" of an armed fix is confirming.
-const CONFIRM_HINT = "Confirm: ask Copilot to fix the conflict";
+// How long an armed write waits for its second click before standing down.
+const WRITE_CONFIRM_MS = 4000;
 
-// How long an armed fix waits for its second click before standing down.
-const FIX_CONFIRM_MS = 4000;
-
-/* A row's Fix with Copilot action. It posts a comment under the user's name,
-   so it takes two clicks from the bar or the menu alike: the first arms it,
-   and it reads Confirm until the second, standing down after a few seconds
-   or when the row says so. */
-function useFix(row: RowView) {
-  const [armed, setArmed] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/* A row's writes to GitHub: the actions that carry a `confirm`. Each acts
+   under the user's name, so it takes two clicks from the bar or the menu
+   alike: the first arms it, and it reads Confirm until the second, standing
+   down after a few seconds or when the row says so. One is armed at a time. */
+function useWrites(row: RowView) {
+  const [armed, setArmed] = useState<WriteId | null>(null);
+  const [failed, setFailed] = useState<{ id: WriteId; message: string } | null>(
+    null,
+  );
   useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(false), FIX_CONFIRM_MS);
+    if (armed === null) return;
+    const timer = setTimeout(() => setArmed(null), WRITE_CONFIRM_MS);
     return () => clearTimeout(timer);
   }, [armed]);
+  // An action the row has stopped offering cannot be confirmed.
+  const armedAction =
+    row.actions.find((action) => action.id === armed && action.confirm) ?? null;
 
   return {
-    armed,
-    click: () => {
-      const next = clickFix(prKey(row.pr), armed);
-      setArmed(next.armed);
-      setError(null);
-      next.request?.then(setError);
+    /* The armed write under the words it takes until its second click, in
+       the bar and the menu alike; null when none is armed. */
+    confirm: armedAction && {
+      ...armedAction,
+      label: "Confirm",
+      hint: armedAction.confirm,
     },
-    standDown: () => setArmed(false),
+    click: (id: WriteId) => {
+      const next = clickWrite(prKey(row.pr), id, armedAction && armed);
+      setArmed(next.armed);
+      setFailed(null);
+      next.request?.then((message) => {
+        if (message !== null) setFailed({ id, message });
+      });
+    },
+    standDown: () => setArmed(null),
     // Shown only beside the offer it explains: once the row stops offering
-    // the fix, a note about a failed try has nothing left to say.
-    error: row.fix === "offer" ? error : null,
+    // the write, a note about a failed try has nothing left to say.
+    error:
+      failed && row.actions.some((action) => action.id === failed.id)
+        ? failed.message
+        : null,
   };
 }
 
@@ -679,13 +693,9 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const { pr, draft, state, botAuthor, botNote, waiting } = row;
   const unread = pr.unread_count > 0;
   const key = prKey(pr);
-  const fix = useFix(row);
+  const writes = useWrites(row);
+  const { confirm } = writes;
   const menu = useRowMenu(row.actions.length > 0);
-  // The armed fix under the words it takes until its second click, in the
-  // bar and the menu alike.
-  const confirm: RowAction | null = fix.armed
-    ? { id: "fix", label: "Confirm", hint: CONFIRM_HINT }
-    : null;
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
@@ -699,9 +709,10 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       case "wake":
         wake(key).catch(() => {});
         break;
-      case "fix":
-        fix.click();
+      case "dismiss":
         break;
+      default:
+        writes.click(id);
     }
   };
   const rowKeys = useRowKeys(key, row.actions, run, menu);
@@ -710,7 +721,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       className={rowClass(menu.at !== null, rowKeys.selected)}
       // Not while the menu is open: the pointer may be nowhere near a menu
       // opened by key, and the armed item must wait there for its confirm.
-      onPointerLeave={menu.at === null ? fix.standDown : undefined}
+      onPointerLeave={menu.at === null ? writes.standDown : undefined}
       {...menu.item}
       {...rowKeys.item}
     >
@@ -744,11 +755,12 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
             {showRepo && <span className="pr-repo">{pr.repo}</span>}
             {/* Plain metadata, not a badge: bots spoke, nobody is waiting. */}
             {botNote && <span className="pr-bot-note">{botNote}</span>}
-            {/* Why the Copilot request did not go out. title carries the
-                full message; the line clips it. */}
-            {fix.error && (
-              <span className="pr-fix-error" role="alert" title={fix.error}>
-                {fix.error}
+            {/* Why the row's write did not go through, in the backend's
+                words or GitHub's. title carries the full message; the line
+                clips it. */}
+            {writes.error && (
+              <span className="pr-fix-error" role="alert" title={writes.error}>
+                {writes.error}
               </span>
             )}
             {/* Worded like a neutral state, never a signal, and ahead of
@@ -761,9 +773,9 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       </button>
       <span className="pr-row-end">
         <ActionBar
-          actions={row.actions}
+          actions={row.actions.filter((action) => !action.menuOnly)}
           confirm={confirm}
-          status={row.fix === "posting" ? "Asking" : null}
+          status={row.pending}
           onPick={run}
         />
         {/* Hold the width of Draft and of the state after the bar, so the
@@ -789,8 +801,11 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           )}
           onPick={(id) => {
             run(id);
-            // The pick that arms the fix leaves the menu up for its confirm.
-            if (id !== "fix" || fix.armed) menu.close(true);
+            // The pick that arms a write leaves the menu up for its confirm.
+            const arms = row.actions.some(
+              (action) => action.id === id && action.confirm !== null,
+            );
+            if (!arms || confirm?.id === id) menu.close(true);
           }}
           onClose={menu.close}
         />
