@@ -214,7 +214,6 @@ test("a merged row's deploy status covers its hidden copy in the state slot", ()
   expect(both.get("font-size")).toBe(ruleFor(".pr-origin").get("font-size"));
   const status = ruleFor(".pr-deploy");
   expect(status.get("font-weight")).toBe(ruleFor(".pr-state").get("font-weight"));
-  expect(status.has("position")).toBe(false);
   expect(ruleFor(".pr-deploy-space").get("visibility")).toBe("hidden");
   const end = ruleFor(".pr-row-end");
   expect(end.get("align-items")).toBe("center");

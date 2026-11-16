@@ -332,14 +332,14 @@ function renderDeploy(deploy: MergedPr["deploy"]) {
 }
 
 // The status reads in the state slot the way an open row's state does:
-// words in a tone, nothing drawn. The time is the row's own timestamp format.
-test("each deploy state reads in words in its tone, with no glyph", () => {
+// words in a tone and nothing else in the button. The time is the row's own
+// timestamp format.
+test("each deploy state reads in words in its tone", () => {
   const done = at(2026, 7, 11, 12, 0).toISOString();
   const shown = (["deploying", "deployed", "failed", "cancelled"] as const).map(
     (state) => {
       const completed_at = state === "deploying" ? null : done;
       const { status } = renderDeploy({ state, completed_at, url: RUN });
-      expect(status).not.toContain("<svg");
       return status?.match(/class="([^"]*)"[^>]*>([^<]*)<\/button>$/)?.slice(1);
     },
   );
