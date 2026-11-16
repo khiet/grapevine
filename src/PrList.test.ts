@@ -274,9 +274,32 @@ test("an open row's action bar is followed by a hidden copy of the state", () =>
   expect(li).toMatch(/<span class="pr-row-end"><span class="pr-actions"/);
 });
 
+test("a draft's action bar is followed by a hidden copy of Draft, then of its state", () => {
+  const [li] = renderList([
+    { ...openPr, is_draft: true, merge_queue_position: 2 },
+  ]);
+  expect(li).toContain(
+    '</span><span class="pr-state pr-state-space pr-draft" aria-hidden="true">Draft</span>' +
+      '<span class="pr-state pr-state-space" aria-hidden="true">' +
+      '<span class="pr-state-reason">Queued 2nd</span></span></span></li>',
+  );
+});
+
 test("a row with no state has nothing after its action bar", () => {
   const [li] = renderList([openPr]);
   expect(li).not.toContain("pr-state");
+});
+
+// Draft reads like any other neutral state: a filled shape there would pass
+// for the action bar's buttons, which open on the same corner.
+test("a draft says Draft in plain words, ahead of any state it has", () => {
+  expect(renderOpenRow({ is_draft: true })).toContain(
+    '<span class="pr-state pr-draft">Draft</span></span></span></button>',
+  );
+  expect(renderOpenRow({ is_draft: true, merge_queue_position: 2 })).toContain(
+    '<span class="pr-state pr-draft">Draft</span>' +
+      '<span class="pr-state is-neutral"><span class="pr-state-reason">Queued 2nd</span></span>',
+  );
 });
 
 // The row has no room for a check's name, so a lone CI failure gets the

@@ -132,7 +132,7 @@ request.
 3. Scroll the whole list. **Expect:** no title, repository name, timestamp or
    "waiting" label is cut off mid-glyph or overlaps its neighbour; long ones
    end in an ellipsis. The red unread badge, the square org badge and the
-   "bot" tag sit on the avatar's corners. The "Draft" pill and the worded
+   "bot" tag sit on the avatar's corners. The word "Draft" and the worded
    state ("CI failing", "Mergeable" and the like, with a "+1" where
    more is folded) share one line at the row's right edge. **Screenshot** of each screenful.
 4. Click each section header in turn, twice. **Expect:** the section folds

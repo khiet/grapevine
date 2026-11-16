@@ -751,8 +751,9 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
                 {fix.error}
               </span>
             )}
-            {/* A neutral state pill, never a signal. */}
-            {draft && <span className="pr-draft">Draft</span>}
+            {/* Worded like a neutral state, never a signal, and ahead of
+                whatever state the row has. */}
+            {draft && <span className="pr-state pr-draft">Draft</span>}
             {/* At the row's right edge, out of the metadata's way. */}
             {state && <StateView state={state} />}
           </span>
@@ -765,9 +766,14 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           status={row.fix === "posting" ? "Asking" : null}
           onPick={run}
         />
-        {/* Holds the state's width after the bar, so the bar opens beside
-            the state in the row and never over it: its tooltip stays within
-            the pointer's reach. */}
+        {/* Hold the width of Draft and of the state after the bar, so the
+            bar opens beside them in the row and never over them: Draft stays
+            readable and the state's tooltip within the pointer's reach. */}
+        {draft && (
+          <span className="pr-state pr-state-space pr-draft" aria-hidden="true">
+            Draft
+          </span>
+        )}
         {state && (
           <span className="pr-state pr-state-space" aria-hidden="true">
             <span className="pr-state-reason">{state.reason}</span>

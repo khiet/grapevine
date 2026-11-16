@@ -306,6 +306,19 @@ test("a row's state takes its tone from the text tokens", () => {
   expect(ruleFor(".pr-state-more").get("color")).toBe("var(--text-2)");
 });
 
+// Draft's hidden copy after the action bar must span what the row shows, or
+// the bar would open over the word. The row spaces Draft from its state by
+// the metadata line's gap; the bar's own gap is narrower.
+test("Draft and a state keep the metadata line's gap, in the row and in the hidden copy", () => {
+  const px = (selector: string, property: string) =>
+    parseFloat(ruleFor(selector).get(property) ?? "");
+  const shown = px(".pr-origin", "gap") + px(".pr-draft + .pr-state", "margin-left");
+  const copied =
+    px(".pr-row-end", "gap") + px(".pr-row-end .pr-draft + .pr-state", "margin-left");
+  expect(shown).toBeGreaterThan(0);
+  expect(copied).toBe(shown);
+});
+
 // --- Contrast -------------------------------------------------------------
 
 type Rgba = [number, number, number, number];
@@ -385,7 +398,6 @@ const PAIRS: [string, string[]][] = [
   ...onRow("--warn"),
   ...onRow("--danger"),
   ...onRow("--ok"),
-  ...onRow("--text", "--fill"),
   ...onRow("--text-2", "--fill-solid"),
   // The action bar's labels, plain and under the pointer.
   ...onRow("--text", "--fill-solid"),
