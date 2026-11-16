@@ -154,7 +154,7 @@ async function capture(baseUrl, dir) {
   // their chips are spread by hand, in the targets' own top-to-bottom order
   // so no two lines cross. The second slot (90) is left for Light or dark,
   // which lands last.
-  const BEAT = 1300;
+  const BEAT = 1700;
   await label(tray, "right", "4 PRs waiting on you", 50);
   await snap(BEAT);
   await label(app.locator(".pr-section-pinned .pr-section-label"), "left", "Todo is the tray number");
@@ -226,7 +226,7 @@ async function capture(baseUrl, dir) {
     }
   }
   const total = frames.reduce((sum, frame) => sum + frame.duration, 0);
-  if (total !== 24000) throw new Error(`loop is ${total}ms, want 24000`);
+  if (total !== 29200) throw new Error(`loop is ${total}ms, want 29200`);
 
   await browser.close();
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);
