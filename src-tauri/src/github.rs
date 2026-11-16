@@ -1499,11 +1499,10 @@ fn has_unresolved_thread(node: &Value) -> bool {
 
 /// Whether the PR's base branch refuses a merge while a review thread is
 /// unresolved. Two sources can say so and either is enough: a ruleset's
-/// pull-request rule, or classic branch protection. Both are readable
-/// without admin rights.
+/// pull-request rule, or classic branch protection.
 ///
-/// Anything unreadable answers false: a deleted base branch, rules the token
-/// cannot see, or a rule beyond the one page read. Most repos do not require
+/// Anything missing answers false: a null `baseRef` (a deleted base branch),
+/// null rules, or a rule beyond the one page read. Most repos do not require
 /// resolution, so a guess of "required" would be wrong far more often than
 /// the miss this accepts.
 fn requires_thread_resolution(node: &Value) -> bool {
@@ -2092,7 +2091,7 @@ mod tests {
     }
 
     /// A `baseRef` whose ruleset `PULL_REQUEST` rule sets thread resolution
-    /// to `required`, beside a rule of another type as GitHub lists them.
+    /// to `required`, beside a rule of another type.
     fn ruleset_base(required: bool) -> Value {
         json!({
             "refUpdateRule": null,
@@ -2159,8 +2158,8 @@ mod tests {
         );
     }
 
-    /// A deleted base branch, or rules the token cannot read, answer null.
-    /// Unreadable is not "required": the thread stays a neutral note.
+    /// Missing is not "required": with no `baseRef` or no rules to read, the
+    /// thread stays a neutral note.
     #[test]
     fn a_missing_base_ref_or_unreadable_rules_leave_the_thread_merely_open() {
         for base in [Value::Null, json!({ "refUpdateRule": null, "rules": null })] {

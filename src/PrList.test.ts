@@ -375,7 +375,6 @@ test("the deploy control sits outside the row button, over a hidden copy in the 
   expect(row).toMatch(
     /<span class="pr-origin">.*<span class="pr-state is-warn pr-deploy-space" aria-hidden="true">Deploy failed<\/span><\/span>/,
   );
-  // The merge time has the top right to itself.
   expect(row).toMatch(
     /<span class="pr-title">[^<]*<\/span><span class="pr-updated">[^<]+<\/span><\/span>/,
   );
