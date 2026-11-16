@@ -346,10 +346,10 @@ const WRITES: Record<
   },
 };
 
-// What the confirming click of a write confirms: the act and, for a write on
-// the merge, the branch it lands on. Only a direct merge names the method.
-// A queue merges by its own setting, and auto-merge ends in whichever of
-// the two the base branch has.
+// What the confirming click of a write confirms: the act and the base
+// branch, which only the fix has no use for. Only a direct merge names the
+// method: a queue merges by its own setting, and auto-merge ends in
+// whichever of the two the base branch has.
 function confirmHint(id: WriteId, pr: PullRequest): string {
   const base = pr.base_branch;
   switch (id) {
