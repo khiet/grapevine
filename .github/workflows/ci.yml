@@ -13,7 +13,7 @@ on:
 # which keeps the gate in its own group: sharing one with the standalone run on
 # the same push would let either cancel the other. The gate is also never
 # cancelled by a later push, because a cancelled gate leaves a release that was
-# cut but never built.
+# cut but never built. Both rest on this workflow's own name staying 'ci'.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.workflow == 'ci' }}

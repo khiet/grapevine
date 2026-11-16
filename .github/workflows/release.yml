@@ -18,9 +18,10 @@ name: release
 # release tag without release-please. Use it when a release was cut but its
 # build failed (e.g. a transient notarization network error) and the tag and
 # GitHub release still exist, so re-running the push flow would skip the build.
-# It does not repeat the CI gate: the tag already passed it when it was cut.
-# When the gate itself fails on a flake, re-run the failed jobs of that run
-# instead, which keeps the gate.
+# It does not run the CI gate, and nothing checks that the tag ever passed it:
+# release-please cuts the tag before the gate runs. Rebuilding a tag whose gate
+# failed is the caller's call. When the gate fails on a flake, re-run the
+# failed jobs of that run instead, which keeps the gate.
 on:
   push:
     branches: [main]
@@ -73,21 +74,15 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   build-macos:
-    needs: [release-please, ci]
-    # Build on a push only when release-please actually cut a release and CI
-    # passed on it, or on any manual rebuild. '!cancelled()' lets this run even
-    # though release-please and ci are skipped on a workflow_dispatch (a skipped
-    # dependency would otherwise skip this job too); it also switches off the
-    # default "every dependency succeeded" rule, so the ci result is checked by
-    # hand.
+    needs: ci
+    # Build when the gate passed, which only happens on a push that cut a
+    # release, or on any manual rebuild. '!cancelled()' lets this run even
+    # though ci is skipped on a workflow_dispatch (a skipped dependency would
+    # otherwise skip this job too); it also switches off the default "every
+    # dependency succeeded" rule, so the ci result is checked by hand.
     if: >-
       ${{ !cancelled()
-      && (
-        (github.event_name == 'push'
-          && needs.release-please.outputs.release_created == 'true'
-          && needs.ci.result == 'success')
-        || github.event_name == 'workflow_dispatch'
-      ) }}
+      && (needs.ci.result == 'success' || github.event_name == 'workflow_dispatch') }}
     runs-on: macos-latest
     outputs:
       updater: ${{ steps.signing.outputs.updater }}
@@ -319,16 +314,11 @@ jobs:
           gh release edit "$TAG" --notes-file notes.md
 
   build-linux:
-    needs: [release-please, ci]
+    needs: ci
     # Same gate as build-macos.
     if: >-
       ${{ !cancelled()
-      && (
-        (github.event_name == 'push'
-          && needs.release-please.outputs.release_created == 'true'
-          && needs.ci.result == 'success')
-        || github.event_name == 'workflow_dispatch'
-      ) }}
+      && (needs.ci.result == 'success' || github.event_name == 'workflow_dispatch') }}
     # One LTS behind current, so the .deb links against a glibc that current
     # Ubuntu also satisfies. Keep in step with test-ubuntu in ci.yml: the .deb
     # built there is the one CI proves installs on current Ubuntu.
