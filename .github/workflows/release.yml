@@ -4,6 +4,10 @@ name: release
 # Nothing is built until that PR is merged: the merge is the deliberate
 # "ship it" signal, and it alone marks a release created and gates the builds.
 #
+# A cut release is built only after the full CI suite passes on that same
+# commit. The ci run that the push itself triggers cannot serve as that gate:
+# it is a separate workflow run, and a later push to main cancels it.
+#
 # A release is built by one job per platform. Each attaches its own downloads
 # and hands over a fragment of the updater manifest; publish-manifest merges
 # the fragments and attaches the one manifest installed apps poll. The
@@ -14,6 +18,9 @@ name: release
 # release tag without release-please. Use it when a release was cut but its
 # build failed (e.g. a transient notarization network error) and the tag and
 # GitHub release still exist, so re-running the push flow would skip the build.
+# It does not repeat the CI gate: the tag already passed it when it was cut.
+# When the gate itself fails on a flake, re-run the failed jobs of that run
+# instead, which keeps the gate.
 on:
   push:
     branches: [main]
@@ -54,16 +61,31 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build-macos:
+  ci:
+    # Only when a release was cut: an ordinary push to main is already covered
+    # by the standalone ci run. A manual rebuild skips release-please, and this
+    # job with it.
     needs: release-please
-    # Build on a push only when release-please actually cut a release, or on any
-    # manual rebuild. '!cancelled()' lets this run even though release-please is
-    # skipped on a workflow_dispatch (a skipped dependency would otherwise skip
-    # this job too).
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # A called workflow inherits the caller's token; tests need no write access.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  build-macos:
+    needs: [release-please, ci]
+    # Build on a push only when release-please actually cut a release and CI
+    # passed on it, or on any manual rebuild. '!cancelled()' lets this run even
+    # though release-please and ci are skipped on a workflow_dispatch (a skipped
+    # dependency would otherwise skip this job too); it also switches off the
+    # default "every dependency succeeded" rule, so the ci result is checked by
+    # hand.
     if: >-
       ${{ !cancelled()
       && (
-        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
+        (github.event_name == 'push'
+          && needs.release-please.outputs.release_created == 'true'
+          && needs.ci.result == 'success')
         || github.event_name == 'workflow_dispatch'
       ) }}
     runs-on: macos-latest
@@ -297,12 +319,14 @@ jobs:
           gh release edit "$TAG" --notes-file notes.md
 
   build-linux:
-    needs: release-please
+    needs: [release-please, ci]
     # Same gate as build-macos.
     if: >-
       ${{ !cancelled()
       && (
-        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
+        (github.event_name == 'push'
+          && needs.release-please.outputs.release_created == 'true'
+          && needs.ci.result == 'success')
         || github.event_name == 'workflow_dispatch'
       ) }}
     # One LTS behind current, so the .deb links against a glibc that current

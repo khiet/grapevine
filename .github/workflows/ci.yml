@@ -4,11 +4,19 @@ on:
   pull_request:
   push:
     branches: [main]
+  # release.yml calls this as the gate a release must pass before it is built.
+  workflow_call:
 
 # Supersede in-progress runs for the same branch/PR; only the latest push matters.
+#
+# When release.yml calls this workflow, 'github.workflow' is the caller's name,
+# which keeps the gate in its own group: sharing one with the standalone run on
+# the same push would let either cancel the other. The gate is also never
+# cancelled by a later push, because a cancelled gate leaves a release that was
+# cut but never built.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.workflow == 'ci' }}
 
 jobs:
   test:
