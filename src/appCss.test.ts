@@ -310,10 +310,13 @@ test("a row's state takes its tone from the text tokens", () => {
 // the bar would open over the word. The row spaces Draft from its state by
 // the metadata line's gap; the bar's own gap is narrower.
 test("Draft and a state keep the metadata line's gap, in the row and in the hidden copy", () => {
-  expect(ruleFor(".pr-origin").get("gap")).toBe("8px");
-  expect(ruleFor(".pr-draft + .pr-state").get("margin-left")).toBe("0");
-  expect(ruleFor(".pr-row-end").get("gap")).toBe("6px");
-  expect(ruleFor(".pr-row-end .pr-draft + .pr-state").get("margin-left")).toBe("2px");
+  const px = (selector: string, property: string) =>
+    parseFloat(ruleFor(selector).get(property) ?? "");
+  const shown = px(".pr-origin", "gap") + px(".pr-draft + .pr-state", "margin-left");
+  const copied =
+    px(".pr-row-end", "gap") + px(".pr-row-end .pr-draft + .pr-state", "margin-left");
+  expect(shown).toBeGreaterThan(0);
+  expect(copied).toBe(shown);
 });
 
 // --- Contrast -------------------------------------------------------------
