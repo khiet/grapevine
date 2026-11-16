@@ -101,9 +101,15 @@ export function createFakeBackend(
     // Refuses what the backend would, then leaves the PR as GitHub would
     // have it after the write, as far as the fake can tell: it has no sync
     // to learn the rest from.
-    act_on_pr: ({ key, action }) => {
+    act_on_pr: ({ key, action, head }) => {
       const pr = snapshot.prs.find((candidate) => prKey(candidate) === key);
       if (!pr) throw "That PR is no longer in the list.";
+      if (snapshot.snoozed.includes(key as string)) {
+        throw "That PR is snoozed. Wake it first.";
+      }
+      if (pr.head_oid !== head) {
+        throw "That PR has new commits. Check it, then try again.";
+      }
       if (!pr.actions.includes(action as PrAction)) {
         throw "That is no longer on offer for this PR.";
       }
@@ -111,7 +117,6 @@ export function createFakeBackend(
         publish({
           ...snapshot,
           prs: snapshot.prs.filter((candidate) => candidate !== pr),
-          snoozed: snapshot.snoozed.filter((k) => k !== key),
           merged: [
             {
               number: pr.number,

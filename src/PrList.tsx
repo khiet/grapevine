@@ -541,6 +541,10 @@ function useWrites(row: RowView) {
     const timer = setTimeout(() => setArmed(null), WRITE_CONFIRM_MS);
     return () => clearTimeout(timer);
   }, [armed]);
+  // Armed on the PR as it was then: commits that arrive before the second
+  // click are not what the user is confirming.
+  const head = row.pr.head_oid;
+  useEffect(() => setArmed(null), [head]);
   // An action the row has stopped offering cannot be confirmed.
   const armedAction =
     row.actions.find((action) => action.id === armed && action.confirm) ?? null;
@@ -554,7 +558,7 @@ function useWrites(row: RowView) {
       hint: armedAction.confirm,
     },
     click: (id: WriteId) => {
-      const next = clickWrite(prKey(row.pr), id, armedAction && armed);
+      const next = clickWrite(row.pr, id, armedAction && armed);
       setArmed(next.armed);
       setFailed(null);
       next.request?.then((message) => {
@@ -709,6 +713,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       case "wake":
         wake(key).catch(() => {});
         break;
+      // Only a merged row dismisses. Named so that what is left is a write.
       case "dismiss":
         break;
       default:
@@ -759,7 +764,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
                 words or GitHub's. title carries the full message; the line
                 clips it. */}
             {writes.error && (
-              <span className="pr-fix-error" role="alert" title={writes.error}>
+              <span className="pr-write-error" role="alert" title={writes.error}>
                 {writes.error}
               </span>
             )}

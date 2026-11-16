@@ -327,31 +327,24 @@ const DISMISS = immediate("dismiss", "Dismiss");
 
 const MERGED_ACTIONS = [DISMISS];
 
-const WRITE_LABELS: Record<WriteId, string> = {
-  fix: "Fix with Copilot",
-  merge: "Merge",
-  queue: "Queue",
-  update_branch: "Update branch",
-  enable_auto_merge: "Auto-merge",
-  disable_auto_merge: "Cancel auto-merge",
+// Each write in words: its label, and what the status in the bar reads
+// while it is on its way. Arming and cancelling auto-merge are `menuOnly`:
+// a behind row would otherwise carry four worded buttons.
+const WRITES: Record<
+  WriteId,
+  { label: string; pending: string; menuOnly: boolean }
+> = {
+  fix: { label: "Fix with Copilot", pending: "Asking", menuOnly: false },
+  merge: { label: "Merge", pending: "Merging", menuOnly: false },
+  queue: { label: "Queue", pending: "Queueing", menuOnly: false },
+  update_branch: { label: "Update branch", pending: "Updating", menuOnly: false },
+  enable_auto_merge: { label: "Auto-merge", pending: "Arming", menuOnly: true },
+  disable_auto_merge: {
+    label: "Cancel auto-merge",
+    pending: "Cancelling",
+    menuOnly: true,
+  },
 };
-
-// What the status in the bar reads while the write is on its way.
-const WRITE_PENDING: Record<WriteId, string> = {
-  fix: "Asking",
-  merge: "Merging",
-  queue: "Queueing",
-  update_branch: "Updating",
-  enable_auto_merge: "Arming",
-  disable_auto_merge: "Cancelling",
-};
-
-// Arming and cancelling auto-merge stay out of the bar: a behind row would
-// otherwise carry four worded buttons.
-const MENU_ONLY: ReadonlySet<WriteId> = new Set([
-  "enable_auto_merge",
-  "disable_auto_merge",
-]);
 
 // What the confirming click of a write confirms: the act and, for a write on
 // the merge, the branch it lands on. Only a direct merge names the method.
@@ -394,10 +387,10 @@ function rowActions(pr: PullRequest, snooze: Snooze, pending: boolean): RowActio
   for (const id of writesFor(pr, snooze, pending)) {
     actions.push({
       id,
-      label: WRITE_LABELS[id],
+      label: WRITES[id].label,
       hint: null,
       confirm: confirmHint(id, pr),
-      menuOnly: MENU_ONLY.has(id),
+      menuOnly: WRITES[id].menuOnly,
     });
   }
   return actions;
@@ -418,7 +411,7 @@ function rowView(
     botNote:
       pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
     waiting: waitingLabel(pr, now),
-    pending: pending && WRITE_PENDING[pending],
+    pending: pending && WRITES[pending].pending,
     actions: rowActions(pr, snooze, pending !== null),
   };
 }

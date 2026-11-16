@@ -51,6 +51,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     actions: [],
     merge_method: "merge",
     base_branch: "main",
+    head_oid: "abc123",
     unread_count,
     bot_unread_count: 0,
   };

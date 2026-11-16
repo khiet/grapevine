@@ -576,7 +576,7 @@ body {
 
 /* A Copilot request that did not go out, in the sync error's amber. Clips
    like the bot note beside it. */
-.pr-fix-error {
+.pr-write-error {
   /* Gives way before the row's state beside it does, after the repo. */
   flex-shrink: 4;
   overflow: hidden;

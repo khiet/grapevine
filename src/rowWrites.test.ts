@@ -55,6 +55,7 @@ const conflicted: PullRequest = {
   actions: [],
   merge_method: "merge",
   base_branch: "main",
+  head_oid: "abc123",
   unread_count: 0,
   bot_unread_count: 0,
 };
@@ -104,29 +105,29 @@ function backend(fail: string | null = null) {
 
 /** A row's writes as the row holds them: which one is armed, carried from
  * click to click. */
-function control(key: string) {
+function control(pr: PullRequest) {
   let armed: WriteId | null = null;
   return {
     async click(id: WriteId = "fix"): Promise<string | null> {
-      const next = clickWrite(key, id, armed);
+      const next = clickWrite(pr, id, armed);
       armed = next.armed;
       return next.request;
     },
   };
 }
 
-const requestFix = (key: string) => requestWrite(key, "fix");
+const requestFix = (pr: PullRequest) => requestWrite(pr, "fix");
 
 test("one click never posts", async () => {
   const { asked, pr } = backend();
-  await control(KEY).click();
+  await control(conflicted).click();
   expect(asked).toEqual([]);
   expect((await pr()).fix_requested).toBe(false);
 });
 
 test("two clicks post exactly once, and the PR then waits on Copilot", async () => {
   const { asked, pr } = backend();
-  const fix = control(KEY);
+  const fix = control(conflicted);
   await fix.click();
   expect(await fix.click()).toBeNull();
   expect(asked).toEqual([KEY]);
@@ -135,7 +136,7 @@ test("two clicks post exactly once, and the PR then waits on Copilot", async () 
 
 test("a request reads as posting only while it is on its way", async () => {
   backend();
-  const first = requestFix(KEY);
+  const first = requestFix(conflicted);
   expect(writesPending().has(KEY)).toBe(true);
   await first;
   expect(writesPending().has(KEY)).toBe(false);
@@ -143,43 +144,43 @@ test("a request reads as posting only while it is on its way", async () => {
 
 test("a second request made while the first is on its way posts nothing", async () => {
   const { asked } = backend();
-  await Promise.all([requestFix(KEY), requestFix(KEY)]);
+  await Promise.all([requestFix(conflicted), requestFix(conflicted)]);
   expect(asked).toEqual([KEY]);
 });
 
 test("a failed post hands back the backend's message and leaves the row free to ask again", async () => {
   const { asked, pr } = backend("GitHub error: Resource not accessible.");
-  expect(await requestFix(KEY)).toBe("GitHub error: Resource not accessible.");
+  expect(await requestFix(conflicted)).toBe("GitHub error: Resource not accessible.");
   expect(writesPending().has(KEY)).toBe(false);
   expect((await pr()).fix_requested).toBe(false);
-  await requestFix(KEY);
+  await requestFix(conflicted);
   expect(asked).toEqual([KEY, KEY]);
 });
 
 test("the backend refuses a PR that is not fixable", async () => {
   backend();
-  expect(await requestFix("acme/widgets#8")).toBe(
+  expect(await requestFix(ready)).toBe(
     "Nothing here for Copilot to fix.",
   );
 });
 
 test("the backend refuses a second request for a PR that already waits on Copilot", async () => {
   backend();
-  await requestFix(KEY);
-  expect(await requestFix(KEY)).toBe(
+  await requestFix(conflicted);
+  expect(await requestFix(conflicted)).toBe(
     "Copilot has already been asked to fix this.",
   );
 });
 
 test("one click on a write never sends it", async () => {
   const { sent } = backend();
-  await control(READY_KEY).click("merge");
+  await control(ready).click("merge");
   expect(sent).toEqual([]);
 });
 
 test("two clicks on Merge merge once, and the PR moves to Merged", async () => {
   const { sent, snapshot } = backend();
-  const row = control(READY_KEY);
+  const row = control(ready);
   await row.click("merge");
   expect(await row.click("merge")).toBeNull();
   expect(sent).toEqual([`${READY_KEY} merge`]);
@@ -190,7 +191,7 @@ test("two clicks on Merge merge once, and the PR moves to Merged", async () => {
 
 test("a click on another write stands the armed one down and arms that one instead", async () => {
   const { sent } = backend();
-  const row = control(READY_KEY);
+  const row = control(ready);
   await row.click("merge");
   await row.click("enable_auto_merge");
   expect(sent).toEqual([]);
@@ -200,14 +201,14 @@ test("a click on another write stands the armed one down and arms that one inste
 
 test("auto-merge armed from the row shows on the PR, which then offers to cancel it", async () => {
   const { snapshot } = backend();
-  await requestWrite(READY_KEY, "enable_auto_merge");
+  await requestWrite(ready, "enable_auto_merge");
   expect((await snapshot()).prs[1]).toMatchObject({
     auto_merge: true,
     ready_to_merge: false,
     turn: "theirs",
     actions: ["disable_auto_merge"],
   });
-  await requestWrite(READY_KEY, "disable_auto_merge");
+  await requestWrite(ready, "disable_auto_merge");
   expect((await snapshot()).prs[1]).toMatchObject({
     auto_merge: false,
     actions: ["enable_auto_merge"],
@@ -216,7 +217,7 @@ test("auto-merge armed from the row shows on the PR, which then offers to cancel
 
 test("a write reads as pending only while it is on its way, under its own name", async () => {
   backend();
-  const merging = requestWrite(READY_KEY, "merge");
+  const merging = requestWrite(ready, "merge");
   expect(writesPending().get(READY_KEY)).toBe("merge");
   await merging;
   expect(writesPending().has(READY_KEY)).toBe(false);
@@ -225,26 +226,37 @@ test("a write reads as pending only while it is on its way, under its own name",
 test("a row sends one write at a time", async () => {
   const { sent } = backend();
   await Promise.all([
-    requestWrite(READY_KEY, "merge"),
-    requestWrite(READY_KEY, "enable_auto_merge"),
+    requestWrite(ready, "merge"),
+    requestWrite(ready, "enable_auto_merge"),
   ]);
   expect(sent).toEqual([`${READY_KEY} merge`]);
 });
 
 test("a write GitHub turns down hands back its message, leaves the PR alone and can be tried again", async () => {
   const { sent, snapshot } = backend("GitHub error: Head branch was modified.");
-  expect(await requestWrite(READY_KEY, "merge")).toBe(
+  expect(await requestWrite(ready, "merge")).toBe(
     "GitHub error: Head branch was modified.",
   );
   expect((await snapshot()).prs[1].actions).toEqual(["merge", "enable_auto_merge"]);
-  await requestWrite(READY_KEY, "merge");
+  await requestWrite(ready, "merge");
   expect(sent).toEqual([`${READY_KEY} merge`, `${READY_KEY} merge`]);
 });
 
 test("the backend refuses a write the PR does not offer", async () => {
   const { snapshot } = backend();
-  expect(await requestWrite(READY_KEY, "update_branch")).toBe(
+  expect(await requestWrite(ready, "update_branch")).toBe(
     "That is no longer on offer for this PR.",
+  );
+  expect((await snapshot()).prs).toHaveLength(2);
+});
+
+// The row was drawn at one head and the backend has since synced a newer
+// one: the click confirmed commits the user was never shown.
+test("a write confirmed on a row the PR has moved on from is refused, and the PR is left alone", async () => {
+  const { snapshot } = backend();
+  const drawnEarlier = { ...ready, head_oid: "an-older-head" };
+  expect(await requestWrite(drawnEarlier, "merge")).toBe(
+    "That PR has new commits. Check it, then try again.",
   );
   expect((await snapshot()).prs).toHaveLength(2);
 });

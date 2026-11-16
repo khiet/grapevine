@@ -55,8 +55,9 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   add it to the merge queue), update a branch that is behind its base, and
   turn auto-merge on or off from the right-click menu. Two clicks each. A
   merge is a rebase where the repo allows it, otherwise the repo's default
-  method. If the PR has moved since the last sync, GitHub refuses and
-  nothing changes.
+  method. If the PR has new commits since the last sync, GitHub refuses and
+  nothing changes. Cancelling auto-merge is the exception: GitHub takes it
+  whatever the PR's head is.
 
 ## Install
 

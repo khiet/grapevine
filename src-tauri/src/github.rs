@@ -122,8 +122,7 @@ pub enum Turn {
 }
 
 /// Something the viewer can do to one of their PRs from its row, each a write
-/// to GitHub made only on a confirmed click. Declaration order is the order
-/// the row lists them in.
+/// to GitHub made only on a confirmed click.
 ///
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
 /// Change both together.
@@ -308,8 +307,9 @@ pub struct PullRequest {
     pub base_branch: String,
     /// The head commit this row was built from. Sent with a write as the
     /// expected head, so a PR that moved since the sync is refused by GitHub
-    /// instead of being acted on unseen.
-    #[serde(skip)]
+    /// instead of being acted on unseen. On the wire so the webview can hand
+    /// back the head of the row that was confirmed (see
+    /// [`crate::pr_state::PrState::to_act_on`]).
     pub head_oid: String,
     /// GitHub had not worked mergeability out for this poll, so the empty
     /// `blocked_reasons` say nothing about a conflict either way.
@@ -1282,7 +1282,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot
         "{alias}: repository(owner: {owner}, name: {name}) {{ \
            nameWithOwner \
            owner {{ avatarUrl }} \
-           rebaseMergeAllowed viewerDefaultMergeMethod \
+           rebaseMergeAllowed viewerDefaultMergeMethod viewerPermission \
            {copilot}\
            pullRequests(states: OPEN, first: {PAGE_SIZE}{after}, \
                         orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
@@ -1331,6 +1331,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         .unwrap_or_default();
     let copilot_enabled = copilot_enabled(repo);
     let merge_method = merge_method_for(repo);
+    let can_merge = viewer_can_merge(repo);
     let nodes = repo
         .pointer("/pullRequests/nodes")
         .and_then(Value::as_array);
@@ -1357,7 +1358,13 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
         let ci_raised = blocked_reasons.contains(&BlockedReason::Ci);
         let can_fix_conflict =
             can_fix_conflict(node, section, is_draft, &blocked_reasons, copilot_enabled);
-        let actions = actions_for(node, section, is_draft, &blocked_reasons, ready_to_merge);
+        let actions = actions_for(
+            node,
+            section,
+            is_draft,
+            &blocked_reasons,
+            ready_to_merge && can_merge,
+        );
         let text = |name: &str| {
             node.get(name)
                 .and_then(Value::as_str)
@@ -1515,13 +1522,24 @@ fn merge_method_for(repo: &Value) -> MergeMethod {
     }
 }
 
+/// Whether the viewer may merge PRs in the repo at all, which takes write
+/// access: a PR of the viewer's from a fork can be ready in a repo they
+/// cannot push to. GitHub has no per-PR answer for the merge as it has for
+/// the other actions. A permission that is missing reads as none.
+fn viewer_can_merge(repo: &Value) -> bool {
+    matches!(
+        repo.get("viewerPermission").and_then(Value::as_str),
+        Some("WRITE" | "MAINTAIN" | "ADMIN")
+    )
+}
+
 /// What the row may offer to do to the PR, in the order it lists them. Only
 /// the viewer's own PRs offer anything, and never a draft. Each action is
 /// offered on its own condition:
 ///
-/// - the merge, on a PR that is ready for it; where the base branch has a
-///   merge queue the offer is the queue instead, since GitHub refuses a
-///   direct merge there;
+/// - the merge, on a PR that is ready for it in a repo the viewer can merge
+///   in; where the base branch has a merge queue the offer is the queue
+///   instead, since GitHub refuses a direct merge there;
 /// - the branch update, on a PR held up by being behind its base. GitHub
 ///   allows the update on any PR whose base has moved, so its permission
 ///   alone would put the offer on most rows;
@@ -1529,20 +1547,21 @@ fn merge_method_for(repo: &Value) -> MergeMethod {
 ///   Cancelling also needs auto-merge to be armed: the permission alone is
 ///   not that.
 ///
-/// `reasons` and `ready` must be the ones read off this `node`.
+/// `reasons` must be the ones read off this `node`, and `can_merge` whether
+/// it is ready and the viewer may merge in its repo.
 fn actions_for(
     node: &Value,
     section: Section,
     is_draft: bool,
     reasons: &[BlockedReason],
-    ready: bool,
+    can_merge: bool,
 ) -> Vec<PrAction> {
     if section != Section::Mine || is_draft {
         return Vec::new();
     }
     let allowed = |name: &str| node.get(name).and_then(Value::as_bool) == Some(true);
     let mut actions = Vec::new();
-    if ready {
+    if can_merge {
         actions.push(if allowed("isMergeQueueEnabled") {
             PrAction::Queue
         } else {
@@ -5369,6 +5388,7 @@ mod tests {
     /// over the repo's own.
     fn fetch_in_repo(repo_fields: Value, node: Value) -> PullRequest {
         let repo = with(repo_named("acme/widgets", vec![node], None), repo_fields);
+        let repo = with(json!({ "viewerPermission": "WRITE" }), repo);
         let github = Canned::new(vec![ok(prs_round(5000, vec![repo]))]);
         fetch_open(&github, &["acme/widgets"])
             .unwrap()
@@ -5393,6 +5413,23 @@ mod tests {
     fn a_ready_pr_behind_a_merge_queue_offers_the_queue_in_place_of_the_merge() {
         let queued_repo = ready_node(json!({ "isMergeQueueEnabled": true }));
         assert_eq!(actions(queued_repo), vec![PrAction::Queue]);
+    }
+
+    /// A PR of the viewer's from a fork, in a repo they cannot push to.
+    #[test]
+    fn a_ready_pr_in_a_repo_the_viewer_cannot_write_to_offers_no_merge() {
+        for permission in ["READ", "TRIAGE"] {
+            let repo = json!({ "viewerPermission": permission });
+            let direct = fetch_in_repo(repo.clone(), ready_node(json!({})));
+            assert_eq!(direct.actions, vec![]);
+            let queued = ready_node(json!({ "isMergeQueueEnabled": true }));
+            assert_eq!(fetch_in_repo(repo, queued).actions, vec![]);
+        }
+        for permission in ["MAINTAIN", "ADMIN"] {
+            let repo = json!({ "viewerPermission": permission });
+            let pr = fetch_in_repo(repo, ready_node(json!({})));
+            assert_eq!(pr.actions, vec![PrAction::Merge]);
+        }
     }
 
     #[test]
