@@ -11,6 +11,7 @@ import {
   subscribeSnapshot,
   syncNow,
   wake,
+  type MergedPr,
   type PullRequest,
   type Snapshot,
 } from "./index";
@@ -18,6 +19,20 @@ import { createFakeBackend } from "./fake";
 import { tauriAdapter } from "./tauri";
 
 afterEach(() => setAdapter(tauriAdapter));
+
+function merged(repo: string, number: number): MergedPr {
+  return {
+    number,
+    title: `PR ${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
+    repo,
+    author: "octocat",
+    avatar_url: "",
+    owner_avatar_url: "",
+    merged_at: "2026-09-30T09:00:00Z",
+    deploy: null,
+  };
+}
 
 function pr(repo: string, number: number, unread_count: number): PullRequest {
   return {
@@ -152,18 +167,6 @@ test("marking a PR read clears its badge and bot note and pushes a Snapshot", as
     [2, 4],
     [0, 0],
   ]);
-});
-
-const merged = (repo: string, number: number) => ({
-  number,
-  title: `PR ${number}`,
-  url: `https://github.com/${repo}/pull/${number}`,
-  repo,
-  author: "octocat",
-  avatar_url: "",
-  owner_avatar_url: "",
-  merged_at: "2026-09-30T09:00:00Z",
-  deploy: null,
 });
 
 test("dismissing a merged PR removes only the row with that key", async () => {
