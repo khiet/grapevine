@@ -164,17 +164,23 @@ const mergedPr = {
   deploy: null,
 } satisfies MergedPr;
 
-function renderRows(): string[] {
+/** The synced list's markup with the default sections collapsed. */
+function renderSynced(prs: PullRequest[], merged: MergedPr[] = []): string {
   const { content } = derivePopover(
-    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [openPr], merged: [mergedPr] },
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs, merged },
     "",
     { ...DEFAULT_COLLAPSED },
     NOW.getTime(),
   );
-  const html = renderToStaticMarkup(
+  return renderToStaticMarkup(
     createElement(PrList, { view: content as ListView, onToggle: () => {} }),
   );
-  return html.match(/<li[\s\S]*?<\/li>/g) ?? [];
+}
+
+const sectionsOf = (html: string) => html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+
+function renderRows(): string[] {
+  return renderSynced([openPr], [mergedPr]).match(/<li[\s\S]*?<\/li>/g) ?? [];
 }
 
 test("each row carries its author's handle in its accessible name", () => {
@@ -190,19 +196,19 @@ test("each row carries its author's handle in its accessible name", () => {
 });
 
 test("Todo has a heading and no collapse toggle; the other sections keep theirs", () => {
-  const { content } = derivePopover(
-    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [{ ...openPr, turn: "yours" }] },
-    "",
-    { ...DEFAULT_COLLAPSED },
-    NOW.getTime(),
-  );
-  const html = renderToStaticMarkup(
-    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
-  );
-  const [yours, mine] = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+  const [yours, mine] = sectionsOf(renderSynced([{ ...openPr, turn: "yours" }]));
   expect(yours).toMatch(/<h2[^>]*>.*Todo/);
   expect(yours).not.toContain("aria-expanded");
   expect(mine).toContain("aria-expanded");
+});
+
+test("the Merged header offers Dismiss all, the word its rows use", () => {
+  const withDismissAll = sectionsOf(renderSynced([openPr], [mergedPr])).filter((s) =>
+    />Dismiss all<\/button>/.test(s),
+  );
+  expect(withDismissAll).toHaveLength(1);
+  expect(withDismissAll[0]).toMatch(/<h2[^>]*>.*Merged/);
+  expect(withDismissAll[0]).toContain(">Dismiss</button>");
 });
 
 test("an empty section shows a dash named for assistive tech, in Todo as elsewhere", () => {

@@ -42,8 +42,8 @@ pub fn dismiss_merged(app: AppHandle, key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn clear_merged(app: AppHandle) -> Result<(), String> {
-    sync::transition(&app, |prs| prs.clear_merged())
+pub fn dismiss_all_merged(app: AppHandle) -> Result<(), String> {
+    sync::transition(&app, |prs| prs.dismiss_all_merged())
 }
 
 /// `expires_at` is epoch ms and comes from the webview, which knows the local

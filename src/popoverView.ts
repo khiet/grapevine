@@ -164,8 +164,7 @@ export interface SectionView {
   /** Unread total to badge on the header: zero while expanded, when the rows
    * carry their own badges. */
   collapsedUnread: number;
-  /** Whether the header offers Clear all. */
-  offerClearAll: boolean;
+  offerDismissAll: boolean;
   body: SectionBody;
 }
 
@@ -554,7 +553,7 @@ export function derivePopover(
       count: yours.length,
       expanded: true,
       collapsedUnread: 0,
-      offerClearAll: false,
+      offerDismissAll: false,
       body:
         yours.length === 0
           ? { kind: "empty" }
@@ -612,7 +611,7 @@ export function derivePopover(
          Mine looks read when it is not. Independent of the tray number, which
          counts the rows of Todo, so the two can disagree. */
       collapsedUnread: expanded ? 0 : totalUnread(awake),
-      offerClearAll: false,
+      offerDismissAll: false,
       body,
     });
   }
@@ -626,9 +625,9 @@ export function derivePopover(
       count: merged.length,
       expanded,
       collapsedUnread: 0,
-      /* Not while collapsed: clearing rows you cannot see invites a
+      /* Not while collapsed: dismissing rows you cannot see invites a
          destructive misclick from the adjacent whole-row toggle. */
-      offerClearAll: expanded,
+      offerDismissAll: expanded,
       body: {
         kind: "merged",
         rows: merged.map((pr) => ({

@@ -13,7 +13,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  clearMerged,
+  dismissAllMerged,
   dismissMerged,
   markRead,
   openUrl,
@@ -940,7 +940,7 @@ function MergedRow({ row }: { row: MergedRowView }) {
    chevron, label, and count share a single click target instead of a small
    icon. The h2 keeps the heading in the accessibility outline as a real box
    (not display: contents, which older WebKit drops from the AX tree); the
-   button fills it, and trailing siblings (Merged's "Clear all") stay outside
+   button fills it, and trailing siblings (Merged's "Dismiss all") stay outside
    the toggle and out of nested-button territory. */
 function SectionHeader({
   label,
@@ -1099,13 +1099,13 @@ function PrList({
                   disabled={!view.canToggle}
                   unread={section.collapsedUnread}
                 >
-                  {section.offerClearAll && (
+                  {section.offerDismissAll && (
                     <button
                       type="button"
-                      className="pr-section-clear"
-                      onClick={() => clearMerged().catch(() => {})}
+                      className="pr-section-dismiss"
+                      onClick={() => dismissAllMerged().catch(() => {})}
                     >
-                      Clear all
+                      Dismiss all
                     </button>
                   )}
                 </SectionHeader>

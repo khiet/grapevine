@@ -522,7 +522,7 @@ impl PrState {
         self.edit_merged(|merged| merged.retain(|e| merged::key(e) != key))
     }
 
-    pub fn clear_merged(&self) -> Effects {
+    pub fn dismiss_all_merged(&self) -> Effects {
         self.edit_merged(|merged| merged.clear())
     }
 
@@ -1904,7 +1904,7 @@ mod tests {
     }
 
     #[test]
-    fn clearing_merged_empties_the_section_and_leaves_the_tray_count_untouched() {
+    fn dismissing_all_merged_empties_the_section_and_leaves_the_tray_count_untouched() {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
@@ -1914,7 +1914,7 @@ mod tests {
             HashMap::new(),
         );
 
-        let effects = state.clear_merged();
+        let effects = state.dismiss_all_merged();
 
         assert!(effects.snapshot.merged.is_empty());
         assert_eq!(effects.save_merged, Some(vec![]));

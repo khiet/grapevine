@@ -234,7 +234,7 @@ body {
 
 /* A real flex box, not display: contents (which older WebKit drops from the
    accessibility tree, losing the heading): the h2 grows past the count so
-   the toggle inside spans the row, while "Clear all" keeps its own slot at
+   the toggle inside spans the row, while "Dismiss all" keeps its own slot at
    the row's end. */
 .pr-section-heading {
   flex: 1;
@@ -609,7 +609,7 @@ body {
   transform: rotate(90deg);
 }
 
-.pr-section-clear {
+.pr-section-dismiss {
   margin-left: auto;
   border: none;
   background: none;

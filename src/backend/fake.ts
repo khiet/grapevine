@@ -64,7 +64,7 @@ export function createFakeBackend(
         ...snapshot,
         merged: snapshot.merged.filter((pr) => prKey(pr) !== key),
       }),
-    clear_merged: () => publish({ ...snapshot, merged: [] }),
+    dismiss_all_merged: () => publish({ ...snapshot, merged: [] }),
     // No expiry and no waking on news: the fake never syncs.
     snooze: ({ key }) =>
       publish({

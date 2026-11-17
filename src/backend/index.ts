@@ -262,7 +262,7 @@ export const markRead = (key: string) => adapter.invoke<void>("mark_read", { key
 export const markAllRead = () => adapter.invoke<void>("mark_all_read");
 export const dismissMerged = (key: string) =>
   adapter.invoke<void>("dismiss_merged", { key });
-export const clearMerged = () => adapter.invoke<void>("clear_merged");
+export const dismissAllMerged = () => adapter.invoke<void>("dismiss_all_merged");
 /** Parks a Mine or Participated row until it has news or morning comes. The
  * expiry is worked out here because the webview knows the local time zone. */
 export const snooze = (key: string) =>

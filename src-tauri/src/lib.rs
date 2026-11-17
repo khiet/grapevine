@@ -176,7 +176,7 @@ pub fn run() {
             commands::mark_read,
             commands::mark_all_read,
             commands::dismiss_merged,
-            commands::clear_merged,
+            commands::dismiss_all_merged,
             commands::snooze,
             commands::wake,
             commands::fix_conflict,
