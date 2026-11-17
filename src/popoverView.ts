@@ -164,7 +164,6 @@ export interface SectionView {
   /** Unread total to badge on the header: zero while expanded, when the rows
    * carry their own badges. */
   collapsedUnread: number;
-  /** Whether the header offers Dismiss all. */
   offerDismissAll: boolean;
   body: SectionBody;
 }
