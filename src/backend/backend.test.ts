@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import {
+  dismissAllMerged,
   dismissMerged,
   listRepos,
   markRead,
@@ -153,18 +154,19 @@ test("marking a PR read clears its badge and bot note and pushes a Snapshot", as
   ]);
 });
 
+const merged = (repo: string, number: number) => ({
+  number,
+  title: `PR ${number}`,
+  url: `https://github.com/${repo}/pull/${number}`,
+  repo,
+  author: "octocat",
+  avatar_url: "",
+  owner_avatar_url: "",
+  merged_at: "2026-09-30T09:00:00Z",
+  deploy: null,
+});
+
 test("dismissing a merged PR removes only the row with that key", async () => {
-  const merged = (repo: string, number: number) => ({
-    number,
-    title: `PR ${number}`,
-    url: `https://github.com/${repo}/pull/${number}`,
-    repo,
-    author: "octocat",
-    avatar_url: "",
-    owner_avatar_url: "",
-    merged_at: "2026-09-30T09:00:00Z",
-    deploy: null,
-  });
   const fake = createFakeBackend({
     ...snapshot([]),
     merged: [merged("acme/api", 5), merged("acme/web", 5)],
@@ -177,6 +179,23 @@ test("dismissing a merged PR removes only the row with that key", async () => {
   await dismissMerged("acme/api#5");
 
   expect(seen[seen.length - 1].merged.map((pr) => pr.repo)).toEqual(["acme/web"]);
+});
+
+test("dismissing all merged PRs empties the list and leaves open PRs alone", async () => {
+  const fake = createFakeBackend({
+    ...snapshot([pr("acme/api", 1, 0)]),
+    merged: [merged("acme/api", 5), merged("acme/web", 5)],
+  });
+  setAdapter(fake.adapter);
+  const seen: Snapshot[] = [];
+  subscribeSnapshot((next) => seen.push(next));
+  await settle();
+
+  await dismissAllMerged();
+
+  const last = seen[seen.length - 1];
+  expect(last.merged).toEqual([]);
+  expect(last.prs.map(prKey)).toEqual(["acme/api#1"]);
 });
 
 test("snoozing a PR lists its key as snoozed without marking it read, and waking unlists it", async () => {

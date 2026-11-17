@@ -215,8 +215,12 @@ test("the Merged header words its bulk action the way a merged row words its own
   const html = renderToStaticMarkup(
     createElement(PrList, { view: content as ListView, onToggle: () => {} }),
   );
-  const headerButtons = [...html.matchAll(/<button[^>]*class="pr-section-dismiss"[^>]*>(.*?)<\/button>/g)];
-  expect(headerButtons.map((m) => m[1])).toEqual(["Dismiss all"]);
+  const sections = html.match(/<section[\s\S]*?<\/section>/g) ?? [];
+  const offering = sections.filter((s) => />Dismiss all<\/button>/.test(s));
+  expect(offering).toHaveLength(1);
+  expect(offering[0]).toMatch(/<h2[^>]*>.*Merged/);
+  // The row's own action, in the same section and the same word.
+  expect(offering[0]).toContain(">Dismiss</button>");
 });
 
 test("an empty section shows a dash named for assistive tech, in Todo as elsewhere", () => {
