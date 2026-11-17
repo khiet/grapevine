@@ -205,6 +205,20 @@ test("Todo has a heading and no collapse toggle; the other sections keep theirs"
   expect(mine).toContain("aria-expanded");
 });
 
+test("the Merged header words its bulk action the way a merged row words its own", () => {
+  const { content } = derivePopover(
+    { ...EMPTY_SNAPSHOT, has_synced: true, prs: [openPr], merged: [mergedPr] },
+    "",
+    { ...DEFAULT_COLLAPSED },
+    NOW.getTime(),
+  );
+  const html = renderToStaticMarkup(
+    createElement(PrList, { view: content as ListView, onToggle: () => {} }),
+  );
+  const headerButtons = [...html.matchAll(/<button[^>]*class="pr-section-dismiss"[^>]*>(.*?)<\/button>/g)];
+  expect(headerButtons.map((m) => m[1])).toEqual(["Dismiss all"]);
+});
+
 test("an empty section shows a dash named for assistive tech, in Todo as elsewhere", () => {
   const { content } = derivePopover(
     { ...EMPTY_SNAPSHOT, has_synced: true },

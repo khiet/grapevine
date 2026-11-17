@@ -611,18 +611,18 @@ test("Mark all read is offered while any PR is unread, filtered out or not", () 
   expect(derivePopover(EMPTY_SNAPSHOT, "", ALL_EXPANDED, NOW).offerMarkAllRead).toBe(false);
 });
 
-test("Clear all is offered for Merged only while it is expanded", () => {
+test("Dismiss all is offered for Merged only while it is expanded", () => {
   const snapshot = synced({ prs: [pr()], merged: [mergedPr()] });
   const expanded = list(snapshot, "", ALL_EXPANDED);
-  expect(section(expanded, "merged").offerClearAll).toBe(true);
-  expect(section(expanded, "mine").offerClearAll).toBe(false);
+  expect(section(expanded, "merged").offerDismissAll).toBe(true);
+  expect(section(expanded, "mine").offerDismissAll).toBe(false);
 
   const collapsed = list(snapshot, "", { ...ALL_EXPANDED, merged: true });
-  expect(section(collapsed, "merged").offerClearAll).toBe(false);
+  expect(section(collapsed, "merged").offerDismissAll).toBe(false);
 
   // Force-expanded by the filter, so its rows are visible again.
   const filtered = list(snapshot, "ship", { ...ALL_EXPANDED, merged: true });
-  expect(section(filtered, "merged").offerClearAll).toBe(true);
+  expect(section(filtered, "merged").offerDismissAll).toBe(true);
 });
 
 test("before the first sync with nothing to show, the setup prompt", () => {
