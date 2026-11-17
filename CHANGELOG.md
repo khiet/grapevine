@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/khiet/grapevine/compare/grapevine-v0.16.0...grapevine-v0.16.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* call the Merged header action Dismiss all ([#150](https://github.com/khiet/grapevine/issues/150)) ([59b36ef](https://github.com/khiet/grapevine/commit/59b36ef149cdc3efdf693eaa5ca2e1f532e71760)), closes [#148](https://github.com/khiet/grapevine/issues/148)
+
 ## [0.16.0](https://github.com/khiet/grapevine/compare/grapevine-v0.15.0...grapevine-v0.16.0) (2026-11-16)
 
 
