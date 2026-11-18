@@ -400,8 +400,8 @@ const PAIRS: [string, string[]][] = [
   ...onRow("--ok"),
   ...onRow("--text-2", "--fill-solid"),
   // The action bar's labels, plain and under the pointer.
-  ...onRow("--text", "--fill-solid"),
-  ...onRow("--text", "--fill-solid", "--fill-strong"),
+  ...onRow("--text", "--action-bar"),
+  ...onRow("--text", "--action-bar", "--action-bar-hover"),
 ];
 
 function ratios(theme: Map<string, string>): { pair: string; ratio: number }[] {
@@ -424,6 +424,29 @@ test.each([
   ["dark", dark],
 ])("every text and fill pair passes 4.5:1 in the %s theme", (_name, theme) => {
   expect(ratios(theme).filter((r) => r.ratio < 4.5)).toEqual([]);
+});
+
+// The action bar lies over the row, so its fill must stand apart from every
+// row surface, and a hovered button's fill from the bar. The floor sits just
+// under the light bar on its hovered row (about 1.065:1) and above a fill one
+// step off the row (about 1.01:1), which is invisible.
+const FILL_FLOOR = 1.05;
+test.each([
+  ["light", light],
+  ["dark", dark],
+])("the action bar stands apart from the row in the %s theme", (_name, theme) => {
+  const flatten = (layers: string[]) =>
+    layers
+      .map((token) => parseColour(theme.get(token) ?? ""))
+      .reduce((under, top) => over(top, under));
+  const bar = flatten(["--card", "--action-bar"]);
+  for (const row of [CARD, HOVERED, SELECTED]) {
+    expect(contrast(bar, flatten(row)), row.join(" + ")).toBeGreaterThan(FILL_FLOOR);
+  }
+  const hovered = flatten(["--card", "--action-bar", "--action-bar-hover"]);
+  expect(contrast(hovered, bar), "hovered button").toBeGreaterThan(FILL_FLOOR);
+  expect(ruleFor(".pr-actions").get("background-color")).toBe("var(--action-bar)");
+  expect(ruleFor(".pr-action:hover").get("background-color")).toBe("var(--action-bar-hover)");
 });
 
 const usedTokens = new Set(

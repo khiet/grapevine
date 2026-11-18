@@ -37,6 +37,11 @@
   --fill: rgba(120, 120, 128, 0.12);
   --fill-solid: #e5e5ea;
   --fill-strong: #d8d8dc;
+  /* The row action bar and a button in it under the pointer. Tokens of their
+     own because the bar lies over a hovered row: each must differ from every
+     row surface beneath it, which the shared fills do not in dark. */
+  --action-bar: #e5e5ea;
+  --action-bar-hover: #d8d8dc;
   /* Under the pointer: a neutral tint, so the accent's tint is left to the
      keyboard selection. */
   --hover: rgba(60, 60, 67, 0.1);
@@ -86,6 +91,10 @@
   --fill: rgba(120, 120, 128, 0.32);
   --fill-solid: #3a3a3c;
   --fill-strong: #3a3a3c;
+  /* A step above the hovered row, at the tooltip's grey, and a step above
+     that under the pointer. */
+  --action-bar: #48484a;
+  --action-bar-hover: #5a5a5e;
   --hover: rgba(235, 235, 245, 0.08);
   --selected: rgba(185, 166, 255, 0.13);
 
@@ -476,7 +485,7 @@ body {
   display: flex;
   align-items: center;
   border-radius: var(--radius-m);
-  background-color: var(--fill-solid);
+  background-color: var(--action-bar);
   opacity: 0;
 }
 
@@ -507,7 +516,7 @@ body {
 }
 
 .pr-action:hover {
-  background-color: var(--fill-strong);
+  background-color: var(--action-bar-hover);
 }
 
 /* Fix with Copilot waiting for its confirming click. */
