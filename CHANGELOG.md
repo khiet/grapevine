@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/khiet/grapevine/compare/grapevine-v0.16.1...grapevine-v0.16.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* make the row action bar visible in dark mode ([#154](https://github.com/khiet/grapevine/issues/154)) ([975f6ed](https://github.com/khiet/grapevine/commit/975f6ed1aecbc81451c68c12329fb44627a63b78))
+
 ## [0.16.1](https://github.com/khiet/grapevine/compare/grapevine-v0.16.0...grapevine-v0.16.1) (2026-11-17)
 
 
