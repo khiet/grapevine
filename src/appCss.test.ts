@@ -404,14 +404,20 @@ const PAIRS: [string, string[]][] = [
   ...onRow("--text", "--action-bar", "--action-bar-hover"),
 ];
 
+function colourOf(theme: Map<string, string>, token: string): Rgba {
+  const value = theme.get(token);
+  if (!value) throw new Error(`missing token ${token}`);
+  return parseColour(value);
+}
+
+// The colour seen through a stack of tokens, bottom layer first.
+const layered = (theme: Map<string, string>, layers: string[]): Rgba =>
+  layers.map((token) => colourOf(theme, token)).reduce((under, top) => over(top, under));
+
 function ratios(theme: Map<string, string>): { pair: string; ratio: number }[] {
-  const colour = (token: string) => {
-    const value = theme.get(token);
-    if (!value) throw new Error(`missing token ${token}`);
-    return parseColour(value);
-  };
+  const colour = (token: string) => colourOf(theme, token);
   return PAIRS.map(([text, layers]) => {
-    const background = layers.map(colour).reduce((under, top) => over(top, under));
+    const background = layered(theme, layers);
     return {
       pair: `${text} on ${layers.join(" + ")}`,
       ratio: Math.round(contrast(colour(text), background) * 100) / 100,
@@ -435,15 +441,11 @@ test.each([
   ["light", light],
   ["dark", dark],
 ])("the action bar stands apart from the row in the %s theme", (_name, theme) => {
-  const flatten = (layers: string[]) =>
-    layers
-      .map((token) => parseColour(theme.get(token) ?? ""))
-      .reduce((under, top) => over(top, under));
-  const bar = flatten(["--card", "--action-bar"]);
+  const bar = layered(theme, ["--card", "--action-bar"]);
   for (const row of [CARD, HOVERED, SELECTED]) {
-    expect(contrast(bar, flatten(row)), row.join(" + ")).toBeGreaterThan(FILL_FLOOR);
+    expect(contrast(bar, layered(theme, row)), row.join(" + ")).toBeGreaterThan(FILL_FLOOR);
   }
-  const hovered = flatten(["--card", "--action-bar", "--action-bar-hover"]);
+  const hovered = layered(theme, ["--card", "--action-bar", "--action-bar-hover"]);
   expect(contrast(hovered, bar), "hovered button").toBeGreaterThan(FILL_FLOOR);
   expect(ruleFor(".pr-actions").get("background-color")).toBe("var(--action-bar)");
   expect(ruleFor(".pr-action:hover").get("background-color")).toBe("var(--action-bar-hover)");
