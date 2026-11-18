@@ -91,8 +91,8 @@
   --fill: rgba(120, 120, 128, 0.32);
   --fill-solid: #3a3a3c;
   --fill-strong: #3a3a3c;
-  /* A step above the hovered row, at the tooltip's grey, and a step above
-     that under the pointer. */
+  /* A step above the hovered row, and a step above that under the
+     pointer. */
   --action-bar: #48484a;
   --action-bar-hover: #5a5a5e;
   --hover: rgba(235, 235, 245, 0.08);
