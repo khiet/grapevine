@@ -38,8 +38,8 @@
   --fill-solid: #e5e5ea;
   --fill-strong: #d8d8dc;
   /* The row action bar and a button in it under the pointer. Tokens of their
-     own because the bar lies over a hovered row: each must differ from every
-     row surface beneath it, which the shared fills do not in dark. */
+     own because the bar lies over the row and must stand apart from every
+     row surface, which the shared fills do not in dark. */
   --action-bar: #e5e5ea;
   --action-bar-hover: #d8d8dc;
   /* Under the pointer: a neutral tint, so the accent's tint is left to the

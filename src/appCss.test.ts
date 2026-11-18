@@ -433,8 +433,8 @@ test.each([
 
 // The action bar lies over the row, so its fill must stand apart from every
 // row surface, and a hovered button's fill from the bar. The floor sits just
-// under the light bar on its hovered row (about 1.065:1) and above a fill one
-// step off the row (about 1.01:1), which is invisible.
+// under the light bar on its hovered row (about 1.06:1) and above a fill one
+// step off the row (about 1.02:1), which is invisible.
 const FILL_FLOOR = 1.05;
 const BAR = ["--card", "--action-bar"];
 const BAR_HOVERED = [...BAR, "--action-bar-hover"];
