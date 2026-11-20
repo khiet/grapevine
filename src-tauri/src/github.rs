@@ -6630,6 +6630,36 @@ mod tests {
         );
     }
 
+    /// Every page is old merges touched since the watermark, as a bulk edit
+    /// leaves them: none enters, and none ends the read. Failing here would
+    /// fail every sync after it too, since each reads the same range.
+    #[test]
+    fn a_catch_up_that_never_reaches_the_watermark_stops_after_twenty_rounds_without_failing() {
+        let touched = |n| {
+            with(
+                merged_node(n, "2026-07-10T10:00:00Z"),
+                json!({ "updatedAt": "2026-07-12T12:00:00Z" }),
+            )
+        };
+        let endless = (0..20)
+            .map(|n| {
+                merged_round(vec![merged_repo(
+                    "acme/widgets",
+                    vec![touched(n)],
+                    Some("next"),
+                )])
+            })
+            .collect();
+        let github = Canned::new(endless);
+        let from = watermarks(&[("acme/widgets", Some("2026-07-12T08:00:00Z"))]);
+
+        let fetched = catch_up(&github, &["acme/widgets"], &from).unwrap();
+
+        assert_eq!(github.request_count(), 20);
+        assert!(fetched.catch_up.merged.is_empty());
+        assert_eq!(fetched.catch_up.watermarks, from);
+    }
+
     /// The catch-up runs at midnight starting 13 July, so seven days back is
     /// midnight starting 6 July.
     #[test]
