@@ -16,10 +16,11 @@
 //! - Each `turn_since` agrees with the turn starts, which hold an entry for
 //!   exactly the PRs in the Snapshot whose turn is yours.
 //! - Fix requests exist only for PRs in the Snapshot. As a sync leaves it,
-//!   `fix_requested` is set on exactly those of them with no Copilot task
-//!   (see [`fix_requests::apply`]); a request recorded since sets it at
-//!   once. Such a PR's turn is not yours unless a review is asked of the
-//!   viewer by name.
+//!   `fix_requested` is set on exactly those of them whose Copilot task, if
+//!   any, has not changed since the request (see [`fix_requests::apply`]);
+//!   a request recorded since sets it at once. Such a PR carries no
+//!   `agent_task`, and its turn is not yours unless a review is asked of
+//!   the viewer by name.
 //! - A merge watermark moves forward only in the transition that folds in
 //!   the merges read up to it, so a merge is never skipped without having
 //!   been offered to the merged list.
@@ -2484,5 +2485,28 @@ mod tests {
         assert!(is_snoozed(&sync_one(&state, conflicted(7), LAST_SYNC + 1)));
 
         assert!(is_snoozed(&sync_one(&state, waiting(), LAST_SYNC + 2)));
+    }
+
+    /// Every PR Copilot has worked on has such a task. Left to decide, it
+    /// would cancel the fix at the next sync and the row would offer it
+    /// again.
+    #[test]
+    fn a_task_that_last_changed_before_the_fix_was_asked_for_yields_to_it() {
+        for stale in [AgentTask::Settled, AgentTask::Failed] {
+            let state = PrState::default();
+            let before = tasked(conflicted(7), stale, ASKED_AT - 1);
+            sync_one(&state, before.clone(), LAST_SYNC);
+
+            let asked = state.fix_requested(KEY, ASKED_AT);
+            assert!(asked.snapshot.prs[0].fix_requested);
+            assert_eq!(asked.snapshot.prs[0].agent_task, None);
+
+            let effects = sync_one(&state, before, LAST_SYNC + 180_000);
+            let row = &effects.snapshot.prs[0];
+            assert!(row.fix_requested, "{stale:?}");
+            assert_eq!(row.agent_task, None, "{stale:?}");
+            assert_eq!(row.turn, Some(Turn::Theirs), "{stale:?}");
+            assert_eq!(effects.tray_count, Some(0), "{stale:?}");
+        }
     }
 }

@@ -316,9 +316,10 @@ pub struct PullRequest {
     /// The state of the viewer's latest Copilot task on this PR; `None` when
     /// they have none among the tasks read. Filled in by
     /// [`agent_tasks::assign`] after the PRs are fetched, which also moves
-    /// `turn` to match. While it is set the task speaks for Copilot, and a
-    /// fix request does not (see [`crate::fix_requests::apply`]). Same
-    /// property-not-event rule as `blocked_reasons`.
+    /// `turn` to match. Never set beside `fix_requested`: whichever of the
+    /// task and the fix request is the later word speaks for Copilot (see
+    /// [`crate::fix_requests::apply`]). Same property-not-event rule as
+    /// `blocked_reasons`.
     pub agent_task: Option<AgentTask>,
     /// Epoch ms at which that task last changed; `None` without a task, or
     /// when GitHub's time could not be read. A turn the task made the
@@ -7638,5 +7639,25 @@ mod tests {
         assert_untouched(fetch_as("second"));
         let fetched = fetch_as("first").unwrap();
         assert_eq!(fetched.prs[0].agent_task, Some(AgentTask::Failed));
+    }
+
+    /// As with a requested conflict fix: the review is still the viewer's
+    /// to do, whatever Copilot is busy with.
+    #[test]
+    fn a_task_under_way_leaves_a_review_asked_of_the_viewer_by_name_their_turn() {
+        let github = Canned::new(vec![
+            widgets_round(vec![pr_node(json!({
+                "fullDatabaseId": PULL_ID.to_string(),
+                "reviewRequests": {
+                    "nodes": [{ "requestedReviewer": { "login": "khiet" } }]
+                },
+            }))]),
+            tasks(vec![task(PULL_ID, "in_progress", TASK_T1)]),
+        ]);
+
+        let fetched = fetch_tasked_through(&github, &mut agent_tasks::Gate::default()).unwrap();
+
+        assert_eq!(fetched.prs[0].agent_task, Some(AgentTask::Working));
+        assert_eq!(fetched.prs[0].turn, Some(Turn::Yours));
     }
 }

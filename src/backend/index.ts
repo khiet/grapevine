@@ -94,8 +94,9 @@ export interface PullRequest {
    * they have none among the tasks the backend read. Backend-computed, and
    * the backend moves `turn` to match: "working" waits on Copilot as a
    * requested fix does, "needs_you" is always the viewer's turn, dated from
-   * when the task stopped for them. Never set beside fix_requested as a
-   * sync sends it: the task says what the request could only guess. */
+   * when the task stopped for them. Never set beside fix_requested: a task
+   * that changed after the fix was asked for replaces the request, and an
+   * older one gives way to it. */
   agent_task: AgentTask | null;
   /** What the row may offer to do to the PR on GitHub, in the order it lists
    * them. Backend-computed from what GitHub lets the viewer do: only ever

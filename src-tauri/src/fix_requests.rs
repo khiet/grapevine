@@ -39,10 +39,13 @@ fn expires_at(request: &FixRequest) -> u64 {
 }
 
 /// Marks `pr` as waiting on Copilot and returns the turn it had (see
-/// [`wait_on_copilot`]).
+/// [`wait_on_copilot`]). Whatever Copilot task the PR carried is dropped
+/// from it: the request is the later word, and a row never shows both.
 pub fn hand_over(pr: &mut PullRequest) -> Option<Turn> {
     let displaced = pr.turn;
     pr.fix_requested = true;
+    pr.agent_task = None;
+    pr.agent_task_updated_at = None;
     wait_on_copilot(pr);
     displaced
 }
@@ -88,9 +91,13 @@ pub fn expire(requests: &mut FixRequests, now_epoch_ms: u64) -> Vec<String> {
 /// gone, or when its lifetime has passed. Returns true when the entries
 /// changed and need persisting.
 ///
-/// A PR with a Copilot task is not handed over: the task says what Copilot
-/// is doing, which the request can only guess at. Its entry lives on as it
-/// would have, and applies again if the task stops being read.
+/// A PR whose Copilot task changed after the fix was asked for is not handed
+/// over: the task says what Copilot is doing, which the request can only
+/// guess at. Its entry lives on as it would have, and applies again if the
+/// task stops being read. A task last changed before the request, or at a
+/// time GitHub did not give, says nothing about it and yields to it;
+/// otherwise the task every Copilot PR already has would cancel the fix at
+/// the next sync and the row would offer it again.
 ///
 /// Must run before the turns are tracked, so a handed-over PR is not counted
 /// as the viewer's.
@@ -110,7 +117,10 @@ pub fn apply(
         if expires_at(request) <= now_epoch_ms || conflict_cleared(pr) {
             continue;
         }
-        if pr.agent_task.is_none() {
+        let answered_by_task = pr
+            .agent_task_updated_at
+            .is_some_and(|at| at > request.requested_at);
+        if !answered_by_task {
             displaced.insert(key.clone(), hand_over(pr));
         }
         next.insert(key, request.clone());
