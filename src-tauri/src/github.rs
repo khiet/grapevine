@@ -292,7 +292,8 @@ pub struct PullRequest {
     /// `blocked_reasons`.
     pub ready_to_merge: bool,
     /// Whose move the PR waits on (see [`turn_for`]); `None` when there is no
-    /// verdict, always so on a draft and in All. A your-turn row sits in the
+    /// verdict, always so on a draft and in All unless a Copilot task waits
+    /// for the viewer there (see [`agent_tasks::decide`]). A your-turn row sits in the
     /// Todo section, tints its mark and is what the tray counts. Same
     /// property-not-event rule as `blocked_reasons`: it never reaches an
     /// unread badge.
@@ -688,7 +689,10 @@ impl<T: Transport> Client<'_, T> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            viewer_id = data.pointer("/viewer/databaseId").and_then(Value::as_u64);
+            viewer_id = data
+                .pointer("/viewer/databaseId")
+                .and_then(Value::as_u64)
+                .or(viewer_id);
 
             let mut still_pending = Vec::new();
             for (i, (owner, name, _)) in pending.iter().enumerate() {
@@ -736,10 +740,8 @@ impl<T: Transport> Client<'_, T> {
         gate: &mut agent_tasks::Gate,
     ) -> Result<FetchedPrs, GithubError> {
         let mut fetched = self.fetch_open_prs(repos).await?;
-        // Without the viewer's id, or a PR a task could name, there is
-        // nothing to match and the call would only spend its budget.
-        let matchable = fetched.prs.iter().any(|pr| pr.database_id.is_some());
-        if let (Some(viewer_id), true) = (fetched.viewer_id, matchable) {
+        // Without the viewer's id no task can be told to be theirs.
+        if let Some(viewer_id) = fetched.viewer_id {
             match self.agent_tasks(gate).await {
                 Ok(tasks) => agent_tasks::assign(&mut fetched.prs, &tasks, viewer_id),
                 Err(e) => eprintln!("cannot read Copilot tasks: {e}"),
@@ -772,12 +774,14 @@ impl<T: Transport> Client<'_, T> {
             .await?;
         let status = response.status;
         let header = |name: &str| response.headers.get(name).and_then(|v| v.to_str().ok());
-        // The primary limit answers 403 like a refusal does; what tells them
-        // apart is a spent budget or a wait GitHub asks for.
+        // A limit can answer 403 like a refusal does; what tells them apart
+        // is a spent budget, a wait GitHub asks for, or the message of a
+        // secondary limit, which may carry neither.
         let out_of_budget = status == reqwest::StatusCode::TOO_MANY_REQUESTS
             || (status == reqwest::StatusCode::FORBIDDEN
                 && (header("retry-after").is_some()
-                    || header("x-ratelimit-remaining") == Some("0")));
+                    || header("x-ratelimit-remaining") == Some("0")
+                    || response.body.to_ascii_lowercase().contains("rate limit")));
         if out_of_budget {
             let now = (self.now_epoch_secs)();
             let reset = rate_limit_reset(&response.headers, now)
@@ -7584,15 +7588,56 @@ mod tests {
         assert_eq!(pr.turn, Some(Turn::Yours));
     }
 
-    /// The call has a budget of its own, 60 an hour, that a sync with
-    /// nothing to match should not spend.
+    /// A secondary limit can answer 403 with nothing but its message to say
+    /// so. Read as a refusal it would end the tasks until a restart.
     #[test]
-    fn no_tasks_are_asked_for_when_no_open_pr_could_match_one() {
-        let github = Canned::new(vec![widgets_round(vec![])]);
+    fn a_secondary_rate_limit_known_only_by_its_message_is_waited_out() {
+        let github = Canned::new(vec![
+            tasked_round(),
+            answer(
+                403,
+                &[],
+                json!({ "message": "You have exceeded a secondary rate limit." }),
+            ),
+            tasked_round(),
+            tasks(vec![task(PULL_ID, "failed", TASK_T1)]),
+        ]);
+        let mut gate = agent_tasks::Gate::default();
+        let fetch_at = |now: fn() -> u64, gate: &mut agent_tasks::Gate| {
+            run(github
+                .client_at(now)
+                .fetch_open_prs_with_tasks(&["acme/widgets".to_string()], gate))
+        };
 
-        let fetched = fetch_tasked_through(&github, &mut agent_tasks::Gate::default()).unwrap();
+        assert_untouched(fetch_at(|| 1_000, &mut gate));
+        let fetched = fetch_at(|| 1_060, &mut gate).unwrap();
+        assert_eq!(fetched.prs[0].agent_task, Some(AgentTask::Failed));
+    }
 
-        assert!(fetched.prs.is_empty());
-        assert!(github.gets.lock().unwrap().is_empty());
+    /// Refused token, another token, then the first again: the first is
+    /// asked afresh, since much may have changed on GitHub's side.
+    #[test]
+    fn going_back_to_a_refused_token_asks_again() {
+        let github = Canned::new(vec![
+            tasked_round(),
+            answer(404, &[], json!({})),
+            tasked_round(),
+            tasks(vec![]),
+            tasked_round(),
+            tasks(vec![task(PULL_ID, "failed", TASK_T1)]),
+        ]);
+        let mut gate = agent_tasks::Gate::default();
+        let mut fetch_as = |token: &'static str| {
+            let client = Client {
+                token,
+                ..github.client()
+            };
+            run(client.fetch_open_prs_with_tasks(&["acme/widgets".to_string()], &mut gate))
+        };
+
+        assert_untouched(fetch_as("first"));
+        assert_untouched(fetch_as("second"));
+        let fetched = fetch_as("first").unwrap();
+        assert_eq!(fetched.prs[0].agent_task, Some(AgentTask::Failed));
     }
 }

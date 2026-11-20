@@ -2473,4 +2473,16 @@ mod tests {
         assert!(!after_the_hour.snapshot.prs[0].fix_requested);
         assert_eq!(after_the_hour.snapshot.prs[0].turn, Some(Turn::Yours));
     }
+
+    /// A sync whose tasks call failed or was held back shows no task at all.
+    /// The wait it could not see is the one the viewer snoozed.
+    #[test]
+    fn a_sync_that_read_no_tasks_does_not_make_a_snoozed_wait_news_again() {
+        let waiting = || tasked(conflicted(7), AgentTask::NeedsYou, TASK_AT);
+        let state = snoozed_state(waiting());
+
+        assert!(is_snoozed(&sync_one(&state, conflicted(7), LAST_SYNC + 1)));
+
+        assert!(is_snoozed(&sync_one(&state, waiting(), LAST_SYNC + 2)));
+    }
 }

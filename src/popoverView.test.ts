@@ -1241,17 +1241,19 @@ test("a Copilot task that is over says nothing", () => {
   expect(state({ agent_task: "settled" })).toBeNull();
 });
 
-test("a row whose Copilot task is under way offers no Copilot fix", () => {
+test("a row offers no Copilot fix while Copilot is mid-task on it", () => {
   const view = list(
     synced({
       prs: [
         fixable({ number: 1, agent_task: "working", turn: "theirs" }),
-        fixable({ number: 2, agent_task: "failed" }),
-        fixable({ number: 3, agent_task: "settled" }),
+        fixable({ number: 2, agent_task: "needs_you" }),
+        fixable({ number: 3, agent_task: "failed" }),
+        fixable({ number: 4, agent_task: "settled" }),
       ],
     }),
   );
   expect(rows(view, "mine").map(labels)).toEqual([
+    ["Snooze"],
     ["Snooze"],
     ["Snooze", "Fix with Copilot"],
     ["Snooze", "Fix with Copilot"],

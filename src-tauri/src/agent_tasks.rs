@@ -9,7 +9,10 @@ use std::{
 
 use serde_json::Value;
 
-use crate::github::{rfc3339_utc_to_epoch_secs, AgentTask, PullRequest, Turn};
+use crate::{
+    fix_requests,
+    github::{rfc3339_utc_to_epoch_secs, AgentTask, PullRequest, Turn},
+};
 
 /// The newest 100 tasks the token can see, which is all that is ever read: a
 /// task further back than that speaks for no PR.
@@ -104,19 +107,14 @@ pub fn assign(prs: &mut [PullRequest], tasks: &[Task], viewer_id: u64) {
 
 /// Marks `pr` with its task's state and moves its turn to match. A working
 /// task takes the PR off the viewer's hands as a requested conflict fix does
-/// (see [`crate::fix_requests::hand_over`]), a review asked of the viewer by
-/// name staying theirs. A task waiting for the viewer makes the turn theirs
+/// (see [`fix_requests::wait_on_copilot`]). A task waiting for the viewer makes the turn theirs
 /// whatever GitHub's state said, a draft included: the task goes nowhere
 /// until they answer. Any other state leaves the turn alone.
 pub fn decide(pr: &mut PullRequest, state: AgentTask, updated_at: Option<u64>) {
     pr.agent_task = Some(state);
     pr.agent_task_updated_at = updated_at;
     match state {
-        AgentTask::Working => {
-            if !pr.review_requested && pr.turn.is_some() {
-                pr.turn = Some(Turn::Theirs);
-            }
-        }
+        AgentTask::Working => fix_requests::wait_on_copilot(pr),
         AgentTask::NeedsYou => pr.turn = Some(Turn::Yours),
         AgentTask::Failed | AgentTask::Settled => {}
     }
@@ -128,16 +126,22 @@ pub fn decide(pr: &mut PullRequest, state: AgentTask, updated_at: Option<u64>) {
 pub struct Gate {
     /// A fingerprint of the token GitHub would not serve tasks to. The call
     /// stays unmade while the token in use is that one: asking again would
-    /// get the same answer.
+    /// get the same answer. Forgotten once another token is in use, so
+    /// going back to the first asks afresh.
     refused: Option<u64>,
     /// Epoch secs before which the call stays unmade, after a rate limit.
     wait_until: Option<u64>,
 }
 
 impl Gate {
-    pub fn allows(&self, token: &str, now_epoch_secs: u64) -> bool {
-        self.refused != Some(fingerprint(token))
-            && self.wait_until.is_none_or(|until| until <= now_epoch_secs)
+    pub fn allows(&mut self, token: &str, now_epoch_secs: u64) -> bool {
+        if self
+            .refused
+            .is_some_and(|refused| refused != fingerprint(token))
+        {
+            self.refused = None;
+        }
+        self.refused.is_none() && self.wait_until.is_none_or(|until| until <= now_epoch_secs)
     }
 
     /// GitHub answered that `token` may not read tasks, or that there is no

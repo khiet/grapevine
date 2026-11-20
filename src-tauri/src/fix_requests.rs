@@ -38,17 +38,23 @@ fn expires_at(request: &FixRequest) -> u64 {
     request.requested_at.saturating_add(LIFETIME_MS)
 }
 
-/// Marks `pr` as waiting on Copilot and returns the turn it had. A review
-/// asked of the viewer by name outranks the handover, as it outranks every
-/// other turn rule: that row stays the viewer's. A PR with no verdict, such
-/// as a draft, keeps none.
+/// Marks `pr` as waiting on Copilot and returns the turn it had (see
+/// [`wait_on_copilot`]).
 pub fn hand_over(pr: &mut PullRequest) -> Option<Turn> {
     let displaced = pr.turn;
     pr.fix_requested = true;
+    wait_on_copilot(pr);
+    displaced
+}
+
+/// Takes `pr` off the viewer's hands while Copilot is at work on it. A review
+/// asked of the viewer by name outranks this, as it outranks every other
+/// turn rule: that row stays the viewer's. A PR with no verdict, such as a
+/// draft, keeps none.
+pub fn wait_on_copilot(pr: &mut PullRequest) {
     if !pr.review_requested && pr.turn.is_some() {
         pr.turn = Some(Turn::Theirs);
     }
-    displaced
 }
 
 /// Undoes [`hand_over`], given the turn it returned.

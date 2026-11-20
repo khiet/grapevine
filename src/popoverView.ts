@@ -383,12 +383,12 @@ function confirmHint(id: WriteId, pr: PullRequest): string {
 // the way, and waking it is the only thing it offers. None while one is on
 // its way either: what the PR offers then is about to change. The fix is
 // offered wherever the backend allows it, has not been asked for yet, and
-// Copilot is not already at work on the PR; the rest are the backend's list
-// as it stands.
+// Copilot is not in the middle of a task on the PR, at work or stopped on a
+// question; the rest are the backend's list as it stands.
 function writesFor(pr: PullRequest, snooze: Snooze, pending: boolean): WriteId[] {
   if (snooze === "wake" || pending) return [];
-  const fix =
-    pr.can_fix_conflict && !pr.fix_requested && pr.agent_task !== "working";
+  const midTask = pr.agent_task === "working" || pr.agent_task === "needs_you";
+  const fix = pr.can_fix_conflict && !pr.fix_requested && !midTask;
   return [...(fix ? ["fix" as const] : []), ...pr.actions];
 }
 

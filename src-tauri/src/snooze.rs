@@ -21,10 +21,12 @@ pub struct Snooze {
     /// looked at. Starts as the state at snooze time and follows a request
     /// that clears, so a re-request after reviewing reads as fresh.
     pub request_outstanding: bool,
-    /// Whether the PR's Copilot task was waiting for the viewer when last
-    /// looked at, kept like `request_outstanding` so a task that stops for
-    /// them again reads as fresh. Absent from snoozes stored before tasks
-    /// were read, none of which had one.
+    /// Whether the PR's Copilot task was waiting for the viewer when a task
+    /// was last seen on it, kept like `request_outstanding` so a task that
+    /// stops for them again reads as fresh. A sync that shows no task leaves
+    /// it alone: the tasks may only have gone unread, and a wait the viewer
+    /// snoozed knowingly must not come back as news. Absent from snoozes
+    /// stored before tasks were read, none of which had one.
     #[serde(default)]
     pub task_waiting: bool,
     /// Epoch ms at which the row wakes with or without news.
@@ -94,7 +96,10 @@ pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> b
             key,
             Snooze {
                 request_outstanding: pr.review_requested,
-                task_waiting: task_waiting(pr),
+                task_waiting: match pr.agent_task {
+                    Some(_) => task_waiting(pr),
+                    None => snooze.task_waiting,
+                },
                 ..snooze.clone()
             },
         );
