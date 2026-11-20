@@ -38,17 +38,26 @@ fn expires_at(request: &FixRequest) -> u64 {
     request.requested_at.saturating_add(LIFETIME_MS)
 }
 
-/// Marks `pr` as waiting on Copilot and returns the turn it had. A review
-/// asked of the viewer by name outranks the handover, as it outranks every
-/// other turn rule: that row stays the viewer's. A PR with no verdict, such
-/// as a draft, keeps none.
+/// Marks `pr` as waiting on Copilot and returns the turn it had (see
+/// [`wait_on_copilot`]). Whatever Copilot task the PR carried is dropped
+/// from it: the request is the later word, and a row never shows both.
 pub fn hand_over(pr: &mut PullRequest) -> Option<Turn> {
     let displaced = pr.turn;
     pr.fix_requested = true;
+    pr.agent_task = None;
+    pr.agent_task_updated_at = None;
+    wait_on_copilot(pr);
+    displaced
+}
+
+/// Takes `pr` off the viewer's hands while Copilot is at work on it. A review
+/// asked of the viewer by name outranks this, as it outranks every other
+/// turn rule: that row stays the viewer's. A PR with no verdict, such as a
+/// draft, keeps none.
+pub fn wait_on_copilot(pr: &mut PullRequest) {
     if !pr.review_requested && pr.turn.is_some() {
         pr.turn = Some(Turn::Theirs);
     }
-    displaced
 }
 
 /// Undoes [`hand_over`], given the turn it returned.
@@ -82,6 +91,14 @@ pub fn expire(requests: &mut FixRequests, now_epoch_ms: u64) -> Vec<String> {
 /// gone, or when its lifetime has passed. Returns true when the entries
 /// changed and need persisting.
 ///
+/// A PR whose Copilot task changed after the fix was asked for is not handed
+/// over: the task says what Copilot is doing, which the request can only
+/// guess at. Its entry lives on as it would have, and applies again if the
+/// task stops being read. A task last changed before the request, or at a
+/// time GitHub did not give, says nothing about it and yields to it;
+/// otherwise the task every Copilot PR already has would cancel the fix at
+/// the next sync and the row would offer it again.
+///
 /// Must run before the turns are tracked, so a handed-over PR is not counted
 /// as the viewer's.
 pub fn apply(
@@ -100,7 +117,12 @@ pub fn apply(
         if expires_at(request) <= now_epoch_ms || conflict_cleared(pr) {
             continue;
         }
-        displaced.insert(key.clone(), hand_over(pr));
+        let answered_by_task = pr
+            .agent_task_updated_at
+            .is_some_and(|at| at > request.requested_at);
+        if !answered_by_task {
+            displaced.insert(key.clone(), hand_over(pr));
+        }
         next.insert(key, request.clone());
     }
     let changed = *requests != next;

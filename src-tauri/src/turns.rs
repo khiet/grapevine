@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    github::{PullRequest, Turn},
+    github::{AgentTask, PullRequest, Turn},
     snooze::Snoozes,
     unread::{self, ReadState},
 };
@@ -61,6 +61,10 @@ fn is_yours(pr: &PullRequest) -> bool {
 /// left the list are dropped. Returns true when the state changed and needs
 /// persisting.
 ///
+/// A turn that is the viewer's because a Copilot task waits for them is the
+/// exception: it starts when the task last changed, as GitHub dates it,
+/// whatever was recorded before.
+///
 /// `starts` is `None` until turns have been tracked at all (a fresh install,
 /// an upgrade, a lost file). Every turn under way then gets an unknown start
 /// instead of `now_epoch_ms`.
@@ -80,12 +84,16 @@ pub fn apply(
             continue;
         }
         let key = unread::key(pr);
-        let since = match starts.as_ref() {
-            Some(known) => match known.get(&key) {
-                Some(since) => *since,
-                None => seen_before.contains_key(&key).then_some(now_epoch_ms),
-            },
-            None => None,
+        let since = if pr.agent_task == Some(AgentTask::NeedsYou) {
+            pr.agent_task_updated_at
+        } else {
+            match starts.as_ref() {
+                Some(known) => match known.get(&key) {
+                    Some(since) => *since,
+                    None => seen_before.contains_key(&key).then_some(now_epoch_ms),
+                },
+                None => None,
+            }
         };
         pr.turn_since = since;
         next.insert(key, since);

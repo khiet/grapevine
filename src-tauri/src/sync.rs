@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
 use crate::{
-    github,
+    agent_tasks, github,
     github::{GithubError, PullRequest, RateLimit},
     keychain, merged,
     pr_state::{Effects, PrState, Snapshot},
@@ -38,6 +38,9 @@ pub struct SyncState {
     /// Tells the poll loop's wait that the snoozes or the fix requests
     /// changed, so the expiry it is timing may no longer be the earliest.
     expiries_changed: Notify,
+    /// Whether a sync may ask GitHub for Copilot tasks. Only the sync loop
+    /// touches it, one sync at a time.
+    agent_tasks_gate: Mutex<agent_tasks::Gate>,
 }
 
 impl SyncState {
@@ -449,7 +452,13 @@ async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
     // so the watermarks stay and the next sync reads the same merges again.
     let watermarks = app.state::<SyncState>().pr_state.merge_watermarks();
     let caught_up = github::fetch_merged_since(&token, &repos, &watermarks).await?;
-    let fetched = github::fetch_open_prs(&token, &repos).await?;
+    // Taken out for the fetch and put back after: the lock cannot be held
+    // across the await.
+    let state = app.state::<SyncState>();
+    let mut gate = state.agent_tasks_gate.lock().unwrap().clone();
+    let fetched = github::fetch_open_prs(&token, &repos, &mut gate).await;
+    *state.agent_tasks_gate.lock().unwrap() = gate;
+    let fetched = fetched?;
     Ok(Some(FetchResult {
         prs: fetched.prs,
         catch_up: caught_up.catch_up,

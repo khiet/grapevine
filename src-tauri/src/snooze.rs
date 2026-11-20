@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    github::{self, PullRequest, Section},
+    github::{self, AgentTask, PullRequest, Section},
     unread,
 };
 
@@ -21,6 +21,14 @@ pub struct Snooze {
     /// looked at. Starts as the state at snooze time and follows a request
     /// that clears, so a re-request after reviewing reads as fresh.
     pub request_outstanding: bool,
+    /// Whether the PR's Copilot task was waiting for the viewer when a task
+    /// was last seen on it, kept like `request_outstanding` so a task that
+    /// stops for them again reads as fresh. A sync that shows no task leaves
+    /// it alone: the tasks may only have gone unread, and a wait the viewer
+    /// snoozed knowingly must not come back as news. Absent from snoozes
+    /// stored before tasks were read, none of which had one.
+    #[serde(default)]
+    pub task_waiting: bool,
     /// Epoch ms at which the row wakes with or without news.
     pub expires_at: u64,
 }
@@ -38,8 +46,13 @@ pub fn entry(pr: &PullRequest, baseline_at: u64, expires_at: u64) -> Snooze {
     Snooze {
         baseline_at,
         request_outstanding: pr.review_requested,
+        task_waiting: task_waiting(pr),
         expires_at,
     }
+}
+
+fn task_waiting(pr: &PullRequest) -> bool {
+    pr.agent_task == Some(AgentTask::NeedsYou)
 }
 
 /// Drops every entry whose expiry has passed. Returns true when the state
@@ -59,8 +72,9 @@ pub fn next_expiry(snoozes: &Snoozes) -> Option<u64> {
 /// Brings `snoozes` level with a fetch: an entry is dropped when its PR left
 /// the list or can no longer be snoozed, and when the row wakes, which is the
 /// first of human activity after the baseline, a fresh review request naming
-/// the viewer, or the expiry passing. Bot activity never wakes a row. Returns
-/// true when the state changed and needs persisting.
+/// the viewer, a Copilot task newly waiting for the viewer, or the expiry
+/// passing. Bot activity never wakes a row. Returns true when the state
+/// changed and needs persisting.
 pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> bool {
     let mut next = Snoozes::new();
     for pr in prs {
@@ -69,9 +83,11 @@ pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> b
             continue;
         };
         let fresh_request = pr.review_requested && !snooze.request_outstanding;
+        let fresh_wait = task_waiting(pr) && !snooze.task_waiting;
         if !can_snooze(pr)
             || snooze.expires_at <= now_epoch_ms
             || fresh_request
+            || fresh_wait
             || has_activity_after(pr, snooze.baseline_at)
         {
             continue;
@@ -80,6 +96,10 @@ pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> b
             key,
             Snooze {
                 request_outstanding: pr.review_requested,
+                task_waiting: match pr.agent_task {
+                    Some(_) => task_waiting(pr),
+                    None => snooze.task_waiting,
+                },
                 ..snooze.clone()
             },
         );

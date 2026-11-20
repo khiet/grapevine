@@ -39,7 +39,8 @@ export type WriteId = "fix" | PrAction;
 export type WritesPending = ReadonlyMap<string, WriteId>;
 
 /** What colours a row's reason: the accent for a review asked of the viewer
- * on their turn, amber for blocked, green for ready and approved, neutral
+ * on their turn and for a Copilot task waiting for them, amber for blocked
+ * and for a Copilot task that failed, green for ready and approved, neutral
  * for everything else. A blocked or ready row keeps its own hue on the
  * viewer's turn too: Todo already says whose move it is. */
 export type Tone = "accent" | "warn" | "ok" | "neutral";
@@ -229,10 +230,15 @@ interface TonedState {
 // Every state the PR is in, in priority order; the row shows the first and
 // folds the rest. A new signal needs one line here, placed where it ranks.
 //
-// The head of the order (a review asked of you, then the blockers in the
-// backend's severity order, then mergeable) is the order the backend
-// decides the turn in, so on a your-turn row the first state is the reason
-// the row sits in Todo. After it the order runs from under way (queue,
+// A Copilot task that stopped, to ask the viewer something or because it
+// failed, outranks everything: the first is the backend's reason for the
+// turn whatever else is true of the PR, and the second is the task giving
+// up, which no other state on the row says.
+//
+// After those, the head of the order (a review asked of you, then the
+// blockers in the backend's severity order, then mergeable) is the order the
+// backend decides the turn in, so on a your-turn row the first state is the
+// reason the row sits in Todo. After it the order runs from under way (queue,
 // Copilot, checks, auto-merge) to loose ends (threads nothing requires
 // resolving) to done (approved) to waiting on others.
 //
@@ -248,6 +254,8 @@ function rowStates(pr: PullRequest): TonedState[] {
     tone: Tone = "neutral",
     detail: string | null = null,
   ) => states.push({ text, tone, detail });
+  if (pr.agent_task === "needs_you") add("Copilot needs you", "accent");
+  if (pr.agent_task === "failed") add("Copilot failed", "warn");
   // The accent is the viewer's turn, not the request: the same words on a row
   // that does not wait on them are plain news.
   if (pr.review_requested) {
@@ -263,8 +271,10 @@ function rowStates(pr: PullRequest): TonedState[] {
     add(`Queued ${ordinal(pr.merge_queue_position)}`);
   }
   // After the conflict it answers: the PR is still conflicting, and this
-  // says who is on it.
-  if (pr.fix_requested) add("Copilot fixing");
+  // says who is on it. A task under way is the same news from GitHub's own
+  // account of it, and the backend sends that in place of the request.
+  if (pr.agent_task === "working") add("Copilot working");
+  else if (pr.fix_requested) add("Copilot fixing");
   if (pr.checks_running) add("Checks running");
   if (pr.auto_merge) add("Auto-merge on");
   // The same words as the blocker, in the neutral tone: the backend sends
@@ -372,11 +382,13 @@ function confirmHint(id: WriteId, pr: PullRequest): string {
 // The writes the row offers. None on a snoozed row: that one was put out of
 // the way, and waking it is the only thing it offers. None while one is on
 // its way either: what the PR offers then is about to change. The fix is
-// offered wherever the backend allows it and has not been asked for yet;
-// the rest are the backend's list as it stands.
+// offered wherever the backend allows it, has not been asked for yet, and
+// Copilot is not in the middle of a task on the PR, at work or stopped on a
+// question; the rest are the backend's list as it stands.
 function writesFor(pr: PullRequest, snooze: Snooze, pending: boolean): WriteId[] {
   if (snooze === "wake" || pending) return [];
-  const fix = pr.can_fix_conflict && !pr.fix_requested;
+  const midTask = pr.agent_task === "working" || pr.agent_task === "needs_you";
+  const fix = pr.can_fix_conflict && !pr.fix_requested && !midTask;
   return [...(fix ? ["fix" as const] : []), ...pr.actions];
 }
 

@@ -144,6 +144,7 @@ const openPr = {
   turn_since: null,
   can_fix_conflict: false,
   fix_requested: false,
+  agent_task: null,
   actions: [],
   merge_method: "merge",
   base_branch: "main",

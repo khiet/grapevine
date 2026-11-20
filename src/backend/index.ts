@@ -90,6 +90,14 @@ export interface PullRequest {
    * Such a PR waits on Copilot: its turn is never "yours" unless a review is
    * asked of the viewer by name. */
   fix_requested: boolean;
+  /** Where the viewer's latest Copilot task on this PR stands; null when
+   * they have none among the tasks the backend read. Backend-computed, and
+   * the backend moves `turn` to match: "working" waits on Copilot as a
+   * requested fix does, "needs_you" is always the viewer's turn, dated from
+   * when the task stopped for them. Never set beside fix_requested: a task
+   * that changed after the fix was asked for replaces the request, and an
+   * older one gives way to it. */
+  agent_task: AgentTask | null;
   /** What the row may offer to do to the PR on GitHub, in the order it lists
    * them. Backend-computed from what GitHub lets the viewer do: only ever
    * set in Mine, never on a draft, and "queue" stands in for "merge" where
@@ -119,6 +127,11 @@ export interface PullRequest {
 export type Section = "mine" | "participated" | "all";
 
 export type Turn = "yours" | "theirs";
+
+/** "working" reads "Copilot working", "needs_you" "Copilot needs you" and
+ * "failed" "Copilot failed". "settled" is a task that is over or idle, and
+ * reads nothing. */
+export type AgentTask = "working" | "needs_you" | "failed" | "settled";
 
 export type PrAction =
   | "merge"
