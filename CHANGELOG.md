@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/khiet/grapevine/compare/grapevine-v0.16.2...grapevine-v0.17.0) (2026-11-20)
+
+
+### Features
+
+* build the Merged section from GitHub's merged list ([#159](https://github.com/khiet/grapevine/issues/159)) ([6633770](https://github.com/khiet/grapevine/commit/6633770fd4cde198ba2ebc12fd6c7aff6a3121bc)), closes [#156](https://github.com/khiet/grapevine/issues/156)
+* show Copilot task state on the row and count a task waiting for you ([#162](https://github.com/khiet/grapevine/issues/162)) ([c1042a0](https://github.com/khiet/grapevine/commit/c1042a0a908c2009cf3fb0979f6f277444f64460)), closes [#158](https://github.com/khiet/grapevine/issues/158)
+
 ## [0.16.2](https://github.com/khiet/grapevine/compare/grapevine-v0.16.1...grapevine-v0.16.2) (2026-11-18)
 
 
