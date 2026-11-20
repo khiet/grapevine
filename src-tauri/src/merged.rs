@@ -609,14 +609,10 @@ mod tests {
         assert_eq!(kind(""), None);
     }
 
-    fn summarized(body: &str) -> Option<&'static str> {
-        summary(body).map(|text| &*text.leak())
-    }
-
     #[test]
     fn the_summary_is_the_first_paragraph_on_one_line() {
         assert_eq!(
-            summarized("Caches the rates\r\nfor   an hour.\r\n\r\nSecond paragraph."),
+            summary("Caches the rates\r\nfor   an hour.\r\n\r\nSecond paragraph.").as_deref(),
             Some("Caches the rates for an hour.")
         );
     }
@@ -626,48 +622,56 @@ mod tests {
         let body = "## Summary\n\nRegenerates the README demo gif so the Merged header \
                     action matches the app after #150.\n\n## Testing\n\nNone.";
         assert_eq!(
-            summarized(body),
+            summary(body).as_deref(),
             Some("Regenerates the README demo gif so the Merged header action matches the app after #150.")
         );
         // A heading ends the paragraph above it, blank line or not.
         assert_eq!(
-            summarized("Adds the thing.\n## Why"),
+            summary("Adds the thing.\n## Why").as_deref(),
             Some("Adds the thing.")
         );
         // "#150" opens no heading.
-        assert_eq!(summarized("#150 follow-up."), Some("#150 follow-up."));
+        assert_eq!(
+            summary("#150 follow-up.").as_deref(),
+            Some("#150 follow-up.")
+        );
     }
 
     #[test]
     fn an_html_comment_template_is_removed() {
         let body = "<!--\nDescribe your change.\nLink the issue.\n-->\n\nFixes the retry loop.";
-        assert_eq!(summarized(body), Some("Fixes the retry loop."));
+        assert_eq!(summary(body).as_deref(), Some("Fixes the retry loop."));
         assert_eq!(
-            summarized("Fixes <!-- which? --> the retry loop."),
+            summary("Fixes <!-- which? --> the retry loop.").as_deref(),
             Some("Fixes the retry loop.")
         );
-        assert_eq!(summarized("<!-- never closed\nFixes the retry loop."), None);
+        assert_eq!(
+            summary("<!-- never closed\nFixes the retry loop.").as_deref(),
+            None
+        );
     }
 
     #[test]
     fn lines_of_only_images_tags_or_rules_are_passed_over() {
         assert_eq!(
-            summarized("![before](https://img.example/a.png)\n\nMoves the button."),
+            summary("![before](https://img.example/a.png)\n\nMoves the button.").as_deref(),
             Some("Moves the button.")
         );
         assert_eq!(
-            summarized(
+            summary(
                 "[![ci](https://img.example/badge.svg)](https://ci.example/run)\nMoves the button."
-            ),
+            )
+            .as_deref(),
             Some("Moves the button.")
         );
         assert_eq!(
-            summarized("<img src=\"a.png\" width=\"200\">\n<details>\n---\n***\nMoves the button."),
+            summary("<img src=\"a.png\" width=\"200\">\n<details>\n---\n***\nMoves the button.")
+                .as_deref(),
             Some("Moves the button.")
         );
         // Tags around words leave the words, so the line is prose.
         assert_eq!(
-            summarized("<p>Moves the button.</p>"),
+            summary("<p>Moves the button.</p>").as_deref(),
             Some("<p>Moves the button.</p>")
         );
     }
@@ -675,18 +679,24 @@ mod tests {
     #[test]
     fn a_list_item_gives_its_text_without_the_marker() {
         assert_eq!(
-            summarized("- Adds the cache\n- Drops the old one"),
+            summary("- Adds the cache\n- Drops the old one").as_deref(),
             Some("Adds the cache")
         );
-        assert_eq!(summarized("* [x] Adds the cache"), Some("Adds the cache"));
-        assert_eq!(summarized("- [ ] Adds the cache"), Some("Adds the cache"));
         assert_eq!(
-            summarized("1. Adds the cache\n2. More"),
+            summary("* [x] Adds the cache").as_deref(),
+            Some("Adds the cache")
+        );
+        assert_eq!(
+            summary("- [ ] Adds the cache").as_deref(),
+            Some("Adds the cache")
+        );
+        assert_eq!(
+            summary("1. Adds the cache\n2. More").as_deref(),
             Some("Adds the cache")
         );
         // An item wrapped over two lines is still one item.
         assert_eq!(
-            summarized("- Adds the cache\n  for rates\n- More"),
+            summary("- Adds the cache\n  for rates\n- More").as_deref(),
             Some("Adds the cache for rates")
         );
     }
@@ -694,28 +704,31 @@ mod tests {
     #[test]
     fn inline_markdown_is_reduced_to_its_text() {
         assert_eq!(
-            summarized("Moves `is_bot` to [the **sync** module](https://example.com/a_(b)) and *renames* __it__."),
+            summary("Moves `is_bot` to [the **sync** module](https://example.com/a_(b)) and *renames* __it__.").as_deref(),
             Some("Moves is_bot to the sync module and renames it.")
         );
         // An image inside prose leaves its alt text.
         assert_eq!(
-            summarized("See ![the chart](https://img.example/c.png) below."),
+            summary("See ![the chart](https://img.example/c.png) below.").as_deref(),
             Some("See the chart below.")
         );
         // Not emphasis: an underscore inside a word, a star between spaces,
         // and brackets that are no link.
         assert_eq!(
-            summarized("Sets max_retries to 2 * n [sic]."),
+            summary("Sets max_retries to 2 * n [sic].").as_deref(),
             Some("Sets max_retries to 2 * n [sic].")
         );
     }
 
     #[test]
     fn a_body_with_no_prose_has_no_summary() {
-        assert_eq!(summarized(""), None);
-        assert_eq!(summarized("  \n\n"), None);
-        assert_eq!(summarized("## Summary\n\n<!-- fill me in -->\n\n---"), None);
-        assert_eq!(summarized("****"), None);
+        assert_eq!(summary("").as_deref(), None);
+        assert_eq!(summary("  \n\n").as_deref(), None);
+        assert_eq!(
+            summary("## Summary\n\n<!-- fill me in -->\n\n---").as_deref(),
+            None
+        );
+        assert_eq!(summary("****").as_deref(), None);
     }
 
     #[test]

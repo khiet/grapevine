@@ -220,6 +220,15 @@ test("a merged row's deploy status covers its hidden copy in the state slot", ()
   expect(px(end.get("min-height"))).toBe(px(ruleFor(".pr-action").get("height")));
 });
 
+// The summary is one line however long the description's first paragraph
+// is, so a row with one is always exactly one line taller than a row without.
+test("a merged row's summary is clipped to one line with an ellipsis", () => {
+  const summary = ruleFor(".pr-summary");
+  expect(summary.get("white-space")).toBe("nowrap");
+  expect(summary.get("overflow")).toBe("hidden");
+  expect(summary.get("text-overflow")).toBe("ellipsis");
+});
+
 // The bar's box spans the state on an open row. Only its controls may take
 // the pointer, or the state under it could never be hovered for its tooltip.
 test("the row's end bar lets the pointer through to the state beneath it", () => {
