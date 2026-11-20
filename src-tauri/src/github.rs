@@ -7571,4 +7571,28 @@ mod tests {
         assert_untouched(fetch_at(|| 1_060, &mut gate));
         assert_eq!(github.gets.lock().unwrap().len(), 2);
     }
+
+    /// A preview API may grow states. One this app has no words for still
+    /// ends what an earlier task said.
+    #[test]
+    fn a_task_in_a_state_this_does_not_know_says_nothing() {
+        let pr = fetch_tasked(vec![
+            task(PULL_ID, "failed", TASK_T1),
+            task(PULL_ID, "paused_for_lunch", TASK_T2),
+        ]);
+        assert_eq!(pr.agent_task, Some(AgentTask::Settled));
+        assert_eq!(pr.turn, Some(Turn::Yours));
+    }
+
+    /// The call has a budget of its own, 60 an hour, that a sync with
+    /// nothing to match should not spend.
+    #[test]
+    fn no_tasks_are_asked_for_when_no_open_pr_could_match_one() {
+        let github = Canned::new(vec![widgets_round(vec![])]);
+
+        let fetched = fetch_tasked_through(&github, &mut agent_tasks::Gate::default()).unwrap();
+
+        assert!(fetched.prs.is_empty());
+        assert!(github.gets.lock().unwrap().is_empty());
+    }
 }

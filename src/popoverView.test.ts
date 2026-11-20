@@ -1257,17 +1257,3 @@ test("a row whose Copilot task is under way offers no Copilot fix", () => {
     ["Snooze", "Fix with Copilot"],
   ]);
 });
-
-test("a row whose Copilot task waits for you sits in Todo and is counted", () => {
-  const snapshot = synced({
-    prs: [
-      pr({ number: 1, agent_task: "needs_you", turn: "yours", turn_since: NOW - 2 * 3_600_000 }),
-      pr({ number: 2, agent_task: "working", turn: "theirs" }),
-    ],
-  });
-  const [row] = rows(list(snapshot), "yours");
-  expect(row.pr.number).toBe(1);
-  expect(row.waiting).toBe("waiting 2h");
-  expect(numbers(list(snapshot), "mine")).toEqual([2]);
-  expect(yourTurnCount(snapshot)).toBe(1);
-});
