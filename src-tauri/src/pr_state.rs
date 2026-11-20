@@ -1,7 +1,7 @@
 //! The one owner of what the popover shows: the Snapshot, the read
-//! watermarks, the turn starts, the snoozes, the fix requests and the merged
-//! list. Everything
-//! outside this module changes them only through the transitions on
+//! watermarks, the turn starts, the snoozes, the fix requests, the merged
+//! list and the merge watermarks. Everything outside this module changes
+//! them only through the transitions on
 //! [`PrState`], which hold these invariants:
 //!
 //! - `snapshot.merged` mirrors the merged list. The one exception is the
@@ -18,8 +18,9 @@
 //! - `fix_requested` is set on exactly the PRs with a fix request, which
 //!   exist only for PRs in the Snapshot. Such a PR's turn is not yours unless
 //!   a review is asked of the viewer by name.
-//! - Merge detection compares a fetch against the previous Snapshot's open
-//!   PRs.
+//! - A merge watermark moves forward only in the transition that folds in
+//!   the merges read up to it, so a merge is never skipped without having
+//!   been offered to the merged list.
 //!
 //! The keys of the fix requests being posted are the one piece kept outside
 //! the transitions: they gate a write to GitHub and show nowhere.
@@ -29,10 +30,11 @@
 //! order the transitions ran: effects delivered out of order would publish or
 //! save an older state over a newer one.
 //!
-//! The only I/O here is [`PrState::detect_merged`], which is not a transition:
-//! it asks GitHub about departed PRs on the way to `sync_succeeded`. Deploy
-//! polling keeps its I/O in `sync`: it reads [`PrState::awaiting_deploy`]
-//! and reports back through [`PrState::deploys_found`].
+//! There is no I/O here. A sync reads GitHub in `sync`, starting the merged
+//! catch-up from [`PrState::merge_watermarks`], and reports back through
+//! [`PrState::sync_succeeded`]. Deploy polling reads
+//! [`PrState::awaiting_deploy`] and reports back through
+//! [`PrState::deploys_found`].
 
 use std::{
     collections::{HashMap, HashSet},
@@ -42,8 +44,8 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    fix_requests, github,
-    github::{GithubError, PullRequest, Turn},
+    fix_requests,
+    github::{PullRequest, Turn},
     merged, snooze, turns, unread,
 };
 
@@ -84,6 +86,9 @@ pub struct Effects {
     pub save_turns: Option<turns::TurnStarts>,
     /// Merged list to write to disk; `None` when there is nothing to write.
     pub save_merged: Option<merged::MergedState>,
+    /// Merge watermarks to write to disk; `None` when there is nothing to
+    /// write.
+    pub save_merge_watermarks: Option<merged::Watermarks>,
     /// Snoozes to write to disk; `None` when there is nothing to write.
     pub save_snoozes: Option<snooze::Snoozes>,
     /// Fix requests to write to disk; `None` when there is nothing to write.
@@ -95,13 +100,15 @@ pub struct Effects {
 #[derive(Default)]
 struct Inner {
     snapshot: Snapshot,
-    /// This and the four fields below are authoritative in memory. The
+    /// This and the five fields below are authoritative in memory. The
     /// copies on disk exist so unread badges, waiting times, snoozes, fix
-    /// requests and the Merged section survive restarts.
+    /// requests, the Merged section and the place its catch-up resumes from
+    /// survive restarts.
     read_state: unread::ReadState,
     /// `None` until turns have been tracked at all; see [`turns::apply`].
     turn_starts: Option<turns::TurnStarts>,
     merged: merged::MergedState,
+    merge_watermarks: merged::Watermarks,
     snoozes: snooze::Snoozes,
     fix_requests: fix_requests::FixRequests,
     /// What GitHub's state made of each handed-over PR in the Snapshot.
@@ -123,6 +130,7 @@ impl Inner {
             save_read: None,
             save_turns: None,
             save_merged: None,
+            save_merge_watermarks: None,
             save_snoozes: None,
             save_fix_requests: None,
             tray_count: None,
@@ -148,6 +156,7 @@ impl Inner {
             save_read: None,
             save_turns: None,
             save_merged: None,
+            save_merge_watermarks: None,
             save_snoozes: changed.then(|| self.snoozes.clone()),
             save_fix_requests: None,
             tray_count: changed.then(|| self.tray_count()),
@@ -173,8 +182,10 @@ impl PrState {
         turn_starts: Option<turns::TurnStarts>,
         snoozes: snooze::Snoozes,
         fix_requests: fix_requests::FixRequests,
+        merge_watermarks: merged::Watermarks,
     ) {
         let mut inner = self.inner.lock().unwrap();
+        inner.merge_watermarks = merge_watermarks;
         inner.snoozes = snoozes;
         inner.fix_requests = fix_requests;
         inner.snapshot.merged = merged.clone();
@@ -231,18 +242,21 @@ impl PrState {
         Some(inner.no_effects())
     }
 
-    /// A sync fetched `prs`, and `newly_merged` are the departed PRs GitHub
-    /// confirmed as merged. Unread counts are computed against the watermarks
+    /// A sync fetched `prs` and read `catch_up` from GitHub's merged lists.
+    /// The merges enter the merged list and the merge watermarks move past
+    /// them together. Unread counts are computed against the read watermarks
     /// as they are now, not as they were when the fetch started.
     pub fn sync_succeeded(
         &self,
         mut prs: Vec<PullRequest>,
-        newly_merged: Vec<merged::MergedPr>,
+        catch_up: merged::CatchUp,
         now_epoch_ms: u64,
     ) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
-        let merged_changed = merged::apply(&prs, newly_merged, &mut inner.merged);
+        let merged_changed = merged::apply(&prs, catch_up.merged, &mut inner.merged);
+        let watermarks_changed = inner.merge_watermarks != catch_up.watermarks;
+        inner.merge_watermarks = catch_up.watermarks;
         let fixes_changed = fix_requests::apply(
             &mut prs,
             &mut inner.fix_requests,
@@ -279,6 +293,7 @@ impl PrState {
             save_read: read_changed.then(|| inner.read_state.clone()),
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: merged_changed.then(|| inner.merged.clone()),
+            save_merge_watermarks: watermarks_changed.then(|| inner.merge_watermarks.clone()),
             save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
             save_fix_requests: fixes_changed.then(|| inner.fix_requests.clone()),
             tray_count: Some(inner.tray_count()),
@@ -299,7 +314,9 @@ impl PrState {
     /// but keep the read watermarks and merged list for when a token comes
     /// back. The turn starts are forgotten: every PR has left the Snapshot,
     /// and nothing watches the turns until syncing resumes. The snoozes and
-    /// the fix requests go with the PRs they were made for.
+    /// the fix requests go with the PRs they were made for. The merge
+    /// watermarks stay, so the merges made meanwhile are caught up once
+    /// syncing resumes.
     pub fn unconfigured(&self) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
@@ -315,6 +332,7 @@ impl PrState {
             save_read: None,
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
+            save_merge_watermarks: None,
             save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
             save_fix_requests: fixes_changed.then(|| inner.fix_requests.clone()),
             tray_count: Some(inner.tray_count()),
@@ -350,6 +368,7 @@ impl PrState {
             save_read: Some(inner.read_state.clone()),
             save_turns: None,
             save_merged: None,
+            save_merge_watermarks: None,
             save_snoozes: None,
             save_fix_requests: None,
             tray_count: Some(inner.tray_count()),
@@ -426,6 +445,7 @@ impl PrState {
             save_read: None,
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
+            save_merge_watermarks: None,
             save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
             save_fix_requests: (!expired.is_empty()).then(|| inner.fix_requests.clone()),
             tray_count: changed.then(|| inner.tray_count()),
@@ -474,6 +494,7 @@ impl PrState {
             save_read: None,
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
+            save_merge_watermarks: None,
             save_snoozes: None,
             save_fix_requests: Some(inner.fix_requests.clone()),
             tray_count: Some(inner.tray_count()),
@@ -536,6 +557,7 @@ impl PrState {
             save_read: None,
             save_turns: None,
             save_merged: Some(inner.merged.clone()),
+            save_merge_watermarks: None,
             save_snoozes: None,
             save_fix_requests: None,
             tray_count: None,
@@ -563,73 +585,35 @@ impl PrState {
         }
     }
 
-    /// The tracked PRs that left the open set since the previous Snapshot:
-    /// the candidates for having merged.
-    fn departed(&self, live_prs: &[PullRequest], repos: &[String]) -> Vec<PullRequest> {
-        departed_prs(&self.inner.lock().unwrap().snapshot.prs, live_prs, repos)
-    }
-
-    /// Finds tracked PRs that left the open set since the previous sync and
-    /// asks GitHub which of them merged. A failed status query must fail the
-    /// whole sync: the caller then reports `sync_failed`, which keeps the old
-    /// Snapshot so the departure is re-detected next round and a network blip
-    /// never silently drops a merge. Merges that happen while the app is quit
-    /// are missed entirely: the previous open set lives only in memory.
-    pub async fn detect_merged(
-        &self,
-        token: &str,
-        repos: &[String],
-        live_prs: &[PullRequest],
-    ) -> Result<Vec<merged::MergedPr>, GithubError> {
-        let departed = self.departed(live_prs, repos);
-        if departed.is_empty() {
-            return Ok(Vec::new());
+    /// `repo` left the watchlist, so its merge watermark goes: added back, it
+    /// is seeded again and shows none of the merges made in between. Without
+    /// this the watermark would last until the next successful sync, and a
+    /// repo added back sooner would be caught up as if never removed.
+    pub fn unwatch(&self, repo: &str) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        let before = inner.merge_watermarks.len();
+        inner
+            .merge_watermarks
+            .retain(|watched, _| !watched.eq_ignore_ascii_case(repo));
+        let changed = inner.merge_watermarks.len() != before;
+        Effects {
+            save_merge_watermarks: changed.then(|| inner.merge_watermarks.clone()),
+            ..inner.no_effects()
         }
-        let keys: Vec<String> = departed.iter().map(unread::key).collect();
-        let merged_at = github::fetch_merged_status(token, &keys).await?;
-        Ok(merged_entries(&departed, &merged_at))
     }
-}
 
-/// The tracked PRs in `previous` that are gone from the newly fetched
-/// `live_prs`.
-fn departed_prs(
-    previous: &[PullRequest],
-    live_prs: &[PullRequest],
-    repos: &[String],
-) -> Vec<PullRequest> {
-    let live: HashSet<String> = live_prs.iter().map(unread::key).collect();
-    previous
-        .iter()
-        .filter(|pr| !live.contains(&unread::key(pr)))
-        // A repo removed from the watchlist takes its PRs with it; those
-        // departed because of settings, not because they merged.
-        .filter(|pr| repos.iter().any(|r| r.eq_ignore_ascii_case(&pr.repo)))
-        .cloned()
-        .collect()
-}
-
-/// Turns GitHub's answer into section entries. A departed PR missing from
-/// `merged_at` was closed without merging, so it yields nothing and
-/// disappears from the popover silently.
-fn merged_entries(
-    departed: &[PullRequest],
-    merged_at: &HashMap<String, String>,
-) -> Vec<merged::MergedPr> {
-    departed
-        .iter()
-        .filter_map(|pr| {
-            merged_at
-                .get(&unread::key(pr))
-                .map(|t| merged::from_pr(pr, t.clone()))
-        })
-        .collect()
+    /// Where the next sync's merged catch-up starts from; see
+    /// [`merged::Watermarks`].
+    pub fn merge_watermarks(&self) -> merged::Watermarks {
+        self.inner.lock().unwrap().merge_watermarks.clone()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::github::{BlockedReason, MergeMethod, PrAction, Section, Turn};
+    use crate::merged::testing::watermarks;
     use serde_json::json;
 
     const T1: &str = "2026-07-02T00:00:00Z";
@@ -680,8 +664,12 @@ mod tests {
         }
     }
 
-    fn repos() -> Vec<String> {
-        vec!["acme/widgets".to_string()]
+    /// A catch-up that read `merged`.
+    fn merging(merged: Vec<merged::MergedPr>) -> merged::CatchUp {
+        merged::CatchUp {
+            merged,
+            watermarks: HashMap::new(),
+        }
     }
 
     /// State after two syncs: #7 was first seen with one comment and has
@@ -690,12 +678,12 @@ mod tests {
         let state = PrState::default();
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1]), pr("acme/widgets", 8, &[])],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
         state
@@ -739,7 +727,11 @@ mod tests {
         let state = PrState::default();
 
         state.begin_sync();
-        let succeeded = state.sync_succeeded(vec![pr("acme/widgets", 7, &[])], vec![], NOW_MS);
+        let succeeded = state.sync_succeeded(
+            vec![pr("acme/widgets", 7, &[])],
+            merged::CatchUp::default(),
+            NOW_MS,
+        );
         assert!(!succeeded.snapshot.syncing);
 
         assert!(state.begin_sync().is_some());
@@ -766,7 +758,11 @@ mod tests {
     fn a_failed_sync_keeps_the_pr_list_and_sets_only_the_error() {
         let state = PrState::default();
         let before = state
-            .sync_succeeded(vec![pr("acme/widgets", 7, &[T1])], vec![], NOW_MS)
+            .sync_succeeded(
+                vec![pr("acme/widgets", 7, &[T1])],
+                merged::CatchUp::default(),
+                NOW_MS,
+            )
             .snapshot;
 
         let effects = state.sync_failed("Could not reach GitHub.".into());
@@ -797,7 +793,7 @@ mod tests {
 
         let effects = state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS + 1,
         );
 
@@ -821,11 +817,11 @@ mod tests {
                 },
             ]
         };
-        state.sync_succeeded(prs(&[], &[]), vec![], NOW_MS);
+        state.sync_succeeded(prs(&[], &[]), merged::CatchUp::default(), NOW_MS);
 
         let effects = state.sync_succeeded(
             prs(&[T1, T2], &[T1, T2, "2026-07-04T00:00:00Z"]),
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
 
@@ -844,8 +840,8 @@ mod tests {
                 pr("acme/widgets", 8, activity),
             ]
         };
-        state.sync_succeeded(prs(&[]), vec![], NOW_MS);
-        let synced = state.sync_succeeded(prs(&[T1]), vec![], NOW_MS);
+        state.sync_succeeded(prs(&[]), merged::CatchUp::default(), NOW_MS);
+        let synced = state.sync_succeeded(prs(&[T1]), merged::CatchUp::default(), NOW_MS);
         assert_eq!(synced.tray_count, Some(1));
 
         assert_eq!(state.mark_read("acme/widgets#7").tray_count, Some(1));
@@ -857,7 +853,11 @@ mod tests {
     #[test]
     fn a_sync_reports_the_watermarks_for_saving_only_when_they_changed() {
         let state = PrState::default();
-        let first = state.sync_succeeded(vec![pr("acme/widgets", 7, &[T1])], vec![], NOW_MS);
+        let first = state.sync_succeeded(
+            vec![pr("acme/widgets", 7, &[T1])],
+            merged::CatchUp::default(),
+            NOW_MS,
+        );
         assert_eq!(
             first.save_read,
             Some(HashMap::from([(
@@ -866,7 +866,11 @@ mod tests {
             )]))
         );
 
-        let second = state.sync_succeeded(vec![pr("acme/widgets", 7, &[T1])], vec![], NOW_MS);
+        let second = state.sync_succeeded(
+            vec![pr("acme/widgets", 7, &[T1])],
+            merged::CatchUp::default(),
+            NOW_MS,
+        );
         assert_eq!(second.save_read, None);
         assert_eq!(second.save_merged, None);
     }
@@ -882,17 +886,12 @@ mod tests {
         assert_eq!(effects.save_read, None);
         assert_eq!(effects.tray_count, Some(0));
         // Had the watermark been dropped, #7 would be baselined as read here.
-        let back = state.sync_succeeded(vec![pr("acme/widgets", 7, &[T1, T2])], vec![], NOW_MS);
+        let back = state.sync_succeeded(
+            vec![pr("acme/widgets", 7, &[T1, T2])],
+            merged::CatchUp::default(),
+            NOW_MS,
+        );
         assert_eq!(unread_counts(&back.snapshot), [1]);
-    }
-
-    /// The previous open set is gone, so reconfiguring cannot report the PRs
-    /// of the old settings as departed.
-    #[test]
-    fn nothing_has_departed_after_an_unconfigured_sync() {
-        let state = state_with_one_unread();
-        state.unconfigured();
-        assert!(state.departed(&[], &repos()).is_empty());
     }
 
     #[test]
@@ -901,10 +900,10 @@ mod tests {
         let both = || vec![pr("acme/widgets", 7, &[T1]), pr("acme/widgets", 8, &[T1])];
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[]), pr("acme/widgets", 8, &[])],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
-        state.sync_succeeded(both(), vec![], NOW_MS);
+        state.sync_succeeded(both(), merged::CatchUp::default(), NOW_MS);
 
         let effects = state.mark_read("acme/widgets#7");
 
@@ -914,7 +913,7 @@ mod tests {
         // Activity that lands after the mark is unread again.
         let mut later = both();
         later[0].activity.push(T2.to_string());
-        let next = state.sync_succeeded(later, vec![], NOW_MS);
+        let next = state.sync_succeeded(later, merged::CatchUp::default(), NOW_MS);
         assert_eq!(unread_counts(&next.snapshot), [1, 1]);
     }
 
@@ -923,7 +922,7 @@ mod tests {
         let state = PrState::default();
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[]), pr("acme/widgets", 8, &[])],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
         let unread = state.sync_succeeded(
@@ -931,7 +930,7 @@ mod tests {
                 pr("acme/widgets", 7, &[T1]),
                 pr("acme/widgets", 8, &[T1, T2]),
             ],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
         assert_eq!(unread_counts(&unread.snapshot), [1, 2]);
@@ -950,10 +949,9 @@ mod tests {
         let state = state_with_one_unread();
         // The fetch starts and returns what GitHub has now.
         let fetched = vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])];
-        let newly_merged = merged_entries(&state.departed(&fetched, &repos()), &HashMap::new());
 
         state.mark_read("acme/widgets#7");
-        let effects = state.sync_succeeded(fetched, newly_merged, NOW_MS);
+        let effects = state.sync_succeeded(fetched, merged::CatchUp::default(), NOW_MS);
 
         assert_eq!(unread_counts(&effects.snapshot), [0, 0]);
     }
@@ -964,7 +962,7 @@ mod tests {
     const SYNC_4: u64 = NOW_MS + 540_000;
 
     fn sync_one(state: &PrState, pr: PullRequest, at: u64) -> Effects {
-        state.sync_succeeded(vec![pr], vec![], at)
+        state.sync_succeeded(vec![pr], merged::CatchUp::default(), at)
     }
 
     fn turn_since(effects: &Effects) -> Option<u64> {
@@ -1044,7 +1042,7 @@ mod tests {
         );
 
         // It merged, or its repo left the watchlist.
-        let gone = state.sync_succeeded(vec![], vec![], SYNC_3);
+        let gone = state.sync_succeeded(vec![], merged::CatchUp::default(), SYNC_3);
 
         assert_eq!(gone.save_turns, Some(HashMap::new()));
     }
@@ -1065,6 +1063,7 @@ mod tests {
             Some(saved_turns),
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
         );
         let effects = sync_one(&after, yours(pr("acme/widgets", 7, &[])), SYNC_3);
 
@@ -1080,6 +1079,7 @@ mod tests {
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![],
             Some(HashMap::new()),
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -1099,6 +1099,7 @@ mod tests {
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![],
             None,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -1176,7 +1177,7 @@ mod tests {
                 yours(pr("acme/widgets", 7, &[])),
                 yours(pr("acme/widgets", 8, &[])),
             ],
-            vec![],
+            merged::CatchUp::default(),
             LAST_SYNC,
         );
         assert_eq!(synced.tray_count, Some(2));
@@ -1193,7 +1194,7 @@ mod tests {
                 yours(pr("acme/widgets", 7, &[])),
                 yours(pr("acme/widgets", 8, &[])),
             ],
-            vec![],
+            merged::CatchUp::default(),
             LAST_SYNC + 1,
         );
         assert_eq!(next.tray_count, Some(1));
@@ -1328,7 +1329,14 @@ mod tests {
             .expect("snoozes need saving");
 
         let after = PrState::default();
-        after.restore(HashMap::new(), vec![], None, saved, HashMap::new());
+        after.restore(
+            HashMap::new(),
+            vec![],
+            None,
+            saved,
+            HashMap::new(),
+            HashMap::new(),
+        );
         let effects = sync_one(&after, yours(pr("acme/widgets", 7, &[])), LAST_SYNC + 1);
 
         assert!(is_snoozed(&effects));
@@ -1338,11 +1346,12 @@ mod tests {
     #[test]
     fn a_snoozed_pr_that_merges_drops_its_entry_and_appears_in_merged() {
         let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
-        let departed = state.departed(&[], &repos());
-        let merged_at = HashMap::from([(KEY.to_string(), T2.to_string())]);
 
-        let effects =
-            state.sync_succeeded(vec![], merged_entries(&departed, &merged_at), LAST_SYNC + 1);
+        let effects = state.sync_succeeded(
+            vec![],
+            merging(vec![merged::testing::entry("acme/widgets", 7, T2)]),
+            LAST_SYNC + 1,
+        );
 
         assert!(effects.snapshot.snoozed.is_empty());
         assert_eq!(effects.save_snoozes, Some(HashMap::new()));
@@ -1427,7 +1436,11 @@ mod tests {
     #[test]
     fn requesting_a_fix_on_a_your_turn_pr_lowers_the_tray_count_by_one() {
         let state = PrState::default();
-        let synced = state.sync_succeeded(vec![conflicted(7), conflicted(8)], vec![], LAST_SYNC);
+        let synced = state.sync_succeeded(
+            vec![conflicted(7), conflicted(8)],
+            merged::CatchUp::default(),
+            LAST_SYNC,
+        );
         assert_eq!(synced.tray_count, Some(2));
 
         let effects = state.fix_requested(KEY, ASKED_AT);
@@ -1443,7 +1456,7 @@ mod tests {
         // A later sync with the conflict still there keeps it out of the count.
         let next = state.sync_succeeded(
             vec![conflicted(7), conflicted(8)],
-            vec![],
+            merged::CatchUp::default(),
             LAST_SYNC + 180_000,
         );
         assert_eq!(next.tray_count, Some(1));
@@ -1465,7 +1478,14 @@ mod tests {
             .expect("fix requests need saving");
 
         let after = PrState::default();
-        after.restore(HashMap::new(), vec![], None, HashMap::new(), saved);
+        after.restore(
+            HashMap::new(),
+            vec![],
+            None,
+            HashMap::new(),
+            saved,
+            HashMap::new(),
+        );
         let effects = sync_one(&after, conflicted(7), LAST_SYNC + 180_000);
 
         assert!(is_fixing(&effects));
@@ -1608,14 +1628,15 @@ mod tests {
     #[test]
     fn a_pr_with_a_requested_fix_that_merges_or_closes_drops_its_request() {
         let merged = fix_requested_state();
-        let gone = merged::from_pr(&conflicted(7), "2026-07-16T13:00:00Z".into());
-        let effects = merged.sync_succeeded(vec![], vec![gone], LAST_SYNC + 180_000);
+        let gone = merged::testing::entry("acme/widgets", 7, "2026-07-16T13:00:00Z");
+        let effects = merged.sync_succeeded(vec![], merging(vec![gone]), LAST_SYNC + 180_000);
         assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
         assert_eq!(effects.snapshot.merged.len(), 1);
         assert_eq!(merged.next_expiry(), None);
 
         let closed = fix_requested_state();
-        let effects = closed.sync_succeeded(vec![], vec![], LAST_SYNC + 180_000);
+        let effects =
+            closed.sync_succeeded(vec![], merged::CatchUp::default(), LAST_SYNC + 180_000);
         assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
         // Reopened within the hour, it is not still waiting on Copilot.
         let reopened = sync_one(&closed, conflicted(7), LAST_SYNC + 360_000);
@@ -1712,7 +1733,7 @@ mod tests {
     fn recording_a_fix_for_a_pr_that_left_the_snapshot_does_nothing() {
         let state = PrState::default();
         sync_one(&state, conflicted(7), LAST_SYNC);
-        state.sync_succeeded(vec![], vec![], LAST_SYNC + 180_000);
+        state.sync_succeeded(vec![], merged::CatchUp::default(), LAST_SYNC + 180_000);
 
         let effects = state.fix_requested(KEY, ASKED_AT + 180_000);
 
@@ -1747,41 +1768,123 @@ mod tests {
     }
 
     #[test]
-    fn a_pr_is_open_then_departs_is_reported_merged_and_is_dismissed() {
+    fn a_merged_pr_leaves_the_open_list_enters_merged_and_is_dismissed() {
         let state = PrState::default();
         let open = state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1]), pr("acme/widgets", 8, &[])],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
         assert_eq!(open.snapshot.prs.len(), 2);
         assert!(open.snapshot.merged.is_empty());
 
-        // Next fetch: #7 is gone from the open list and GitHub says it merged.
+        // Next fetch: #7 is gone from the open list and in the merged one.
         let live = vec![pr("acme/widgets", 8, &[])];
-        let departed = state.departed(&live, &repos());
-        assert_eq!(departed.len(), 1);
-        assert_eq!(departed[0].number, 7);
-        let merged_at = HashMap::from([("acme/widgets#7".to_string(), T2.to_string())]);
-        let synced =
-            state.sync_succeeded(live.clone(), merged_entries(&departed, &merged_at), NOW_MS);
+        let synced = state.sync_succeeded(
+            live.clone(),
+            merging(vec![merged::testing::entry("acme/widgets", 7, T2)]),
+            NOW_MS,
+        );
 
         assert_eq!(synced.snapshot.prs.len(), 1);
         assert_eq!(synced.snapshot.merged.len(), 1);
         assert_eq!(synced.snapshot.merged[0].number, 7);
         assert_eq!(synced.save_merged, Some(synced.snapshot.merged.clone()));
 
-        // A later sync neither re-detects the merge nor drops the entry.
-        assert!(state.departed(&live, &repos()).is_empty());
-        let quiet = state.sync_succeeded(live.clone(), vec![], NOW_MS);
+        // A later sync with no new merge keeps the entry and saves nothing.
+        let quiet = state.sync_succeeded(live.clone(), merged::CatchUp::default(), NOW_MS);
         assert_eq!(quiet.snapshot.merged.len(), 1);
         assert_eq!(quiet.save_merged, None);
 
         let dismissed = state.dismiss_merged("acme/widgets#7");
         assert!(dismissed.snapshot.merged.is_empty());
         assert_eq!(dismissed.save_merged, Some(vec![]));
-        let after = state.sync_succeeded(live, vec![], NOW_MS);
+        let after = state.sync_succeeded(live, merged::CatchUp::default(), NOW_MS);
         assert!(after.snapshot.merged.is_empty());
+    }
+
+    /// A catch-up that read no merge and left `watermarks` behind.
+    fn read_up_to(watermarks: merged::Watermarks) -> merged::CatchUp {
+        merged::CatchUp {
+            merged: vec![],
+            watermarks,
+        }
+    }
+
+    #[test]
+    fn a_sync_reports_the_merge_watermarks_for_saving_only_when_they_changed() {
+        let state = PrState::default();
+        let seeded = watermarks(&[("acme/widgets", Some(T1))]);
+
+        let first = state.sync_succeeded(vec![], read_up_to(seeded.clone()), NOW_MS);
+        assert_eq!(first.save_merge_watermarks, Some(seeded.clone()));
+        assert_eq!(state.merge_watermarks(), seeded);
+
+        let second = state.sync_succeeded(vec![], read_up_to(seeded), NOW_MS);
+        assert_eq!(second.save_merge_watermarks, None);
+    }
+
+    #[test]
+    fn a_failed_sync_leaves_the_merge_watermarks_where_they_were() {
+        let state = PrState::default();
+        let seeded = watermarks(&[("acme/widgets", Some(T1))]);
+        state.sync_succeeded(vec![], read_up_to(seeded.clone()), NOW_MS);
+
+        let failed = state.sync_failed("Could not reach GitHub.".into());
+
+        assert_eq!(failed.save_merge_watermarks, None);
+        assert_eq!(state.merge_watermarks(), seeded);
+    }
+
+    #[test]
+    fn restored_merge_watermarks_are_where_the_first_sync_starts_from() {
+        let state = PrState::default();
+        let saved = watermarks(&[("acme/widgets", Some(T1)), ("acme/gadgets", None)]);
+        state.restore(
+            HashMap::new(),
+            vec![],
+            None,
+            HashMap::new(),
+            HashMap::new(),
+            saved.clone(),
+        );
+        assert_eq!(state.merge_watermarks(), saved);
+    }
+
+    /// The merges made while the token was missing are caught up once it is
+    /// back, so the place to resume from must survive.
+    #[test]
+    fn an_unconfigured_sync_keeps_the_merge_watermarks() {
+        let state = PrState::default();
+        let seeded = watermarks(&[("acme/widgets", Some(T1))]);
+        state.sync_succeeded(vec![], read_up_to(seeded.clone()), NOW_MS);
+
+        let effects = state.unconfigured();
+
+        assert_eq!(effects.save_merge_watermarks, None);
+        assert_eq!(state.merge_watermarks(), seeded);
+    }
+
+    /// The removal matches the repo whatever its casing, as the watchlist
+    /// does.
+    #[test]
+    fn a_repo_leaving_the_watchlist_loses_its_merge_watermark_at_once() {
+        let state = PrState::default();
+        state.sync_succeeded(
+            vec![],
+            read_up_to(watermarks(&[
+                ("acme/widgets", Some(T1)),
+                ("acme/gadgets", Some(T2)),
+            ])),
+            NOW_MS,
+        );
+
+        let effects = state.unwatch("Acme/Gadgets");
+
+        let left = watermarks(&[("acme/widgets", Some(T1))]);
+        assert_eq!(effects.save_merge_watermarks, Some(left.clone()));
+        assert_eq!(state.merge_watermarks(), left);
+        assert_eq!(state.unwatch("acme/gadgets").save_merge_watermarks, None);
     }
 
     fn deploy(state: merged::DeployState, completed_at: Option<&str>) -> merged::Deploy {
@@ -1799,15 +1902,13 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged::from_pr(
-                &pr("acme/widgets", number, &[]),
-                T2.to_string(),
-            )],
+            vec![merged::testing::entry("acme/widgets", number, T2)],
             None,
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
         );
-        state.sync_succeeded(vec![], vec![], NOW_MS);
+        state.sync_succeeded(vec![], merged::CatchUp::default(), NOW_MS);
         state
     }
 
@@ -1858,7 +1959,7 @@ mod tests {
             "acme/widgets#7".to_string(),
             failed.clone(),
         )]));
-        let effects = state.sync_succeeded(vec![], vec![], NOW_MS + 1);
+        let effects = state.sync_succeeded(vec![], merged::CatchUp::default(), NOW_MS + 1);
         assert_eq!(effects.snapshot.merged[0].deploy, Some(failed));
     }
 
@@ -1871,7 +1972,7 @@ mod tests {
             deploy(merged::DeployState::Deploying, None),
         )]));
         assert!(effects.snapshot.merged.is_empty());
-        let back = state.sync_succeeded(vec![], vec![], NOW_MS + 1);
+        let back = state.sync_succeeded(vec![], merged::CatchUp::default(), NOW_MS + 1);
         assert!(back.snapshot.merged[0].deploy.is_some());
     }
 
@@ -1881,16 +1982,17 @@ mod tests {
         state.restore(
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![
-                merged::from_pr(&pr("acme/widgets", 4, &[]), T2.to_string()),
-                merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string()),
+                merged::testing::entry("acme/widgets", 4, T2),
+                merged::testing::entry("acme/widgets", 3, T1),
             ],
             None,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
         state.sync_succeeded(
             vec![pr("acme/widgets", 7, &[T1, T2]), pr("acme/widgets", 8, &[])],
-            vec![],
+            merged::CatchUp::default(),
             NOW_MS,
         );
 
@@ -1908,8 +2010,9 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
+            vec![merged::testing::entry("acme/widgets", 3, T1)],
             None,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -1926,8 +2029,9 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
+            vec![merged::testing::entry("acme/widgets", 3, T1)],
             None,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -1943,8 +2047,9 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged::from_pr(&pr("acme/widgets", 3, &[]), T1.to_string())],
+            vec![merged::testing::entry("acme/widgets", 3, T1)],
             None,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -1953,56 +2058,8 @@ mod tests {
         assert!(hidden.snapshot.merged.is_empty());
         assert_eq!(hidden.save_merged, None);
 
-        let back = state.sync_succeeded(vec![], vec![], NOW_MS);
+        let back = state.sync_succeeded(vec![], merged::CatchUp::default(), NOW_MS);
         assert_eq!(back.snapshot.merged.len(), 1);
-    }
-
-    #[test]
-    fn a_pr_gone_from_the_open_list_has_departed() {
-        let previous = vec![pr("acme/widgets", 7, &[]), pr("acme/widgets", 8, &[])];
-        let live = vec![pr("acme/widgets", 8, &[])];
-        let departed = departed_prs(&previous, &live, &repos());
-        assert_eq!(departed.len(), 1);
-        assert_eq!(departed[0].number, 7);
-    }
-
-    #[test]
-    fn prs_still_open_have_not_departed() {
-        let prs = vec![pr("acme/widgets", 7, &[])];
-        assert!(departed_prs(&prs, &prs, &repos()).is_empty());
-    }
-
-    /// Un-watching a repo drops its PRs from the fetch, so without this guard
-    /// removing a repo would spray its open PRs into the Merged section.
-    #[test]
-    fn prs_of_an_unwatched_repo_never_count_as_departed() {
-        let previous = vec![pr("acme/widgets", 7, &[]), pr("acme/gadgets", 1, &[])];
-        let departed = departed_prs(&previous, &[], &repos());
-        assert_eq!(departed.len(), 1);
-        assert_eq!(departed[0].repo, "acme/widgets");
-    }
-
-    /// The watchlist stores GitHub's canonical casing while a PR's repo name
-    /// comes back from the API; a case mismatch must not read as un-watched.
-    #[test]
-    fn the_watchlist_check_ignores_repo_name_casing() {
-        let previous = vec![pr("acme/widgets", 7, &[])];
-        let repos = vec!["Acme/Widgets".to_string()];
-        assert_eq!(departed_prs(&previous, &[], &repos).len(), 1);
-    }
-
-    #[test]
-    fn departed_prs_that_merged_become_section_entries() {
-        let departed = vec![pr("acme/widgets", 7, &[])];
-        let merged_at = HashMap::from([(
-            "acme/widgets#7".to_string(),
-            "2026-07-12T10:00:00Z".to_string(),
-        )]);
-        let entries = merged_entries(&departed, &merged_at);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].number, 7);
-        assert_eq!(entries[0].title, "Fix the thing");
-        assert_eq!(entries[0].merged_at, "2026-07-12T10:00:00Z");
     }
 
     /// Until the next sync says what the PR offers now, a row that was just
@@ -2015,7 +2072,11 @@ mod tests {
             ..pr("acme/widgets", number, &[])
         };
         let state = PrState::default();
-        state.sync_succeeded(vec![offering(7), offering(8)], vec![], NOW_MS);
+        state.sync_succeeded(
+            vec![offering(7), offering(8)],
+            merged::CatchUp::default(),
+            NOW_MS,
+        );
 
         let effects = state.acted("acme/widgets#7");
 
@@ -2026,7 +2087,11 @@ mod tests {
         );
 
         state.begin_sync();
-        let synced = state.sync_succeeded(vec![offering(7), offering(8)], vec![], NOW_MS);
+        let synced = state.sync_succeeded(
+            vec![offering(7), offering(8)],
+            merged::CatchUp::default(),
+            NOW_MS,
+        );
         assert_eq!(
             synced.snapshot.prs[0].actions,
             vec![PrAction::Merge, PrAction::EnableAutoMerge]
@@ -2043,15 +2108,15 @@ mod tests {
             ..pr("acme/widgets", 7, &[])
         };
         let state = PrState::default();
-        state.sync_succeeded(vec![offering()], vec![], NOW_MS);
+        state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
         state.begin_sync();
         state.acted("acme/widgets#7");
 
-        let stale = state.sync_succeeded(vec![offering()], vec![], NOW_MS);
+        let stale = state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
         assert_eq!(stale.snapshot.prs[0].actions, vec![]);
 
         state.begin_sync();
-        let fresh = state.sync_succeeded(vec![offering()], vec![], NOW_MS);
+        let fresh = state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
         assert_eq!(fresh.snapshot.prs[0].actions, vec![PrAction::Merge]);
     }
 
@@ -2060,10 +2125,10 @@ mod tests {
     #[test]
     fn a_pr_that_left_the_list_cannot_be_found_to_act_on() {
         let state = PrState::default();
-        state.sync_succeeded(vec![at_head("abc123")], vec![], NOW_MS);
+        state.sync_succeeded(vec![at_head("abc123")], merged::CatchUp::default(), NOW_MS);
         assert_eq!(state.to_act_on(KEY, "abc123").unwrap().number, 7);
 
-        state.sync_succeeded(vec![], vec![], NOW_MS);
+        state.sync_succeeded(vec![], merged::CatchUp::default(), NOW_MS);
 
         assert_eq!(
             state.to_act_on(KEY, "abc123").unwrap_err(),
@@ -2083,8 +2148,8 @@ mod tests {
     #[test]
     fn a_pr_that_moved_past_the_confirmed_row_cannot_be_acted_on() {
         let state = PrState::default();
-        state.sync_succeeded(vec![at_head("abc123")], vec![], NOW_MS);
-        state.sync_succeeded(vec![at_head("def456")], vec![], NOW_MS);
+        state.sync_succeeded(vec![at_head("abc123")], merged::CatchUp::default(), NOW_MS);
+        state.sync_succeeded(vec![at_head("def456")], merged::CatchUp::default(), NOW_MS);
 
         assert_eq!(
             state.to_act_on(KEY, "abc123").unwrap_err(),
@@ -2096,20 +2161,13 @@ mod tests {
     #[test]
     fn a_snoozed_pr_cannot_be_acted_on() {
         let state = PrState::default();
-        state.sync_succeeded(vec![at_head("abc123")], vec![], NOW_MS);
+        state.sync_succeeded(vec![at_head("abc123")], merged::CatchUp::default(), NOW_MS);
         state.snooze(KEY, NOW_MS + 60_000);
 
         assert_eq!(
             state.to_act_on(KEY, "abc123").unwrap_err(),
             "That PR is snoozed. Wake it first."
         );
-    }
-
-    /// A PR closed without merging is absent from GitHub's answer.
-    #[test]
-    fn departed_prs_that_did_not_merge_yield_no_entry() {
-        let departed = vec![pr("acme/widgets", 7, &[])];
-        assert!(merged_entries(&departed, &HashMap::new()).is_empty());
     }
 
     /// The `Snapshot` interface in `src/PrList.tsx` consumes this JSON

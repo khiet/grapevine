@@ -76,6 +76,7 @@ pub fn start(app: &AppHandle) {
             store.load(&store::TURN_STARTS).unwrap_or_default(),
             store.load(&store::SNOOZES).unwrap_or_default(),
             store.load(&store::FIX_REQUESTS).unwrap_or_default(),
+            store.load(&store::MERGE_WATERMARKS).unwrap_or_default(),
         );
     }
     tauri::async_runtime::spawn(async move {
@@ -295,6 +296,13 @@ fn try_transition(
     let saved_merged = effects
         .save_merged
         .map_or(Ok(()), |merged| store.save(&store::MERGED, &merged));
+    // Not saved over a merged list that failed to save: after a restart the
+    // watermarks would sit past merges the list on disk never got. Left
+    // behind, they have the next launch read those merges again.
+    let saved_watermarks = match (&saved_merged, effects.save_merge_watermarks) {
+        (Ok(()), Some(watermarks)) => store.save(&store::MERGE_WATERMARKS, &watermarks),
+        _ => Ok(()),
+    };
     if effects.save_snoozes.is_some() || effects.save_fix_requests.is_some() {
         state.expiries_changed.notify_one();
     }
@@ -315,6 +323,7 @@ fn try_transition(
     saved_read
         .and(saved_turns)
         .and(saved_merged)
+        .and(saved_watermarks)
         .and(saved_snoozes)
         .and(saved_fix_requests)
         .and(emitted)
@@ -345,11 +354,11 @@ async fn sync_once(app: &AppHandle) -> Outcome {
     let (delivered, outcome) = match result {
         Ok(Some(FetchResult {
             prs,
-            newly_merged,
+            catch_up,
             rate_limit,
         })) => (
             transition(app, |state| {
-                state.sync_succeeded(prs, newly_merged, now_epoch_ms())
+                state.sync_succeeded(prs, catch_up, now_epoch_ms())
             }),
             Outcome::Synced { rate_limit },
         ),
@@ -415,11 +424,11 @@ async fn poll_deploys(app: &AppHandle) -> Result<(), GithubError> {
     Ok(())
 }
 
-/// One sync's fetch: the open PRs, any tracked PRs that turned out to have
-/// merged since the previous sync, and the budget GitHub reported.
+/// One sync's fetch: the open PRs, what the watched repos merged since the
+/// previous sync, and the budget GitHub reported last.
 struct FetchResult {
     prs: Vec<PullRequest>,
-    newly_merged: Vec<merged::MergedPr>,
+    catch_up: merged::CatchUp,
     rate_limit: Option<RateLimit>,
 }
 
@@ -434,16 +443,17 @@ async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
     if repos.is_empty() {
         return Ok(None);
     }
+    // Read before the open PRs: a PR merging between the two reads is then
+    // missing from both until the next sync, where the other order would
+    // show it open and merged at once. A failure here fails the whole sync,
+    // so the watermarks stay and the next sync reads the same merges again.
+    let watermarks = app.state::<SyncState>().pr_state.merge_watermarks();
+    let caught_up = github::fetch_merged_since(&token, &repos, &watermarks).await?;
     let fetched = github::fetch_open_prs(&token, &repos).await?;
-    let newly_merged = app
-        .state::<SyncState>()
-        .pr_state
-        .detect_merged(&token, &repos, &fetched.prs)
-        .await?;
     Ok(Some(FetchResult {
         prs: fetched.prs,
-        newly_merged,
-        rate_limit: fetched.rate_limit,
+        catch_up: caught_up.catch_up,
+        rate_limit: fetched.rate_limit.or(caught_up.rate_limit),
     }))
 }
 

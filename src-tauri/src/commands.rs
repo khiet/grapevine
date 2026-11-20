@@ -215,6 +215,10 @@ pub async fn remove_repo(app: AppHandle, name: String) -> Result<Vec<String>, St
         settings.repos.retain(|r| !r.eq_ignore_ascii_case(&name));
         Ok(())
     })?;
+    // The settings are saved, so a failure here must not fail the removal.
+    if let Err(e) = sync::transition(&app, |prs| prs.unwatch(&name)) {
+        eprintln!("cannot deliver the removal of {name}: {e}");
+    }
     request_sync(&app);
     Ok(updated.repos)
 }

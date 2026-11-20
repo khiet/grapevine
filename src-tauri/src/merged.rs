@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{github, github::PullRequest, unread};
 
-/// A PR that merged while tracked. Shown in the popover's Merged section
+/// A PR that merged in a watched repo. Shown in the popover's Merged section
 /// until the user dismisses it; persisted so the section survives restarts.
 ///
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
@@ -71,24 +71,24 @@ pub fn key(entry: &MergedPr) -> String {
     format!("{}#{}", entry.repo, entry.number)
 }
 
-/// Captures the display data of a departed PR at the moment the merge is
-/// detected — merged PRs are gone from later fetches, so this snapshot is
-/// all the section will ever have.
-pub fn from_pr(pr: &PullRequest, merged_at: String) -> MergedPr {
-    MergedPr {
-        number: pr.number,
-        title: pr.title.clone(),
-        url: pr.url.clone(),
-        repo: pr.repo.clone(),
-        author: pr.author.clone(),
-        avatar_url: pr.avatar_url.clone(),
-        owner_avatar_url: pr.owner_avatar_url.clone(),
-        merged_at,
-        deploy: None,
-    }
+/// Per watched repo, the newest `mergedAt` already taken from GitHub's list
+/// of that repo's merged PRs, so GitHub's clock and never the local one. A
+/// repo is here from the first time its list is read; `None` is a repo read
+/// with no merge in it. Persisted, so merges made while the app was quit are
+/// caught up at the next sync.
+pub type Watermarks = HashMap<String, Option<String>>;
+
+/// What one sync read from GitHub's merged lists.
+#[derive(Debug, Default)]
+pub struct CatchUp {
+    /// The PRs merged since the watermarks the read started from.
+    pub merged: Vec<MergedPr>,
+    /// The watermarks after the read. They replace the old ones, so a repo
+    /// no longer watched has none.
+    pub watermarks: Watermarks,
 }
 
-/// Folds one sync's merge detections into the section: a reopened PR leaves
+/// Folds the merges one sync read into the section: a reopened PR leaves
 /// (it belongs to the open list, and re-enters here if it merges again), and
 /// each newly merged PR replaces any older entry sharing its key. Returns true
 /// when the state changed and needs persisting.
@@ -149,8 +149,36 @@ pub fn apply_deploys(found: &HashMap<String, Deploy>, state: &mut MergedState) -
 }
 
 #[cfg(test)]
-mod tests {
+pub mod testing {
     use super::*;
+
+    /// A Merged section entry for `repo#number`.
+    pub fn entry(repo: &str, number: u64, merged_at: &str) -> MergedPr {
+        MergedPr {
+            number,
+            title: "Fix the thing".into(),
+            url: format!("https://github.com/{repo}/pull/{number}"),
+            repo: repo.into(),
+            author: "someone".into(),
+            avatar_url: "https://avatars.example/someone".into(),
+            owner_avatar_url: "https://avatars.example/acme".into(),
+            merged_at: merged_at.into(),
+            deploy: None,
+        }
+    }
+
+    /// Watermarks from `(repo, newest merge taken)` pairs.
+    pub fn watermarks(entries: &[(&str, Option<&str>)]) -> Watermarks {
+        entries
+            .iter()
+            .map(|(repo, at)| (repo.to_string(), at.map(String::from)))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{testing::entry, *};
     use crate::github::Section;
 
     fn pr(repo: &str, number: u64) -> PullRequest {
@@ -194,10 +222,6 @@ mod tests {
             activity: vec![],
             bot_activity: vec![],
         }
-    }
-
-    fn entry(repo: &str, number: u64, merged_at: &str) -> MergedPr {
-        from_pr(&pr(repo, number), merged_at.into())
     }
 
     fn deploy(state: DeployState) -> Deploy {

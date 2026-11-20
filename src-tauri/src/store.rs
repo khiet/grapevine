@@ -3,8 +3,12 @@ use std::{fs, marker::PhantomData, path::PathBuf};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    fix_requests::FixRequests, merged::MergedState, settings::Settings, snooze::Snoozes,
-    turns::TurnStarts, unread::ReadState,
+    fix_requests::FixRequests,
+    merged::{MergedState, Watermarks},
+    settings::Settings,
+    snooze::Snoozes,
+    turns::TurnStarts,
+    unread::ReadState,
 };
 
 /// What a load does when the file exists but cannot be read or parsed. A
@@ -61,6 +65,16 @@ pub const TURN_STARTS: Document<Option<TurnStarts>> = Document {
 pub const MERGED: Document<MergedState> = Document {
     file: "merged.json",
     label: "merged state",
+    on_corrupt: OnCorrupt::StartEmpty,
+    holds: PhantomData,
+};
+
+/// A corrupt file starts over empty: every repo is seeded again at its
+/// newest merge, so the merges since the last sync are lost and none shows
+/// twice.
+pub const MERGE_WATERMARKS: Document<Watermarks> = Document {
+    file: "merge_watermarks.json",
+    label: "merge watermarks",
     on_corrupt: OnCorrupt::StartEmpty,
     holds: PhantomData,
 };
@@ -238,6 +252,26 @@ mod tests {
         let state = vec![merged_entry()];
         store.save(&MERGED, &state).unwrap();
         assert_eq!(store.load(&MERGED).unwrap(), state);
+    }
+
+    /// A repo read with no merge in it is stored, as null: dropping it would
+    /// seed the repo again and hide its first merge.
+    #[test]
+    fn the_merge_watermarks_round_trip_seen_and_unseen_merges() {
+        let (_dir, store) = temp_store();
+        let watermarks = Watermarks::from([
+            ("acme/widgets".into(), Some("2026-07-11T10:00:00Z".into())),
+            ("acme/gadgets".into(), None),
+        ]);
+        store.save(&MERGE_WATERMARKS, &watermarks).unwrap();
+        assert_eq!(store.load(&MERGE_WATERMARKS).unwrap(), watermarks);
+    }
+
+    #[test]
+    fn a_corrupt_merge_watermarks_file_loads_as_empty() {
+        let (dir, store) = temp_store();
+        fs::write(dir.path().join("merge_watermarks.json"), "{not json").unwrap();
+        assert!(store.load(&MERGE_WATERMARKS).unwrap().is_empty());
     }
 
     #[test]

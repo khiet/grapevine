@@ -44,7 +44,8 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   looked. Bots never badge.
 - **Three sections.** Mine (you opened it), Participated (you are involved),
   and All (everything else, quiet and browsable). Merged PRs stay in their own
-  section until you dismiss them.
+  section until you dismiss them. Merges made while Grapevine was not running
+  are caught up at the next sync, back to 7 days.
 - **Filter and snooze.** Type to filter across every repo. Snooze a PR until
   it changes.
 - **Fix a conflict with Copilot.** On one of your own PRs with a merge
