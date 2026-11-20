@@ -83,7 +83,8 @@ pub type Watermarks = HashMap<String, Option<String>>;
 pub struct CatchUp {
     /// The PRs merged since the watermarks the read started from.
     pub merged: Vec<MergedPr>,
-    /// The watermarks after the read, for exactly the repos watched then.
+    /// The watermarks after the read. They replace the old ones, so a repo
+    /// no longer watched has none.
     pub watermarks: Watermarks,
 }
 
@@ -148,8 +149,36 @@ pub fn apply_deploys(found: &HashMap<String, Deploy>, state: &mut MergedState) -
 }
 
 #[cfg(test)]
-mod tests {
+pub mod testing {
     use super::*;
+
+    /// A Merged section entry for `repo#number`.
+    pub fn entry(repo: &str, number: u64, merged_at: &str) -> MergedPr {
+        MergedPr {
+            number,
+            title: "Fix the thing".into(),
+            url: format!("https://github.com/{repo}/pull/{number}"),
+            repo: repo.into(),
+            author: "someone".into(),
+            avatar_url: "https://avatars.example/someone".into(),
+            owner_avatar_url: "https://avatars.example/acme".into(),
+            merged_at: merged_at.into(),
+            deploy: None,
+        }
+    }
+
+    /// Watermarks from `(repo, newest merge taken)` pairs.
+    pub fn watermarks(entries: &[(&str, Option<&str>)]) -> Watermarks {
+        entries
+            .iter()
+            .map(|(repo, at)| (repo.to_string(), at.map(String::from)))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{testing::entry, *};
     use crate::github::Section;
 
     fn pr(repo: &str, number: u64) -> PullRequest {
@@ -192,20 +221,6 @@ mod tests {
             bot_unread_count: 0,
             activity: vec![],
             bot_activity: vec![],
-        }
-    }
-
-    fn entry(repo: &str, number: u64, merged_at: &str) -> MergedPr {
-        MergedPr {
-            number,
-            title: "Fix the thing".into(),
-            url: format!("https://github.com/{repo}/pull/{number}"),
-            repo: repo.into(),
-            author: "someone".into(),
-            avatar_url: "https://avatars.example/someone".into(),
-            owner_avatar_url: "https://avatars.example/acme".into(),
-            merged_at: merged_at.into(),
-            deploy: None,
         }
     }
 

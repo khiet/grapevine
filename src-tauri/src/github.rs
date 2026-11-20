@@ -845,9 +845,17 @@ impl<T: Transport> Client<'_, T> {
             }
             let mut still_pending = Vec::new();
             for (alias, &scan) in pending.iter().enumerate() {
-                // A repo GitHub could not resolve is skipped, as the open-PR
-                // fetch skips it.
                 let Some(repo) = data.get(format!("m{alias}")).filter(|v| !v.is_null()) else {
+                    // Losing a repo partway through its pages would move its
+                    // watermark past merges never read.
+                    if scans[scan].answered {
+                        return Err(GithubError::Other(format!(
+                            "GitHub stopped answering for {} partway through its merged pull requests.",
+                            scans[scan].repo
+                        )));
+                    }
+                    // A repo GitHub cannot resolve at all is skipped, as the
+                    // open-PR fetch skips it.
                     continue;
                 };
                 if scans[scan].take_page(repo) {
@@ -860,7 +868,7 @@ impl<T: Transport> Client<'_, T> {
         let mut catch_up = CatchUp::default();
         for scan in scans {
             let watermark = if scan.answered {
-                Some(scan.newest)
+                Some(scan.newest.clone())
             } else {
                 // Not answered, so not seeded either: it keeps what it had.
                 watermarks.get(scan.repo).cloned()
@@ -868,7 +876,7 @@ impl<T: Transport> Client<'_, T> {
             if let Some(watermark) = watermark {
                 catch_up.watermarks.insert(scan.repo.to_string(), watermark);
             }
-            catch_up.merged.extend(scan.entries);
+            catch_up.merged.extend(scan.newest_entries());
         }
         Ok(FetchedMerged {
             catch_up,
@@ -1150,13 +1158,15 @@ pub struct FetchedMerged {
 /// adds no entries. All repos share one query as aliased `repository` fields;
 /// only a repo with more to read needs a follow-up.
 ///
-/// The returned watermarks are the complete new set for `repos`, and the
-/// caller must record them only together with the entries: recording them
-/// alone would drop those merges for good. An `Err` returns neither, so the
-/// next sync reads the same range again.
+/// The returned watermarks replace the old ones: a repo outside `repos` has
+/// none, and a repo GitHub could not resolve keeps the one it had. The caller
+/// must record them only together with the entries: recording them alone
+/// would drop those merges for good. An `Err` returns neither, so the next
+/// sync reads the same range again.
 ///
-/// At most [`CATCH_UP_CAP`] entries come back per repo. Merges cut off by the
-/// cap or the seven days are dropped: the watermark moves past them.
+/// At most [`CATCH_UP_CAP`] entries come back per repo, the most recently
+/// merged ones. Merges cut off by the cap or the seven days are dropped: the
+/// watermark moves past them.
 pub async fn fetch_merged_since(
     token: &str,
     repos: &[String],
@@ -1175,9 +1185,9 @@ struct MergeScan<'a> {
     owner: &'a str,
     name: &'a str,
     cursor: Option<String>,
-    /// `None` while seeding: the read then runs until the newest merge is
-    /// certain, and takes no entries.
-    floor_epoch_secs: Option<u64>,
+    /// Merges later than this become entries. `None` while seeding: the read
+    /// then runs until the newest merge is certain, and takes no entries.
+    since_epoch_secs: Option<u64>,
     /// The newest `mergedAt` seen, starting from the watermark.
     newest: Option<String>,
     entries: Vec<MergedPr>,
@@ -1186,9 +1196,9 @@ struct MergeScan<'a> {
 }
 
 impl<'a> MergeScan<'a> {
-    /// `watermark` is the repo's entry in the watermarks: `None` for a repo
-    /// never read before. `None` for a watchlist entry that is not
-    /// `owner/name`.
+    /// `watermark` is the repo's entry in the watermarks, absent for a repo
+    /// never read before, which is then seeded. Returns `None` for a
+    /// watchlist entry that is not `owner/name`.
     fn new(
         repo: &'a str,
         watermark: Option<&Option<String>>,
@@ -1196,7 +1206,7 @@ impl<'a> MergeScan<'a> {
     ) -> Option<Self> {
         let (owner, name) = repo.split_once('/')?;
         let newest = watermark.cloned().flatten();
-        let floor_epoch_secs = watermark.map(|_| {
+        let since_epoch_secs = watermark.map(|_| {
             let seen = newest.as_deref().and_then(rfc3339_utc_to_epoch_secs);
             seen.unwrap_or(0).max(window_start_epoch_secs)
         });
@@ -1205,7 +1215,7 @@ impl<'a> MergeScan<'a> {
             owner,
             name,
             cursor: None,
-            floor_epoch_secs,
+            since_epoch_secs,
             newest,
             entries: Vec::new(),
             answered: false,
@@ -1251,15 +1261,10 @@ impl<'a> MergeScan<'a> {
                 .and_then(rfc3339_utc_to_epoch_secs)
         };
         for node in list(repo, "/pullRequests/nodes") {
-            // A PR is never updated before it merges, so once the updates
-            // reach the floor no later node can have merged after it. While
-            // seeding the floor is the newest merge seen so far, and the
-            // read ends once nothing later could still be newer.
-            let floor = self.floor_epoch_secs.unwrap_or_else(|| {
-                let newest = self.newest.as_deref();
-                newest.and_then(rfc3339_utc_to_epoch_secs).unwrap_or(0)
-            });
-            if epoch_secs(node, "updatedAt").unwrap_or(0) <= floor {
+            // Checked before the node, which may itself be at the floor, and
+            // again after it, since reading it may have raised the floor.
+            let updated = epoch_secs(node, "updatedAt").unwrap_or(0);
+            if updated <= self.floor() {
                 return false;
             }
             let Some(merged_at) = node.get("mergedAt").and_then(Value::as_str) else {
@@ -1272,12 +1277,15 @@ impl<'a> MergeScan<'a> {
             if self.newest.as_deref() < Some(merged_at) {
                 self.newest = Some(merged_at.to_string());
             }
-            if self.floor_epoch_secs.is_some() && merged_epoch_secs > floor {
+            if self
+                .since_epoch_secs
+                .is_some_and(|since| merged_epoch_secs > since)
+            {
                 self.entries
                     .push(merged_entry(node, repo_name, owner_avatar_url, merged_at));
-                if self.entries.len() == CATCH_UP_CAP {
-                    return false;
-                }
+            }
+            if updated <= self.floor() {
+                return false;
             }
         }
         let has_next = repo.pointer("/pullRequests/pageInfo/hasNextPage") == Some(&json!(true));
@@ -1287,6 +1295,43 @@ impl<'a> MergeScan<'a> {
             .filter(|_| has_next)
             .map(String::from);
         self.cursor.is_some()
+    }
+}
+
+impl MergeScan<'_> {
+    /// The update time at or below which no node can add anything. The list
+    /// runs from the latest update down, and a PR's `updatedAt` is never
+    /// earlier than its `mergedAt`, so no node from there on merged later
+    /// than this.
+    ///
+    /// While seeding that is the newest merge seen. Otherwise it is where
+    /// entries start, until the cap is full: from then on only a merge newer
+    /// than the oldest entry kept could still displace one.
+    fn floor(&mut self) -> u64 {
+        let Some(since) = self.since_epoch_secs else {
+            let newest = self.newest.as_deref();
+            return newest.and_then(rfc3339_utc_to_epoch_secs).unwrap_or(0);
+        };
+        if self.entries.len() < CATCH_UP_CAP {
+            return since;
+        }
+        self.keep_newest();
+        let oldest_kept = self.entries.last().map(|entry| entry.merged_at.as_str());
+        oldest_kept
+            .and_then(rfc3339_utc_to_epoch_secs)
+            .map_or(since, |oldest| oldest.max(since))
+    }
+
+    /// Cuts the entries down to the cap, dropping the earliest merges.
+    fn keep_newest(&mut self) {
+        // ISO-8601 UTC timestamps sort lexically.
+        self.entries.sort_by(|a, b| b.merged_at.cmp(&a.merged_at));
+        self.entries.truncate(CATCH_UP_CAP);
+    }
+
+    fn newest_entries(mut self) -> Vec<MergedPr> {
+        self.keep_newest();
+        self.entries
     }
 }
 
@@ -2280,6 +2325,7 @@ fn section_for(node: &Value, viewer: &str) -> Section {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::merged::testing::watermarks;
     use crate::pr_state::{Effects, PrState};
 
     /// `node` with the top-level fields of `overrides` laid over it.
@@ -4314,7 +4360,7 @@ mod tests {
                 "GitHub returned too many pages of pull requests.".into()
             ))
         );
-        assert_eq!(github.request_count(), 20);
+        assert_eq!(github.request_count(), CATCH_UP_MAX_ROUNDS);
     }
 
     /// GitHub answers a deleted or newly private repository with a null alias
@@ -6203,13 +6249,6 @@ mod tests {
         merged_round(vec![merged_repo("acme/widgets", nodes, None)])
     }
 
-    fn watermarks(entries: &[(&str, Option<&str>)]) -> Watermarks {
-        entries
-            .iter()
-            .map(|(repo, at)| (repo.to_string(), at.map(String::from)))
-            .collect()
-    }
-
     fn catch_up(
         github: &Canned,
         repos: &[&str],
@@ -6278,7 +6317,7 @@ mod tests {
     }
 
     #[test]
-    fn a_repo_first_seen_is_seeded_at_its_newest_merge_and_adds_no_rows() {
+    fn a_repo_first_seen_is_seeded_at_its_newest_merge_and_adds_no_entries() {
         let state = PrState::default();
 
         let effects = sync_merged(&state, &["acme/widgets"], with_9_merged());
@@ -6553,9 +6592,9 @@ mod tests {
         assert!(matches!(result, Err(GithubError::RateLimited { .. })));
     }
 
-    /// A PR is never updated before it merges, so the first node updated at
-    /// or before the watermark ends the read: #8 is the watermark's own PR,
-    /// and the page after it is never asked for.
+    /// A PR's last update is never earlier than its merge, so the first node
+    /// updated at or before the watermark ends the read: #8 is the
+    /// watermark's own PR, and the page after it is never asked for.
     #[test]
     fn paging_stops_at_the_first_pr_updated_at_or_before_the_watermark() {
         let github = Canned::new(vec![merged_round(vec![merged_repo(
@@ -6641,7 +6680,7 @@ mod tests {
                 json!({ "updatedAt": "2026-07-12T12:00:00Z" }),
             )
         };
-        let endless = (0..20)
+        let endless = (0..CATCH_UP_MAX_ROUNDS as u64)
             .map(|n| {
                 merged_round(vec![merged_repo(
                     "acme/widgets",
@@ -6722,6 +6761,56 @@ mod tests {
         let following = sync_merged(&state, &["acme/widgets"], pages(1));
         assert_eq!(numbers(&following.snapshot.merged), expected);
         assert_eq!(following.save_merged, None);
+    }
+
+    /// The list is ordered by update, so the first hundred read are not
+    /// always the hundred newest merges: #1 merged first of all and was
+    /// commented on last.
+    #[test]
+    fn the_cap_keeps_the_newest_merges_not_the_most_recently_updated() {
+        let mut list = vec![with(
+            merged_node(1, "2026-07-12T00:01:00Z"),
+            json!({ "updatedAt": "2026-07-12T23:00:00Z" }),
+        )];
+        list.extend(a_busy_day().into_iter().skip(29));
+        assert_eq!(list.len(), 102);
+        let pages = list
+            .chunks(MERGED_PAGE)
+            .map(|page| {
+                merged_round(vec![merged_repo(
+                    "acme/widgets",
+                    page.to_vec(),
+                    Some("next"),
+                )])
+            })
+            .collect();
+        let github = Canned::new(pages);
+        let from = watermarks(&[("acme/widgets", Some("2026-07-11T00:00:00Z"))]);
+
+        let fetched = catch_up(&github, &["acme/widgets"], &from).unwrap();
+
+        let mut kept = numbers(&fetched.catch_up.merged);
+        kept.sort();
+        assert_eq!(kept, (2..=101).collect::<Vec<u64>>());
+    }
+
+    /// The first page moved the read past #9. Dropping the repo there would
+    /// put the watermark at #9 with the page after it never read.
+    #[test]
+    fn a_repo_that_stops_answering_partway_through_its_pages_fails_the_catch_up() {
+        let github = Canned::new(vec![
+            merged_round(vec![merged_repo(
+                "acme/widgets",
+                vec![merged_node(9, "2026-07-12T10:00:00Z")],
+                Some("c1"),
+            )]),
+            merged_round(vec![Value::Null]),
+        ]);
+        let from = watermarks(&[("acme/widgets", Some("2026-07-12T08:00:00Z"))]);
+
+        let result = catch_up(&github, &["acme/widgets"], &from);
+
+        assert!(matches!(result, Err(GithubError::Other(_))));
     }
 
     #[test]

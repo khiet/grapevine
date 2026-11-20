@@ -18,8 +18,8 @@
 //! - `fix_requested` is set on exactly the PRs with a fix request, which
 //!   exist only for PRs in the Snapshot. Such a PR's turn is not yours unless
 //!   a review is asked of the viewer by name.
-//! - The merge watermarks move only in the transition that folds in the
-//!   merges read up to them, so a merge is never skipped without having
+//! - A merge watermark moves forward only in the transition that folds in
+//!   the merges read up to it, so a merge is never skipped without having
 //!   been offered to the merged list.
 //!
 //! The keys of the fix requests being posted are the one piece kept outside
@@ -74,14 +74,6 @@ pub struct Snapshot {
     /// A sync is under way or has been asked for; see [`PrState::begin_sync`].
     /// The popover holds its Sync now button busy while this is set.
     pub syncing: bool,
-}
-
-/// What keeps the app from syncing; see [`PrState::unconfigured`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Missing {
-    Token,
-    /// The watchlist is empty.
-    Repos,
 }
 
 /// What the caller must do after a transition. `snapshot` is always published
@@ -251,8 +243,8 @@ impl PrState {
     }
 
     /// A sync fetched `prs` and read `catch_up` from GitHub's merged lists.
-    /// The merges enter the merged list and the watermarks move past them
-    /// together, here and nowhere else. Unread counts are computed against the watermarks
+    /// The merges enter the merged list and the merge watermarks move past
+    /// them together, here and nowhere else. Unread counts are computed against the watermarks
     /// as they are now, not as they were when the fetch started.
     pub fn sync_succeeded(
         &self,
@@ -323,9 +315,9 @@ impl PrState {
     /// back. The turn starts are forgotten: every PR has left the Snapshot,
     /// and nothing watches the turns until syncing resumes. The snoozes and
     /// the fix requests go with the PRs they were made for. The merge
-    /// watermarks go with the repos: a missing token keeps them, so the
-    /// merges made meanwhile are caught up once it is back.
-    pub fn unconfigured(&self, missing: Missing) -> Effects {
+    /// watermarks stay, so the merges made meanwhile are caught up once
+    /// syncing resumes.
+    pub fn unconfigured(&self) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
         inner.snapshot = Snapshot::default();
@@ -335,16 +327,12 @@ impl PrState {
         let fixes_changed = !inner.fix_requests.is_empty();
         inner.fix_requests.clear();
         inner.displaced_turns.clear();
-        let watermarks_changed = missing == Missing::Repos && !inner.merge_watermarks.is_empty();
-        if watermarks_changed {
-            inner.merge_watermarks.clear();
-        }
         Effects {
             snapshot: inner.snapshot.clone(),
             save_read: None,
             save_turns: turns_changed.then(|| inner.turn_starts.clone()).flatten(),
             save_merged: None,
-            save_merge_watermarks: watermarks_changed.then(|| inner.merge_watermarks.clone()),
+            save_merge_watermarks: None,
             save_snoozes: snoozes_changed.then(|| inner.snoozes.clone()),
             save_fix_requests: fixes_changed.then(|| inner.fix_requests.clone()),
             tray_count: Some(inner.tray_count()),
@@ -597,6 +585,23 @@ impl PrState {
         }
     }
 
+    /// `repo` left the watchlist, so its merge watermark goes: added back, it
+    /// is seeded again and shows none of the merges made in between. Without
+    /// this the watermark would last until the next successful sync, and a
+    /// repo added back sooner would be caught up as if never removed.
+    pub fn unwatch(&self, repo: &str) -> Effects {
+        let mut inner = self.inner.lock().unwrap();
+        let before = inner.merge_watermarks.len();
+        inner
+            .merge_watermarks
+            .retain(|watched, _| !watched.eq_ignore_ascii_case(repo));
+        let changed = inner.merge_watermarks.len() != before;
+        Effects {
+            save_merge_watermarks: changed.then(|| inner.merge_watermarks.clone()),
+            ..inner.no_effects()
+        }
+    }
+
     /// Where the next sync's merged catch-up starts from; see
     /// [`merged::Watermarks`].
     pub fn merge_watermarks(&self) -> merged::Watermarks {
@@ -608,6 +613,7 @@ impl PrState {
 mod tests {
     use super::*;
     use crate::github::{BlockedReason, MergeMethod, PrAction, Section, Turn};
+    use crate::merged::testing::watermarks;
     use serde_json::json;
 
     const T1: &str = "2026-07-02T00:00:00Z";
@@ -658,20 +664,6 @@ mod tests {
         }
     }
 
-    fn merged_pr(repo: &str, number: u64, merged_at: &str) -> merged::MergedPr {
-        merged::MergedPr {
-            number,
-            title: "Fix the thing".into(),
-            url: format!("https://github.com/{repo}/pull/{number}"),
-            repo: repo.into(),
-            author: "someone".into(),
-            avatar_url: "https://avatars.example/someone".into(),
-            owner_avatar_url: "https://avatars.example/acme".into(),
-            merged_at: merged_at.into(),
-            deploy: None,
-        }
-    }
-
     /// A catch-up that read `merged`.
     fn merging(merged: Vec<merged::MergedPr>) -> merged::CatchUp {
         merged::CatchUp {
@@ -710,7 +702,7 @@ mod tests {
         let state = state_with_one_unread();
         assert_eq!(state.begin_fix("acme/widgets#8").map(|pr| pr.number), Ok(8));
         assert!(state.begin_fix("acme/widgets#9").is_err());
-        state.unconfigured(Missing::Token);
+        state.unconfigured();
         assert!(state.begin_fix("acme/widgets#7").is_err());
     }
 
@@ -747,7 +739,7 @@ mod tests {
         assert!(!failed.snapshot.syncing);
 
         assert!(state.begin_sync().is_some());
-        let unconfigured = state.unconfigured(Missing::Token);
+        let unconfigured = state.unconfigured();
         assert!(!unconfigured.snapshot.syncing);
         assert!(state.begin_sync().is_some());
     }
@@ -887,7 +879,7 @@ mod tests {
     fn an_unconfigured_sync_clears_the_pr_list_and_keeps_the_read_watermarks() {
         let state = state_with_one_unread();
 
-        let effects = state.unconfigured(Missing::Token);
+        let effects = state.unconfigured();
 
         assert!(effects.snapshot.prs.is_empty());
         assert!(!effects.snapshot.has_synced);
@@ -1140,7 +1132,7 @@ mod tests {
         sync_one(&state, pr("acme/widgets", 7, &[]), SYNC_1);
         sync_one(&state, yours(pr("acme/widgets", 7, &[])), SYNC_2);
 
-        let cleared = state.unconfigured(Missing::Token);
+        let cleared = state.unconfigured();
         assert_eq!(
             cleared.save_turns,
             Some(HashMap::from([("acme/widgets#7".to_string(), None)]))
@@ -1357,7 +1349,7 @@ mod tests {
 
         let effects = state.sync_succeeded(
             vec![],
-            merging(vec![merged_pr("acme/widgets", 7, T2)]),
+            merging(vec![merged::testing::entry("acme/widgets", 7, T2)]),
             LAST_SYNC + 1,
         );
 
@@ -1413,7 +1405,7 @@ mod tests {
     fn an_unconfigured_sync_drops_the_snoozes_with_the_prs() {
         let state = snoozed_state(yours(pr("acme/widgets", 7, &[])));
 
-        let effects = state.unconfigured(Missing::Token);
+        let effects = state.unconfigured();
 
         assert!(effects.snapshot.snoozed.is_empty());
         assert_eq!(effects.save_snoozes, Some(HashMap::new()));
@@ -1636,7 +1628,7 @@ mod tests {
     #[test]
     fn a_pr_with_a_requested_fix_that_merges_or_closes_drops_its_request() {
         let merged = fix_requested_state();
-        let gone = merged_pr("acme/widgets", 7, "2026-07-16T13:00:00Z");
+        let gone = merged::testing::entry("acme/widgets", 7, "2026-07-16T13:00:00Z");
         let effects = merged.sync_succeeded(vec![], merging(vec![gone]), LAST_SYNC + 180_000);
         assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
         assert_eq!(effects.snapshot.merged.len(), 1);
@@ -1768,7 +1760,7 @@ mod tests {
     fn an_unconfigured_sync_drops_the_fix_requests_with_the_prs() {
         let state = fix_requested_state();
 
-        let effects = state.unconfigured(Missing::Token);
+        let effects = state.unconfigured();
 
         assert_eq!(effects.save_fix_requests, Some(HashMap::new()));
         let back = sync_one(&state, conflicted(7), LAST_SYNC + 180_000);
@@ -1790,7 +1782,7 @@ mod tests {
         let live = vec![pr("acme/widgets", 8, &[])];
         let synced = state.sync_succeeded(
             live.clone(),
-            merging(vec![merged_pr("acme/widgets", 7, T2)]),
+            merging(vec![merged::testing::entry("acme/widgets", 7, T2)]),
             NOW_MS,
         );
 
@@ -1809,13 +1801,6 @@ mod tests {
         assert_eq!(dismissed.save_merged, Some(vec![]));
         let after = state.sync_succeeded(live, merged::CatchUp::default(), NOW_MS);
         assert!(after.snapshot.merged.is_empty());
-    }
-
-    fn watermarks(entries: &[(&str, Option<&str>)]) -> merged::Watermarks {
-        entries
-            .iter()
-            .map(|(repo, at)| (repo.to_string(), at.map(String::from)))
-            .collect()
     }
 
     /// A catch-up that read no merge and left `watermarks` behind.
@@ -1869,32 +1854,37 @@ mod tests {
     /// The merges made while the token was missing are caught up once it is
     /// back, so the place to resume from must survive.
     #[test]
-    fn a_missing_token_keeps_the_merge_watermarks() {
+    fn an_unconfigured_sync_keeps_the_merge_watermarks() {
         let state = PrState::default();
         let seeded = watermarks(&[("acme/widgets", Some(T1))]);
         state.sync_succeeded(vec![], read_up_to(seeded.clone()), NOW_MS);
 
-        let effects = state.unconfigured(Missing::Token);
+        let effects = state.unconfigured();
 
         assert_eq!(effects.save_merge_watermarks, None);
         assert_eq!(state.merge_watermarks(), seeded);
     }
 
-    /// Emptying the watchlist removes every repo from it, and a repo added
-    /// back is seeded again instead of showing its past merges.
+    /// The watchlist stores GitHub's casing, and the removal names the repo
+    /// however the popover had it.
     #[test]
-    fn an_emptied_watchlist_forgets_the_merge_watermarks() {
+    fn a_repo_leaving_the_watchlist_loses_its_merge_watermark_at_once() {
         let state = PrState::default();
         state.sync_succeeded(
             vec![],
-            read_up_to(watermarks(&[("acme/widgets", Some(T1))])),
+            read_up_to(watermarks(&[
+                ("acme/widgets", Some(T1)),
+                ("acme/gadgets", Some(T2)),
+            ])),
             NOW_MS,
         );
 
-        let effects = state.unconfigured(Missing::Repos);
+        let effects = state.unwatch("Acme/Gadgets");
 
-        assert_eq!(effects.save_merge_watermarks, Some(HashMap::new()));
-        assert!(state.merge_watermarks().is_empty());
+        let left = watermarks(&[("acme/widgets", Some(T1))]);
+        assert_eq!(effects.save_merge_watermarks, Some(left.clone()));
+        assert_eq!(state.merge_watermarks(), left);
+        assert_eq!(state.unwatch("acme/gadgets").save_merge_watermarks, None);
     }
 
     fn deploy(state: merged::DeployState, completed_at: Option<&str>) -> merged::Deploy {
@@ -1912,7 +1902,7 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged_pr("acme/widgets", number, T2)],
+            vec![merged::testing::entry("acme/widgets", number, T2)],
             None,
             HashMap::new(),
             HashMap::new(),
@@ -1976,7 +1966,7 @@ mod tests {
     #[test]
     fn a_deploy_found_while_unconfigured_does_not_bring_the_merged_section_back() {
         let state = state_with_merged(7);
-        state.unconfigured(Missing::Token);
+        state.unconfigured();
         let effects = state.deploys_found(HashMap::from([(
             "acme/widgets#7".to_string(),
             deploy(merged::DeployState::Deploying, None),
@@ -1992,8 +1982,8 @@ mod tests {
         state.restore(
             HashMap::from([("acme/widgets#7".to_string(), T1.to_string())]),
             vec![
-                merged_pr("acme/widgets", 4, T2),
-                merged_pr("acme/widgets", 3, T1),
+                merged::testing::entry("acme/widgets", 4, T2),
+                merged::testing::entry("acme/widgets", 3, T1),
             ],
             None,
             HashMap::new(),
@@ -2020,7 +2010,7 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged_pr("acme/widgets", 3, T1)],
+            vec![merged::testing::entry("acme/widgets", 3, T1)],
             None,
             HashMap::new(),
             HashMap::new(),
@@ -2039,7 +2029,7 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged_pr("acme/widgets", 3, T1)],
+            vec![merged::testing::entry("acme/widgets", 3, T1)],
             None,
             HashMap::new(),
             HashMap::new(),
@@ -2057,14 +2047,14 @@ mod tests {
         let state = PrState::default();
         state.restore(
             HashMap::new(),
-            vec![merged_pr("acme/widgets", 3, T1)],
+            vec![merged::testing::entry("acme/widgets", 3, T1)],
             None,
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
 
-        let hidden = state.unconfigured(Missing::Token);
+        let hidden = state.unconfigured();
         assert!(hidden.snapshot.merged.is_empty());
         assert_eq!(hidden.save_merged, None);
 
