@@ -45,6 +45,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   turn_since: null,
   can_fix_conflict: false,
   fix_requested: false,
+  agent_task: null,
   actions: [],
   merge_method: "merge",
   base_branch: "main",
@@ -1186,4 +1187,87 @@ test("a collapsed section's unread badge leaves out rows moved to Todo", () => {
   const view = list(snapshot, "", ALL_COLLAPSED);
   expect(section(view, "mine").collapsedUnread).toBe(2);
   expect(section(view, "yours").collapsedUnread).toBe(0);
+});
+
+// Copilot tasks. The backend sends the task's state and the turn it calls
+// for; the row only words it.
+
+test("a Copilot task waiting for you leads the row, in the accent of your turn", () => {
+  expect(
+    state({
+      agent_task: "needs_you",
+      turn: "yours",
+      review_requested: true,
+      blocked_reasons: ["conflict"],
+    }),
+  ).toMatchObject({
+    reason: "Copilot needs you",
+    tone: "accent",
+    all: ["Copilot needs you", "Review requested", "Merge conflict"],
+  });
+});
+
+test("a Copilot task that failed leads the row in amber", () => {
+  expect(
+    state({
+      agent_task: "failed",
+      turn: "yours",
+      review_requested: true,
+      blocked_reasons: ["ci"],
+    }),
+  ).toMatchObject({
+    reason: "Copilot failed",
+    tone: "warn",
+    all: ["Copilot failed", "Review requested", "CI failing"],
+  });
+});
+
+test("a Copilot task under way says so where a requested fix does, in the same tone", () => {
+  expect(
+    state({
+      agent_task: "working",
+      blocked_reasons: ["conflict"],
+      merge_queue_position: 2,
+      checks_running: true,
+    })?.all,
+  ).toEqual(["Merge conflict", "Queued 2nd", "Copilot working", "Checks running"]);
+  expect(state({ agent_task: "working" })).toMatchObject({
+    reason: "Copilot working",
+    tone: "neutral",
+  });
+});
+
+test("a Copilot task that is over says nothing", () => {
+  expect(state({ agent_task: "settled" })).toBeNull();
+});
+
+test("a row whose Copilot task is under way offers no Copilot fix", () => {
+  const view = list(
+    synced({
+      prs: [
+        fixable({ number: 1, agent_task: "working", turn: "theirs" }),
+        fixable({ number: 2, agent_task: "failed" }),
+        fixable({ number: 3, agent_task: "settled" }),
+      ],
+    }),
+  );
+  expect(rows(view, "mine").map(labels)).toEqual([
+    ["Snooze"],
+    ["Snooze", "Fix with Copilot"],
+    ["Snooze", "Fix with Copilot"],
+  ]);
+});
+
+test("a row whose Copilot task waits for you sits in Todo and is counted", () => {
+  const snapshot = synced({
+    prs: [
+      pr({ number: 1, agent_task: "needs_you", turn: "yours", turn_since: NOW - 2 * 3_600_000 }),
+      pr({ number: 2, agent_task: "working", turn: "theirs" }),
+    ],
+  });
+  const [row] = rows(list(snapshot), "yours");
+  expect(row.pr.number).toBe(1);
+  expect(row.waiting).toBe("waiting 2h");
+  expect(numbers(list(snapshot), "mine")).toEqual([2]);
+  expect(yourTurnCount(snapshot)).toBe(1);
 });

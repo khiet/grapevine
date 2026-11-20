@@ -52,6 +52,7 @@ const conflicted: PullRequest = {
   turn_since: null,
   can_fix_conflict: true,
   fix_requested: false,
+  agent_task: null,
   actions: [],
   merge_method: "merge",
   base_branch: "main",

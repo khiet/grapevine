@@ -282,6 +282,7 @@ mod tests {
             Snooze {
                 baseline_at: 1_784_205_296_000,
                 request_outstanding: true,
+                task_waiting: true,
                 expires_at: 1_784_250_000_000,
             },
         )]);
@@ -385,5 +386,20 @@ mod tests {
         assert_eq!(state[0].number, 3);
         assert_eq!(state[0].owner_avatar_url, "");
         assert_eq!(state[0].deploy, None);
+    }
+
+    /// A parse that failed here would drop every snooze on upgrade.
+    #[test]
+    fn a_snooze_file_saved_before_tasks_were_read_still_loads() {
+        let (dir, store) = temp_store();
+        let legacy = r#"{ "acme/widgets#3": {
+            "baseline_at": 1784205296000,
+            "request_outstanding": true,
+            "expires_at": 1784250000000
+        } }"#;
+        fs::write(dir.path().join(SNOOZES.file), legacy).unwrap();
+        let state = store.load(&SNOOZES).unwrap();
+        assert_eq!(state.len(), 1);
+        assert!(!state["acme/widgets#3"].task_waiting);
     }
 }

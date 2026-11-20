@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::agent_tasks;
 use crate::merged::{CatchUp, Deploy, DeployState, MergedPr, Watermarks};
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
@@ -160,6 +161,22 @@ impl MergeMethod {
     }
 }
 
+/// What the Copilot task behind a PR is doing, from GitHub's task states (see
+/// [`agent_tasks::Task`]). `Settled` is a task that finished, was cancelled
+/// or sits idle: the row says nothing about it, but it is still the task that
+/// speaks for the PR, so it clears the words of an earlier one.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTask {
+    Working,
+    NeedsYou,
+    Failed,
+    Settled,
+}
+
 /// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
 /// Change both together.
 #[derive(Debug, Clone, Serialize)]
@@ -295,6 +312,18 @@ pub struct PullRequest {
     /// still live; filled in from the fix requests after fetch, always false
     /// out of this module. The row shows it in place of the fix control.
     pub fix_requested: bool,
+    /// The state of the viewer's latest Copilot task on this PR; `None` when
+    /// they have none among the tasks read. Filled in by
+    /// [`agent_tasks::assign`] after the PRs are fetched, which also moves
+    /// `turn` to match. While it is set the task speaks for Copilot, and a
+    /// fix request does not (see [`crate::fix_requests::apply`]). Same
+    /// property-not-event rule as `blocked_reasons`.
+    pub agent_task: Option<AgentTask>,
+    /// Epoch ms at which that task last changed; `None` without a task, or
+    /// when GitHub's time could not be read. A turn the task made the
+    /// viewer's is dated from here (see [`crate::turns::apply`]).
+    #[serde(skip)]
+    pub agent_task_updated_at: Option<u64>,
     /// What the row may offer to do to the PR on GitHub (see
     /// [`actions_for`]); empty outside Mine and on a draft.
     /// [`Client::act_on_pr`] refuses an action that is not listed here. Same
@@ -320,6 +349,10 @@ pub struct PullRequest {
     /// and never supplies what gets written to.
     #[serde(skip)]
     pub node_id: String,
+    /// GitHub's database id, which is how a Copilot task names its PR.
+    /// `None` when GitHub sent none: no task can match the PR then.
+    #[serde(skip)]
+    pub database_id: Option<u64>,
     /// Human activity newer than the PR's last-read watermark; filled in by
     /// the unread engine after fetch, always 0 out of this module.
     pub unread_count: u64,
@@ -358,32 +391,38 @@ struct HttpResponse {
     body: String,
 }
 
-/// The seam between this module and the wire: a GraphQL payload goes in, the
-/// raw answer comes out. Implementations do no interpretation; mapping a
-/// status or body to a [`GithubError`] belongs to [`Client`], so every adapter
-/// gets the same rules. `Err` is reserved for "no answer at all".
+/// The seam between this module and the wire: a request goes in, the raw
+/// answer comes out. Implementations do no interpretation; mapping a status
+/// or body to an error belongs to [`Client`], so every adapter gets the same
+/// rules. `Err` is reserved for "no answer at all".
 trait Transport {
+    /// Posts a GraphQL payload to GitHub's GraphQL endpoint.
     async fn post(&self, token: &str, payload: &Value) -> Result<HttpResponse, GithubError>;
+    /// Reads a REST resource: `url` as it stands, with `headers` sent beside
+    /// the token.
+    async fn get(
+        &self,
+        token: &str,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse, GithubError>;
 }
 
-/// The production adapter: GitHub's GraphQL endpoint over `reqwest`.
+/// The production adapter: GitHub over `reqwest`.
 struct ReqwestTransport;
 
-impl Transport for ReqwestTransport {
-    async fn post(&self, token: &str, payload: &Value) -> Result<HttpResponse, GithubError> {
-        let client = reqwest::Client::builder()
+impl ReqwestTransport {
+    fn client() -> Result<reqwest::Client, GithubError> {
+        reqwest::Client::builder()
             .user_agent("grapevine")
             .build()
-            .map_err(|e| GithubError::Other(format!("cannot build HTTP client: {e}")))?;
-        let response = client
-            .post(GRAPHQL_URL)
-            .bearer_auth(token)
-            .json(payload)
-            .send()
-            .await
-            .map_err(|_| {
-                GithubError::Other("Could not reach GitHub. Check your network connection.".into())
-            })?;
+            .map_err(|e| GithubError::Other(format!("cannot build HTTP client: {e}")))
+    }
+
+    async fn send(request: reqwest::RequestBuilder) -> Result<HttpResponse, GithubError> {
+        let response = request.send().await.map_err(|_| {
+            GithubError::Other("Could not reach GitHub. Check your network connection.".into())
+        })?;
         Ok(HttpResponse {
             status: response.status(),
             headers: response.headers().clone(),
@@ -395,14 +434,40 @@ impl Transport for ReqwestTransport {
     }
 }
 
+impl Transport for ReqwestTransport {
+    async fn post(&self, token: &str, payload: &Value) -> Result<HttpResponse, GithubError> {
+        Self::send(
+            Self::client()?
+                .post(GRAPHQL_URL)
+                .bearer_auth(token)
+                .json(payload),
+        )
+        .await
+    }
+
+    async fn get(
+        &self,
+        token: &str,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse, GithubError> {
+        let mut request = Self::client()?.get(url).bearer_auth(token);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        Self::send(request).await
+    }
+}
+
 /// Everything this module asks of GitHub, over a [`Transport`]. The public
 /// functions below run it against [`ReqwestTransport`]; tests run it against
 /// canned responses.
 struct Client<'a, T> {
     transport: &'a T,
     token: &'a str,
-    /// Read only after a response arrives, so a relative `retry-after` is
-    /// counted from then and not from before the request.
+    /// Read afresh wherever a time is needed. A relative `retry-after` is
+    /// counted from a reading taken after its response arrived, not from
+    /// before the request.
     now_epoch_secs: fn() -> u64,
 }
 
@@ -543,6 +608,7 @@ impl<T: Transport> Client<'_, T> {
             .collect();
         let mut prs = Vec::new();
         let mut rate_limit = None;
+        let mut viewer_id = None;
         // The team-request search rides along with the repo pages. Outer
         // `Some` while it has a page left to ask for; the inner value is the
         // cursor to resume from. Nothing watched means nothing to search.
@@ -564,8 +630,9 @@ impl<T: Transport> Client<'_, T> {
                     "GitHub returned too many pages of pull requests.".into(),
                 ));
             }
-            let mut query =
-                String::from("query { viewer { login } rateLimit { remaining resetAt } ");
+            let mut query = String::from(
+                "query { viewer { login databaseId } rateLimit { remaining resetAt } ",
+            );
             for (i, (owner, name, cursor)) in pending.iter().enumerate() {
                 query.push_str(&repo_field(
                     &format!("r{i}"),
@@ -621,6 +688,7 @@ impl<T: Transport> Client<'_, T> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
+            viewer_id = data.pointer("/viewer/databaseId").and_then(Value::as_u64);
 
             let mut still_pending = Vec::new();
             for (i, (owner, name, _)) in pending.iter().enumerate() {
@@ -651,7 +719,79 @@ impl<T: Transport> Client<'_, T> {
         // Most recently updated first across all repos; ISO-8601 UTC timestamps
         // sort lexically.
         prs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        Ok(FetchedPrs { prs, rate_limit })
+        Ok(FetchedPrs {
+            prs,
+            rate_limit,
+            viewer_id,
+        })
+    }
+
+    /// [`Client::fetch_open_prs`], with each PR then given the state of the
+    /// viewer's Copilot task behind it. The tasks are extra: whatever goes
+    /// wrong reading them is logged and leaves the PRs as fetched, so it
+    /// never fails a sync.
+    async fn fetch_open_prs_with_tasks(
+        &self,
+        repos: &[String],
+        gate: &mut agent_tasks::Gate,
+    ) -> Result<FetchedPrs, GithubError> {
+        let mut fetched = self.fetch_open_prs(repos).await?;
+        // Without the viewer's id, or a PR a task could name, there is
+        // nothing to match and the call would only spend its budget.
+        let matchable = fetched.prs.iter().any(|pr| pr.database_id.is_some());
+        if let (Some(viewer_id), true) = (fetched.viewer_id, matchable) {
+            match self.agent_tasks(gate).await {
+                Ok(tasks) => agent_tasks::assign(&mut fetched.prs, &tasks, viewer_id),
+                Err(e) => eprintln!("cannot read Copilot tasks: {e}"),
+            }
+        }
+        Ok(fetched)
+    }
+
+    /// The newest page of Copilot tasks the token can see; no further pages
+    /// are read. Makes no request, and answers no tasks, while `gate` is
+    /// shut, and shuts it on the answers that say asking again is no use
+    /// (see [`agent_tasks::Gate`]).
+    async fn agent_tasks(
+        &self,
+        gate: &mut agent_tasks::Gate,
+    ) -> Result<Vec<agent_tasks::Task>, String> {
+        if !gate.allows(self.token, (self.now_epoch_secs)()) {
+            return Ok(Vec::new());
+        }
+        let response = self
+            .transport
+            .get(
+                self.token,
+                agent_tasks::URL,
+                &[
+                    ("Accept", "application/vnd.github+json"),
+                    ("X-GitHub-Api-Version", agent_tasks::API_VERSION),
+                ],
+            )
+            .await?;
+        let status = response.status;
+        let header = |name: &str| response.headers.get(name).and_then(|v| v.to_str().ok());
+        // The primary limit answers 403 like a refusal does; what tells them
+        // apart is a spent budget or a wait GitHub asks for.
+        let out_of_budget = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || (status == reqwest::StatusCode::FORBIDDEN
+                && (header("retry-after").is_some()
+                    || header("x-ratelimit-remaining") == Some("0")));
+        if out_of_budget {
+            let now = (self.now_epoch_secs)();
+            let reset = rate_limit_reset(&response.headers, now)
+                .unwrap_or(now + agent_tasks::UNDATED_RATE_LIMIT_WAIT_SECS);
+            gate.wait_until(reset);
+            return Err("rate limited".into());
+        }
+        if matches!(status.as_u16(), 401 | 403 | 404) {
+            gate.refuse(self.token);
+        }
+        if status != reqwest::StatusCode::OK {
+            return Err(format!("HTTP {}", status.as_u16()));
+        }
+        agent_tasks::parse(&response.body).ok_or_else(|| "unexpected response".to_string())
     }
 
     /// Completes one repo's page of PR nodes in place: each PR whose rollup
@@ -1096,14 +1236,26 @@ fn collect_affiliated_page(data: &Value, out: &mut Vec<String>) -> Option<String
 pub struct FetchedPrs {
     pub prs: Vec<PullRequest>,
     pub rate_limit: Option<RateLimit>,
+    /// The viewer's database id, which is how a Copilot task names its
+    /// creator. `None` when no round answered it.
+    pub viewer_id: Option<u64>,
 }
 
 /// Fetches open PRs for every `owner/name` in `repos` and classifies each into
 /// its popover section. All repos share one query as aliased `repository`
 /// fields; only repos spilling past [`PAGE_SIZE`] need a follow-up query.
 /// Vanished or inaccessible repos are skipped rather than failing the sync.
-pub async fn fetch_open_prs(token: &str, repos: &[String]) -> Result<FetchedPrs, GithubError> {
-    Client::live(token).fetch_open_prs(repos).await
+/// Each PR also gets the state of the viewer's Copilot task behind it, read
+/// in one more request that `gate` may hold back and that cannot fail the
+/// fetch.
+pub async fn fetch_open_prs(
+    token: &str,
+    repos: &[String],
+    gate: &mut agent_tasks::Gate,
+) -> Result<FetchedPrs, GithubError> {
+    Client::live(token)
+        .fetch_open_prs_with_tasks(repos, gate)
+        .await
 }
 
 /// Asks Copilot to resolve `pr`'s merge conflict, with a comment posted as the
@@ -1558,7 +1710,8 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot
                         orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
              pageInfo {{ hasNextPage endCursor }} \
              nodes {{ \
-               id number title url createdAt updatedAt viewerDidAuthor viewerSubscription \
+               id fullDatabaseId number title url createdAt updatedAt viewerDidAuthor \
+               viewerSubscription \
                isCrossRepository isDraft mergeable mergeStateStatus reviewDecision \
                headRefOid baseRefName isMergeQueueEnabled \
                viewerCanUpdateBranch viewerCanEnableAutoMerge viewerCanDisableAutoMerge \
@@ -1723,6 +1876,8 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             turn_since: None,
             can_fix_conflict,
             fix_requested: false,
+            agent_task: None,
+            agent_task_updated_at: None,
             actions,
             merge_method,
             base_branch: text("baseRefName"),
@@ -1733,6 +1888,11 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
+            // A BigInt, which GraphQL sends as a string.
+            database_id: node
+                .get("fullDatabaseId")
+                .and_then(Value::as_str)
+                .and_then(|id| id.parse().ok()),
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.human,
@@ -3999,15 +4159,26 @@ mod tests {
     /// the query it was asked (see [`keep_asked`]), so a field or window
     /// dropped from a query changes the answer and fails the test reading it.
     struct Canned {
-        responses: std::sync::Mutex<std::collections::VecDeque<HttpResponse>>,
+        responses: std::sync::Mutex<std::collections::VecDeque<Result<HttpResponse, GithubError>>>,
         payloads: std::sync::Mutex<Vec<Value>>,
+        gets: std::sync::Mutex<Vec<Get>>,
     }
+
+    /// One REST read asked for: its URL and the headers sent with it.
+    type Get = (String, Vec<(String, String)>);
 
     impl Canned {
         fn new(responses: Vec<HttpResponse>) -> Self {
+            Self::answering(responses.into_iter().map(Ok).collect())
+        }
+
+        /// Like [`Canned::new`], where an `Err` is a request that got no
+        /// answer at all.
+        fn answering(responses: Vec<Result<HttpResponse, GithubError>>) -> Self {
             Canned {
                 responses: std::sync::Mutex::new(responses.into()),
                 payloads: std::sync::Mutex::new(Vec::new()),
+                gets: std::sync::Mutex::new(Vec::new()),
             }
         }
 
@@ -4047,7 +4218,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .pop_front()
-                .expect("a request beyond the canned responses");
+                .expect("a request beyond the canned responses")?;
             if let Ok(mut body) = serde_json::from_str::<Value>(&response.body) {
                 if let Some(data) = body.get_mut("data") {
                     keep_asked(data, &parse_query(payload["query"].as_str().unwrap()));
@@ -4056,6 +4227,24 @@ mod tests {
             }
             self.payloads.lock().unwrap().push(payload.clone());
             Ok(response)
+        }
+
+        async fn get(
+            &self,
+            _token: &str,
+            url: &str,
+            headers: &[(&str, &str)],
+        ) -> Result<HttpResponse, GithubError> {
+            let sent = headers
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect();
+            self.gets.lock().unwrap().push((url.to_string(), sent));
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a request beyond the canned responses")
         }
     }
 
@@ -4241,6 +4430,9 @@ mod tests {
         answer(200, &[], json!({ "data": data }))
     }
 
+    /// The viewer's database id in every canned open-PR round.
+    const VIEWER_ID: u64 = 42;
+
     /// One repo's page of PRs; `next` is the cursor of the page after it.
     fn repo_named(name: &str, nodes: Vec<Value>, next: Option<&str>) -> Value {
         let mut repo = repo_with(nodes);
@@ -4255,7 +4447,7 @@ mod tests {
     /// resolve.
     fn prs_round(remaining: u64, repos: Vec<Value>) -> Value {
         let mut data = json!({
-            "viewer": { "login": "khiet" },
+            "viewer": { "login": "khiet", "databaseId": VIEWER_ID },
             "rateLimit": { "remaining": remaining, "resetAt": "1970-01-01T01:00:00Z" }
         });
         for (i, repo) in repos.into_iter().enumerate() {
@@ -7066,5 +7258,317 @@ mod tests {
         let deploys = run(github.client().fetch_deploy_status(&[])).unwrap();
         assert!(deploys.is_empty());
         assert_eq!(github.request_count(), 0);
+    }
+
+    // Copilot tasks: the state the sync reads onto a row from the Agent
+    // tasks API, after the open PRs.
+
+    /// GitHub's database id of the conflicted PR every task test fetches.
+    const PULL_ID: u64 = 9001;
+
+    /// A task the viewer started on the PR with database id `pull`.
+    fn task(pull: u64, state: &str, updated_at: &str) -> Value {
+        json!({
+            "state": state,
+            "creator": { "id": VIEWER_ID },
+            "creator_type": "user",
+            "updated_at": updated_at,
+            "artifacts": [
+                { "provider": "github", "type": "branch", "data": { "id": pull } },
+                { "provider": "github", "type": "pull", "data": { "id": pull } }
+            ]
+        })
+    }
+
+    fn tasks(tasks: Vec<Value>) -> HttpResponse {
+        answer(200, &[], json!({ "tasks": tasks }))
+    }
+
+    /// A round holding one PR of the viewer's, which a conflict makes their
+    /// turn until a task says otherwise.
+    fn tasked_round() -> HttpResponse {
+        widgets_round(vec![conflicted(
+            json!({ "fullDatabaseId": PULL_ID.to_string() }),
+        )])
+    }
+
+    fn fetch_tasked_through(
+        github: &Canned,
+        gate: &mut agent_tasks::Gate,
+    ) -> Result<FetchedPrs, GithubError> {
+        run(github
+            .client()
+            .fetch_open_prs_with_tasks(&["acme/widgets".to_string()], gate))
+    }
+
+    /// The one PR of a sync that read `listed` as the viewer's tasks.
+    fn fetch_tasked(listed: Vec<Value>) -> PullRequest {
+        let github = Canned::new(vec![tasked_round(), tasks(listed)]);
+        let mut fetched = fetch_tasked_through(&github, &mut agent_tasks::Gate::default()).unwrap();
+        fetched.prs.remove(0)
+    }
+
+    const TASK_T1: &str = "2026-11-18T09:44:29.271460483Z";
+    const TASK_T2: &str = "2026-11-18T10:00:00.5Z";
+
+    #[test]
+    fn a_pr_with_no_task_is_the_viewers_turn_as_github_has_it() {
+        let pr = fetch_tasked(vec![]);
+        assert_eq!(pr.agent_task, None);
+        assert_eq!(pr.turn, Some(Turn::Yours));
+    }
+
+    #[test]
+    fn a_task_under_way_says_working_and_takes_the_turn_off_the_viewer() {
+        for state in ["queued", "in_progress"] {
+            let pr = fetch_tasked(vec![task(PULL_ID, state, TASK_T1)]);
+            assert_eq!(pr.agent_task, Some(AgentTask::Working), "{state}");
+            assert_eq!(pr.turn, Some(Turn::Theirs), "{state}");
+        }
+    }
+
+    #[test]
+    fn a_task_waiting_for_the_viewer_makes_the_turn_theirs_from_its_last_update() {
+        let pr = fetch_tasked(vec![task(PULL_ID, "waiting_for_user", TASK_T1)]);
+        assert_eq!(pr.agent_task, Some(AgentTask::NeedsYou));
+        assert_eq!(pr.turn, Some(Turn::Yours));
+        assert_eq!(pr.agent_task_updated_at, Some(1_794_995_069_271));
+    }
+
+    /// Copilot's own PRs are drafts while it works, and a draft has no turn
+    /// by GitHub's state.
+    #[test]
+    fn a_task_waiting_for_the_viewer_makes_a_draft_their_turn() {
+        let github = Canned::new(vec![
+            widgets_round(vec![conflicted(json!({
+                "fullDatabaseId": PULL_ID.to_string(),
+                "isDraft": true,
+            }))]),
+            tasks(vec![task(PULL_ID, "waiting_for_user", TASK_T1)]),
+        ]);
+
+        let fetched = fetch_tasked_through(&github, &mut agent_tasks::Gate::default()).unwrap();
+
+        assert_eq!(fetched.prs[0].turn, Some(Turn::Yours));
+    }
+
+    #[test]
+    fn a_task_that_failed_says_so_and_leaves_the_turn_alone() {
+        for state in ["failed", "timed_out"] {
+            let pr = fetch_tasked(vec![task(PULL_ID, state, TASK_T1)]);
+            assert_eq!(pr.agent_task, Some(AgentTask::Failed), "{state}");
+            assert_eq!(pr.turn, Some(Turn::Yours), "{state}");
+        }
+    }
+
+    #[test]
+    fn a_task_that_is_over_or_idle_says_nothing_and_leaves_the_turn_alone() {
+        for state in ["completed", "cancelled", "idle"] {
+            let pr = fetch_tasked(vec![task(PULL_ID, state, TASK_T1)]);
+            assert_eq!(pr.agent_task, Some(AgentTask::Settled), "{state}");
+            assert_eq!(pr.turn, Some(Turn::Yours), "{state}");
+        }
+    }
+
+    /// Whichever way GitHub happens to list them.
+    #[test]
+    fn the_task_updated_last_decides_among_several_on_one_pr() {
+        let failed_then_completed = vec![
+            task(PULL_ID, "failed", TASK_T1),
+            task(PULL_ID, "completed", TASK_T2),
+        ];
+        let listed_newest_first: Vec<Value> = failed_then_completed.iter().rev().cloned().collect();
+        for listed in [failed_then_completed, listed_newest_first] {
+            assert_eq!(fetch_tasked(listed).agent_task, Some(AgentTask::Settled));
+        }
+
+        let pr = fetch_tasked(vec![
+            task(PULL_ID, "waiting_for_user", TASK_T2),
+            task(PULL_ID, "in_progress", TASK_T1),
+        ]);
+        assert_eq!(pr.agent_task, Some(AgentTask::NeedsYou));
+    }
+
+    #[test]
+    fn a_task_someone_else_started_changes_nothing() {
+        let mut theirs = task(PULL_ID, "waiting_for_user", TASK_T1);
+        theirs["creator"]["id"] = json!(VIEWER_ID + 1);
+
+        let pr = fetch_tasked(vec![theirs]);
+
+        assert_eq!(pr.agent_task, None);
+        assert_eq!(pr.agent_task_updated_at, None);
+    }
+
+    #[test]
+    fn a_task_with_no_pr_changes_nothing() {
+        let mut branch_only = task(PULL_ID, "in_progress", TASK_T1);
+        branch_only["artifacts"].as_array_mut().unwrap().pop();
+
+        let pr = fetch_tasked(vec![branch_only]);
+
+        assert_eq!(pr.agent_task, None);
+        assert_eq!(pr.turn, Some(Turn::Yours));
+    }
+
+    #[test]
+    fn a_task_on_a_pr_that_is_not_open_here_changes_nothing() {
+        let pr = fetch_tasked(vec![task(PULL_ID + 1, "in_progress", TASK_T1)]);
+        assert_eq!(pr.agent_task, None);
+        assert_eq!(pr.turn, Some(Turn::Yours));
+    }
+
+    #[test]
+    fn the_tasks_are_read_once_a_sync_from_the_newest_page_of_the_preview_api() {
+        let github = Canned::new(vec![tasked_round(), tasks(vec![])]);
+
+        fetch_tasked_through(&github, &mut agent_tasks::Gate::default()).unwrap();
+
+        let gets = github.gets.lock().unwrap();
+        let sent = |name: &str, value: &str| (name.to_string(), value.to_string());
+        assert_eq!(
+            *gets,
+            vec![(
+                "https://api.github.com/agents/tasks?per_page=100&sort=updated_at&direction=desc"
+                    .to_string(),
+                vec![
+                    sent("Accept", "application/vnd.github+json"),
+                    sent("X-GitHub-Api-Version", "2026-03-10"),
+                ]
+            )]
+        );
+    }
+
+    /// The sync a failed tasks call leaves behind: the PR as it would be
+    /// without the feature.
+    fn assert_untouched(fetched: Result<FetchedPrs, GithubError>) {
+        let fetched = fetched.expect("the sync succeeds without the tasks");
+        assert_eq!(rows(&fetched), vec![("acme/widgets", 7)]);
+        assert_eq!(fetched.prs[0].agent_task, None);
+        assert_eq!(fetched.prs[0].turn, Some(Turn::Yours));
+    }
+
+    #[test]
+    fn a_tasks_call_that_fails_leaves_the_sync_as_it_would_be_without_it() {
+        let unreachable = Err(GithubError::Other("Could not reach GitHub.".into()));
+        let not_a_task_list = answer(200, &[], json!({ "message": "hello" }));
+        let not_json = HttpResponse {
+            status: reqwest::StatusCode::OK,
+            headers: headers(&[]),
+            body: "<html>".into(),
+        };
+        for failure in [
+            unreachable,
+            Ok(answer(500, &[], json!({}))),
+            Ok(not_a_task_list),
+            Ok(not_json),
+        ] {
+            let github = Canned::answering(vec![Ok(tasked_round()), failure]);
+            let mut gate = agent_tasks::Gate::default();
+
+            assert_untouched(fetch_tasked_through(&github, &mut gate));
+
+            // None of these says anything about the next sync, which asks
+            // again.
+            let github = Canned::new(vec![
+                tasked_round(),
+                tasks(vec![task(PULL_ID, "failed", TASK_T1)]),
+            ]);
+            let fetched = fetch_tasked_through(&github, &mut gate).unwrap();
+            assert_eq!(fetched.prs[0].agent_task, Some(AgentTask::Failed));
+        }
+    }
+
+    #[test]
+    fn a_refused_tasks_call_is_not_made_again_until_the_token_changes() {
+        for status in [401, 403, 404] {
+            let github = Canned::new(vec![
+                tasked_round(),
+                answer(status, &[], json!({ "message": "no" })),
+                // The next sync: the PRs and nothing else.
+                tasked_round(),
+            ]);
+            let mut gate = agent_tasks::Gate::default();
+
+            assert_untouched(fetch_tasked_through(&github, &mut gate));
+            assert_untouched(fetch_tasked_through(&github, &mut gate));
+            assert_eq!(github.gets.lock().unwrap().len(), 1, "{status}");
+
+            let github = Canned::new(vec![
+                tasked_round(),
+                tasks(vec![task(PULL_ID, "failed", TASK_T1)]),
+            ]);
+            let other_token = Client {
+                token: "another token",
+                ..github.client()
+            };
+            let fetched = run(
+                other_token.fetch_open_prs_with_tasks(&["acme/widgets".to_string()], &mut gate)
+            )
+            .unwrap();
+            assert_eq!(fetched.prs[0].agent_task, Some(AgentTask::Failed));
+        }
+    }
+
+    /// The canned client's clock reads 1000 unless told otherwise.
+    #[test]
+    fn a_rate_limited_tasks_call_is_skipped_until_the_reset_github_names() {
+        let spent_budget = answer(
+            403,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", "1500"),
+            ],
+            json!({ "message": "API rate limit exceeded" }),
+        );
+        let asked_to_wait = answer(429, &[("retry-after", "500")], json!({}));
+        for refusal in [spent_budget, asked_to_wait] {
+            let github = Canned::new(vec![
+                tasked_round(),
+                refusal,
+                // Before the reset: the PRs and nothing else.
+                tasked_round(),
+                // At the reset the call is made again.
+                tasked_round(),
+                tasks(vec![task(PULL_ID, "failed", TASK_T1)]),
+            ]);
+            let mut gate = agent_tasks::Gate::default();
+            let fetch_at = |now: fn() -> u64, gate: &mut agent_tasks::Gate| {
+                run(github
+                    .client_at(now)
+                    .fetch_open_prs_with_tasks(&["acme/widgets".to_string()], gate))
+            };
+
+            assert_untouched(fetch_at(|| 1_000, &mut gate));
+            assert_untouched(fetch_at(|| 1_499, &mut gate));
+            assert_eq!(github.gets.lock().unwrap().len(), 1);
+
+            let fetched = fetch_at(|| 1_500, &mut gate).unwrap();
+            assert_eq!(fetched.prs[0].agent_task, Some(AgentTask::Failed));
+        }
+    }
+
+    /// GitHub asks for at least a minute after a limit it puts no time on.
+    #[test]
+    fn a_rate_limit_with_no_reset_time_skips_the_call_for_a_minute() {
+        let github = Canned::new(vec![
+            tasked_round(),
+            answer(429, &[], json!({})),
+            tasked_round(),
+            tasked_round(),
+            tasks(vec![]),
+        ]);
+        let mut gate = agent_tasks::Gate::default();
+        let fetch_at = |now: fn() -> u64, gate: &mut agent_tasks::Gate| {
+            run(github
+                .client_at(now)
+                .fetch_open_prs_with_tasks(&["acme/widgets".to_string()], gate))
+        };
+
+        assert_untouched(fetch_at(|| 1_000, &mut gate));
+        assert_untouched(fetch_at(|| 1_059, &mut gate));
+        assert_eq!(github.gets.lock().unwrap().len(), 1);
+        assert_untouched(fetch_at(|| 1_060, &mut gate));
+        assert_eq!(github.gets.lock().unwrap().len(), 2);
     }
 }

@@ -52,6 +52,11 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   conflict, ask Copilot to resolve it from the row. Two clicks, and only in
   repos where Copilot's cloud agent is enabled. The PR then waits on Copilot,
   not on you, until the conflict clears or an hour passes.
+- **What Copilot is doing.** When you started a Copilot cloud agent task on
+  a PR, the row says where it stands: Copilot working, Copilot needs you, or
+  Copilot failed. A task that stopped to ask you something makes the PR your
+  turn and counts in the menubar. This reads a GitHub preview API, covers
+  Copilot's cloud agent only, and needs no extra token scope.
 - **Finish it from the row.** On your own PRs: merge one that is ready (or
   add it to the merge queue), update a branch that is behind its base, and
   turn auto-merge on or off from the right-click menu. Two clicks each. A

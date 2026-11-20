@@ -82,6 +82,10 @@ pub fn expire(requests: &mut FixRequests, now_epoch_ms: u64) -> Vec<String> {
 /// gone, or when its lifetime has passed. Returns true when the entries
 /// changed and need persisting.
 ///
+/// A PR with a Copilot task is not handed over: the task says what Copilot
+/// is doing, which the request can only guess at. Its entry lives on as it
+/// would have, and applies again if the task stops being read.
+///
 /// Must run before the turns are tracked, so a handed-over PR is not counted
 /// as the viewer's.
 pub fn apply(
@@ -100,7 +104,9 @@ pub fn apply(
         if expires_at(request) <= now_epoch_ms || conflict_cleared(pr) {
             continue;
         }
-        displaced.insert(key.clone(), hand_over(pr));
+        if pr.agent_task.is_none() {
+            displaced.insert(key.clone(), hand_over(pr));
+        }
         next.insert(key, request.clone());
     }
     let changed = *requests != next;

@@ -11,6 +11,7 @@ use tauri::{
 #[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::{Position, WindowExt};
 
+mod agent_tasks;
 mod commands;
 mod fix_requests;
 mod github;

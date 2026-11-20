@@ -15,9 +15,11 @@
 //!   in the Snapshot.
 //! - Each `turn_since` agrees with the turn starts, which hold an entry for
 //!   exactly the PRs in the Snapshot whose turn is yours.
-//! - `fix_requested` is set on exactly the PRs with a fix request, which
-//!   exist only for PRs in the Snapshot. Such a PR's turn is not yours unless
-//!   a review is asked of the viewer by name.
+//! - Fix requests exist only for PRs in the Snapshot. As a sync leaves it,
+//!   `fix_requested` is set on exactly those of them with no Copilot task
+//!   (see [`fix_requests::apply`]); a request recorded since sets it at
+//!   once. Such a PR's turn is not yours unless a review is asked of the
+//!   viewer by name.
 //! - A merge watermark moves forward only in the transition that folds in
 //!   the merges read up to it, so a merge is never skipped without having
 //!   been offered to the merged list.
@@ -612,7 +614,8 @@ impl PrState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{BlockedReason, MergeMethod, PrAction, Section, Turn};
+    use crate::agent_tasks;
+    use crate::github::{AgentTask, BlockedReason, MergeMethod, PrAction, Section, Turn};
     use crate::merged::testing::watermarks;
     use serde_json::json;
 
@@ -651,12 +654,15 @@ mod tests {
             turn_since: None,
             can_fix_conflict: false,
             fix_requested: false,
+            agent_task: None,
+            agent_task_updated_at: None,
             actions: Vec::new(),
             merge_method: MergeMethod::Merge,
             base_branch: String::new(),
             head_oid: String::new(),
             mergeability_unknown: false,
             node_id: String::new(),
+            database_id: None,
             unread_count: 0,
             bot_unread_count: 0,
             activity: activity.iter().map(|t| t.to_string()).collect(),
@@ -2205,6 +2211,9 @@ mod tests {
                 turn_since: Some(1_784_205_000_000),
                 can_fix_conflict: true,
                 fix_requested: true,
+                agent_task: Some(AgentTask::NeedsYou),
+                // Internal: it dates the turn, which goes out as turn_since.
+                agent_task_updated_at: Some(1_784_205_000_000),
                 actions: vec![
                     PrAction::Merge,
                     PrAction::Queue,
@@ -2219,6 +2228,8 @@ mod tests {
                 mergeability_unknown: true,
                 // Internal: the frontend names a PR by key, never by node id.
                 node_id: "PR_kwDOAAAAAA".into(),
+                // Internal: only matches a task to its PR.
+                database_id: Some(9001),
                 unread_count: 3,
                 bot_unread_count: 8,
                 // Internal working data; must not leak into the payload.
@@ -2278,6 +2289,7 @@ mod tests {
                     "turn_since": 1_784_205_000_000u64,
                     "can_fix_conflict": true,
                     "fix_requested": true,
+                    "agent_task": "needs_you",
                     "actions": [
                         "merge",
                         "queue",
@@ -2330,5 +2342,135 @@ mod tests {
         let value = serde_json::to_value(Snapshot::default()).unwrap();
         assert_eq!(value["last_sync_at"], json!(null));
         assert_eq!(value["sync_error"], json!(null));
+    }
+
+    /// The same PR as a sync hands it over when the viewer's latest Copilot
+    /// task on it is in `state`, last updated at `updated_at`.
+    fn tasked(mut pr: PullRequest, state: AgentTask, updated_at: u64) -> PullRequest {
+        agent_tasks::decide(&mut pr, state, Some(updated_at));
+        pr
+    }
+
+    const TASK_AT: u64 = LAST_SYNC - 2 * HOUR_MS;
+
+    #[test]
+    fn a_task_waiting_for_the_viewer_is_counted_and_waits_from_its_last_update() {
+        let state = PrState::default();
+        // Seen before with no turn, so a turn found now would otherwise be
+        // dated from this sync.
+        sync_one(&state, pr("acme/widgets", 7, &[]), LAST_SYNC);
+
+        let waiting = tasked(pr("acme/widgets", 7, &[]), AgentTask::NeedsYou, TASK_AT);
+        let effects = sync_one(&state, waiting, LAST_SYNC + 180_000);
+
+        assert_eq!(effects.tray_count, Some(1));
+        assert_eq!(effects.snapshot.prs[0].turn, Some(Turn::Yours));
+        assert_eq!(turn_since(&effects), Some(TASK_AT));
+        assert_eq!(
+            effects.save_turns,
+            Some(HashMap::from([(KEY.to_string(), Some(TASK_AT))]))
+        );
+    }
+
+    /// The wait is the task's, not that of whatever made the turn the
+    /// viewer's before it.
+    #[test]
+    fn a_turn_already_the_viewers_waits_from_the_task_once_it_needs_them() {
+        let state = PrState::default();
+        sync_one(&state, pr("acme/widgets", 7, &[]), LAST_SYNC - 1);
+        let began = sync_one(&state, yours(pr("acme/widgets", 7, &[])), LAST_SYNC);
+        assert_eq!(turn_since(&began), Some(LAST_SYNC));
+
+        let asked_at = LAST_SYNC + 60_000;
+        let waiting = tasked(
+            yours(pr("acme/widgets", 7, &[])),
+            AgentTask::NeedsYou,
+            asked_at,
+        );
+        let effects = sync_one(&state, waiting, LAST_SYNC + 180_000);
+
+        assert_eq!(turn_since(&effects), Some(asked_at));
+    }
+
+    #[test]
+    fn a_task_under_way_keeps_the_pr_out_of_the_tray_count() {
+        let state = PrState::default();
+        let working = tasked(conflicted(7), AgentTask::Working, TASK_AT);
+
+        let effects = sync_one(&state, working, LAST_SYNC);
+
+        assert_eq!(effects.tray_count, Some(0));
+        assert_eq!(turn_since(&effects), None);
+    }
+
+    #[test]
+    fn a_task_entering_waiting_for_the_viewer_wakes_a_snoozed_row() {
+        let working = || tasked(conflicted(7), AgentTask::Working, TASK_AT);
+        let state = snoozed_state(working());
+
+        let still_working = sync_one(&state, working(), LAST_SYNC + 1);
+        assert!(is_snoozed(&still_working));
+
+        let waiting = tasked(conflicted(7), AgentTask::NeedsYou, LAST_SYNC + 2);
+        let effects = sync_one(&state, waiting, LAST_SYNC + 3);
+
+        assert!(effects.snapshot.snoozed.is_empty());
+        assert_eq!(effects.tray_count, Some(1));
+        assert_eq!(effects.save_snoozes, Some(HashMap::new()));
+    }
+
+    /// The viewer snoozed it knowing: only a task that stops for them again
+    /// is news.
+    #[test]
+    fn a_row_snoozed_while_its_task_waits_for_the_viewer_stays_snoozed() {
+        let waiting = || tasked(conflicted(7), AgentTask::NeedsYou, TASK_AT);
+        let state = snoozed_state(waiting());
+
+        let effects = sync_one(&state, waiting(), LAST_SYNC + 1);
+        assert!(is_snoozed(&effects));
+        assert_eq!(effects.tray_count, Some(0));
+
+        // Answered, then stopped on a second question.
+        let working = tasked(conflicted(7), AgentTask::Working, LAST_SYNC + 2);
+        assert!(is_snoozed(&sync_one(&state, working, LAST_SYNC + 3)));
+        let again = tasked(conflicted(7), AgentTask::NeedsYou, LAST_SYNC + 4);
+        assert!(!is_snoozed(&sync_one(&state, again, LAST_SYNC + 5)));
+    }
+
+    #[test]
+    fn a_task_on_the_pr_decides_in_place_of_a_requested_fix() {
+        let state = fix_requested_state();
+
+        let working = tasked(conflicted(7), AgentTask::Working, ASKED_AT + 1_000);
+        let effects = sync_one(&state, working, LAST_SYNC + 180_000);
+        let row = &effects.snapshot.prs[0];
+        assert!(!row.fix_requested);
+        assert_eq!(row.agent_task, Some(AgentTask::Working));
+        assert_eq!(row.turn, Some(Turn::Theirs));
+
+        // The request would keep the PR with Copilot for the rest of its
+        // hour. The task says Copilot has stopped.
+        let stopped = tasked(conflicted(7), AgentTask::Failed, ASKED_AT + 2_000);
+        let effects = sync_one(&state, stopped, LAST_SYNC + 360_000);
+        let row = &effects.snapshot.prs[0];
+        assert!(!row.fix_requested);
+        assert_eq!(row.turn, Some(Turn::Yours));
+        assert_eq!(effects.tray_count, Some(1));
+    }
+
+    #[test]
+    fn a_requested_fix_keeps_its_hour_through_a_task_and_applies_again_without_one() {
+        let state = fix_requested_state();
+        let working = tasked(conflicted(7), AgentTask::Working, ASKED_AT + 1_000);
+        let during = sync_one(&state, working, LAST_SYNC + 180_000);
+        assert_eq!(during.save_fix_requests, None);
+
+        let no_task = sync_one(&state, conflicted(7), LAST_SYNC + 360_000);
+        assert!(no_task.snapshot.prs[0].fix_requested);
+        assert_eq!(no_task.snapshot.prs[0].turn, Some(Turn::Theirs));
+
+        let after_the_hour = sync_one(&state, conflicted(7), ASKED_AT + HOUR_MS);
+        assert!(!after_the_hour.snapshot.prs[0].fix_requested);
+        assert_eq!(after_the_hour.snapshot.prs[0].turn, Some(Turn::Yours));
     }
 }
