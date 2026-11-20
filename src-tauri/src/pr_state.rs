@@ -1,7 +1,7 @@
 //! The one owner of what the popover shows: the Snapshot, the read
 //! watermarks, the turn starts, the snoozes, the fix requests, the merged
-//! list and the merge watermarks. Everything
-//! outside this module changes them only through the transitions on
+//! list and the merge watermarks. Everything outside this module changes
+//! them only through the transitions on
 //! [`PrState`], which hold these invariants:
 //!
 //! - `snapshot.merged` mirrors the merged list. The one exception is the
@@ -244,7 +244,7 @@ impl PrState {
 
     /// A sync fetched `prs` and read `catch_up` from GitHub's merged lists.
     /// The merges enter the merged list and the merge watermarks move past
-    /// them together, here and nowhere else. Unread counts are computed against the watermarks
+    /// them together. Unread counts are computed against the read watermarks
     /// as they are now, not as they were when the fetch started.
     pub fn sync_succeeded(
         &self,
@@ -1865,8 +1865,8 @@ mod tests {
         assert_eq!(state.merge_watermarks(), seeded);
     }
 
-    /// The watchlist stores GitHub's casing, and the removal names the repo
-    /// however the popover had it.
+    /// The removal matches the repo whatever its casing, as the watchlist
+    /// does.
     #[test]
     fn a_repo_leaving_the_watchlist_loses_its_merge_watermark_at_once() {
         let state = PrState::default();

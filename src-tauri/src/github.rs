@@ -1134,8 +1134,8 @@ fn collect_rate_limit(data: &Value) -> Option<RateLimit> {
     })
 }
 
-/// How many merged PRs one page of a catch-up asks for. Nearly every sync
-/// reads one node and stops, so the page is sized for the rare long read.
+/// How many merged PRs one page of a catch-up asks for. A sync with nothing
+/// new stops at the first node, so the page is sized for the rare long read.
 const MERGED_PAGE: usize = 20;
 /// The most PRs one repo adds to the Merged section in one catch-up.
 const CATCH_UP_CAP: usize = 100;
@@ -1177,8 +1177,8 @@ pub async fn fetch_merged_since(
         .await
 }
 
-/// One repo's read of its merged PRs, most recently updated first, across as
-/// many pages as it takes.
+/// One repo's read of its merged PRs, most recently updated first, across
+/// its pages.
 struct MergeScan<'a> {
     /// The watchlist entry, which keys the watermark.
     repo: &'a str,
@@ -6356,8 +6356,8 @@ mod tests {
             fetched.catch_up.watermarks,
             watermarks(&[("acme/widgets", Some("2026-07-12T10:00:00Z"))])
         );
-        // #8 was last updated before #9 merged, which settles it without the
-        // next page.
+        // #9 was last updated when it merged, so nothing after it can have
+        // merged later, and the next page is not needed.
         assert_eq!(github.request_count(), 1);
     }
 
