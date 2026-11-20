@@ -232,8 +232,8 @@ interface TonedState {
 //
 // A Copilot task that stopped, to ask the viewer something or because it
 // failed, outranks everything: the first is the backend's reason for the
-// turn whatever else is true of the PR, and neither shows anywhere on
-// GitHub's own PR page.
+// turn whatever else is true of the PR, and the second is the task giving
+// up, which no other state on the row says.
 //
 // After those, the head of the order (a review asked of you, then the
 // blockers in the backend's severity order, then mergeable) is the order the

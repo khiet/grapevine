@@ -293,8 +293,8 @@ pub struct PullRequest {
     pub ready_to_merge: bool,
     /// Whose move the PR waits on (see [`turn_for`]); `None` when there is no
     /// verdict, always so on a draft and in All unless a Copilot task waits
-    /// for the viewer there (see [`agent_tasks::decide`]). A your-turn row sits in the
-    /// Todo section, tints its mark and is what the tray counts. Same
+    /// for the viewer there (see [`agent_tasks::decide`]). A your-turn row
+    /// sits in the Todo section, tints its mark and is what the tray counts. Same
     /// property-not-event rule as `blocked_reasons`: it never reaches an
     /// unread badge.
     pub turn: Option<Turn>,
@@ -7339,8 +7339,7 @@ mod tests {
         assert_eq!(pr.agent_task_updated_at, Some(1_794_995_069_271));
     }
 
-    /// Copilot's own PRs are drafts while it works, and a draft has no turn
-    /// by GitHub's state.
+    /// A draft has no turn by GitHub's state.
     #[test]
     fn a_task_waiting_for_the_viewer_makes_a_draft_their_turn() {
         let github = Canned::new(vec![
@@ -7615,7 +7614,7 @@ mod tests {
     }
 
     /// Refused token, another token, then the first again: the first is
-    /// asked afresh, since much may have changed on GitHub's side.
+    /// asked afresh.
     #[test]
     fn going_back_to_a_refused_token_asks_again() {
         let github = Canned::new(vec![

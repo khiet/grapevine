@@ -73,7 +73,7 @@ fn state(state: &str) -> AgentTask {
 }
 
 /// Task times carry fractional seconds ("2026-11-18T09:44:29.271460483Z"),
-/// unlike every other time GitHub sends this app.
+/// which [`rfc3339_utc_to_epoch_secs`] does not read.
 fn epoch_ms(iso: &str) -> Option<u64> {
     let (whole, fraction) = match iso.split_once('.') {
         Some((whole, fraction)) => (format!("{whole}Z"), fraction.strip_suffix('Z')?),
@@ -107,9 +107,10 @@ pub fn assign(prs: &mut [PullRequest], tasks: &[Task], viewer_id: u64) {
 
 /// Marks `pr` with its task's state and moves its turn to match. A working
 /// task takes the PR off the viewer's hands as a requested conflict fix does
-/// (see [`fix_requests::wait_on_copilot`]). A task waiting for the viewer makes the turn theirs
-/// whatever GitHub's state said, a draft included: the task goes nowhere
-/// until they answer. Any other state leaves the turn alone.
+/// (see [`fix_requests::wait_on_copilot`]). A task waiting for the viewer
+/// makes the turn theirs whatever GitHub's state said, a draft included: the
+/// task goes nowhere until they answer. Any other state leaves the turn
+/// alone.
 pub fn decide(pr: &mut PullRequest, state: AgentTask, updated_at: Option<u64>) {
     pr.agent_task = Some(state);
     pr.agent_task_updated_at = updated_at;
