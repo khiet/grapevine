@@ -7,7 +7,7 @@ use crate::{
     github,
     github::{GithubError, PullRequest, RateLimit},
     keychain, merged,
-    pr_state::{Effects, PrState, Snapshot},
+    pr_state::{Effects, Missing, PrState, Snapshot},
     settings,
     store::{self, Store},
 };
@@ -76,6 +76,7 @@ pub fn start(app: &AppHandle) {
             store.load(&store::TURN_STARTS).unwrap_or_default(),
             store.load(&store::SNOOZES).unwrap_or_default(),
             store.load(&store::FIX_REQUESTS).unwrap_or_default(),
+            store.load(&store::MERGE_WATERMARKS).unwrap_or_default(),
         );
     }
     tauri::async_runtime::spawn(async move {
@@ -295,6 +296,9 @@ fn try_transition(
     let saved_merged = effects
         .save_merged
         .map_or(Ok(()), |merged| store.save(&store::MERGED, &merged));
+    let saved_watermarks = effects.save_merge_watermarks.map_or(Ok(()), |watermarks| {
+        store.save(&store::MERGE_WATERMARKS, &watermarks)
+    });
     if effects.save_snoozes.is_some() || effects.save_fix_requests.is_some() {
         state.expiries_changed.notify_one();
     }
@@ -315,6 +319,7 @@ fn try_transition(
     saved_read
         .and(saved_turns)
         .and(saved_merged)
+        .and(saved_watermarks)
         .and(saved_snoozes)
         .and(saved_fix_requests)
         .and(emitted)
@@ -343,18 +348,18 @@ pub fn now_epoch_ms() -> u64 {
 async fn sync_once(app: &AppHandle) -> Outcome {
     let result = fetch(app).await;
     let (delivered, outcome) = match result {
-        Ok(Some(FetchResult {
+        Ok(Fetched::Synced {
             prs,
-            newly_merged,
+            catch_up,
             rate_limit,
-        })) => (
+        }) => (
             transition(app, |state| {
-                state.sync_succeeded(prs, newly_merged, now_epoch_ms())
+                state.sync_succeeded(prs, catch_up, now_epoch_ms())
             }),
             Outcome::Synced { rate_limit },
         ),
-        Ok(None) => (
-            transition(app, PrState::unconfigured),
+        Ok(Fetched::Unconfigured(missing)) => (
+            transition(app, |state| state.unconfigured(missing)),
             Outcome::Unconfigured,
         ),
         Err(e) => {
@@ -415,36 +420,38 @@ async fn poll_deploys(app: &AppHandle) -> Result<(), GithubError> {
     Ok(())
 }
 
-/// One sync's fetch: the open PRs, any tracked PRs that turned out to have
-/// merged since the previous sync, and the budget GitHub reported.
-struct FetchResult {
-    prs: Vec<PullRequest>,
-    newly_merged: Vec<merged::MergedPr>,
-    rate_limit: Option<RateLimit>,
+/// What one sync's fetch came back with.
+enum Fetched {
+    /// The open PRs, what the watched repos merged since the previous sync,
+    /// and the budget GitHub reported last.
+    Synced {
+        prs: Vec<PullRequest>,
+        catch_up: merged::CatchUp,
+        rate_limit: Option<RateLimit>,
+    },
+    Unconfigured(Missing),
 }
 
-/// `Ok(None)` means the app is not configured (no token or no repos).
-async fn fetch(app: &AppHandle) -> Result<Option<FetchResult>, GithubError> {
+async fn fetch(app: &AppHandle) -> Result<Fetched, GithubError> {
     let Some(token) = keychain::load().map_err(GithubError::Other)? else {
-        return Ok(None);
+        return Ok(Fetched::Unconfigured(Missing::Token));
     };
     let repos = settings::load(&app.state::<Store>())
         .map_err(GithubError::Other)?
         .repos;
     if repos.is_empty() {
-        return Ok(None);
+        return Ok(Fetched::Unconfigured(Missing::Repos));
     }
     let fetched = github::fetch_open_prs(&token, &repos).await?;
-    let newly_merged = app
-        .state::<SyncState>()
-        .pr_state
-        .detect_merged(&token, &repos, &fetched.prs)
-        .await?;
-    Ok(Some(FetchResult {
+    // A failed catch-up fails the whole sync: the watermarks then stay where
+    // they are, and the next sync reads the same merges again.
+    let watermarks = app.state::<SyncState>().pr_state.merge_watermarks();
+    let merged = github::fetch_merged_since(&token, &repos, &watermarks).await?;
+    Ok(Fetched::Synced {
         prs: fetched.prs,
-        newly_merged,
-        rate_limit: fetched.rate_limit,
-    }))
+        catch_up: merged.catch_up,
+        rate_limit: merged.rate_limit.or(fetched.rate_limit),
+    })
 }
 
 #[cfg(test)]
