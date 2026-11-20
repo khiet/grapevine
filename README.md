@@ -46,6 +46,9 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   and All (everything else, quiet and browsable). Merged PRs stay in their own
   section until you dismiss them. Merges made while Grapevine was not running
   are caught up at the next sync, back to 7 days.
+- **What a merge changed.** A merged row names the kind of change (feat, fix,
+  chore), read from the PR title, and quotes the first line of its
+  description. Type a kind in the filter to narrow Merged to it.
 - **Filter and snooze.** Type to filter across every repo. Snooze a PR until
   it changes.
 - **Fix a conflict with Copilot.** On one of your own PRs with a merge

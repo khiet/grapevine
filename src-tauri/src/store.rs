@@ -195,6 +195,9 @@ mod tests {
                 completed_at: Some("2026-07-11T10:09:00Z".into()),
                 url: "https://github.com/acme/widgets/actions/runs/2".into(),
             }),
+            kind: Some("fix".into()),
+            breaking: true,
+            summary: Some("Ships it.".into()),
         }
     }
 
@@ -385,5 +388,8 @@ mod tests {
         assert_eq!(state[0].number, 3);
         assert_eq!(state[0].owner_avatar_url, "");
         assert_eq!(state[0].deploy, None);
+        assert_eq!(state[0].kind, None);
+        assert!(!state[0].breaking);
+        assert_eq!(state[0].summary, None);
     }
 }

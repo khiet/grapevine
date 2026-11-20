@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::merged::{CatchUp, Deploy, DeployState, MergedPr, Watermarks};
+use crate::merged::{self, CatchUp, Deploy, DeployState, MergedPr, Watermarks};
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
@@ -1236,7 +1236,8 @@ impl<'a> MergeScan<'a> {
                pullRequests(states: MERGED, first: {MERGED_PAGE}{after}, \
                             orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
                  pageInfo {{ hasNextPage endCursor }} \
-                 nodes {{ number title url updatedAt mergedAt author {{ login avatarUrl }} }} \
+                 nodes {{ number title body url updatedAt mergedAt \
+                         author {{ __typename login avatarUrl }} }} \
                }} \
              }} ",
             owner = json!(self.owner),
@@ -1336,7 +1337,8 @@ impl MergeScan<'_> {
 }
 
 /// The Merged section's entry for a merged PR node. This is all the section
-/// ever reads of the PR apart from its deploy.
+/// ever reads of the PR apart from its deploy, so the kind and the summary
+/// are as the PR stood when its merge was first seen.
 fn merged_entry(node: &Value, repo: &str, owner_avatar_url: &str, merged_at: &str) -> MergedPr {
     let text = |pointer: &str| {
         node.pointer(pointer)
@@ -1344,9 +1346,20 @@ fn merged_entry(node: &Value, repo: &str, owner_avatar_url: &str, merged_at: &st
             .unwrap_or_default()
             .to_string()
     };
+    let title = text("/title");
+    let (kind, breaking) = match merged::change_kind(&title) {
+        Some((kind, breaking)) => (Some(kind), breaking),
+        None => (None, false),
+    };
+    // A bot's description is boilerplate: release notes, a changelog, a
+    // table of bumped versions.
+    let summary = (!is_bot(node))
+        .then(|| node.get("body").and_then(Value::as_str))
+        .flatten()
+        .and_then(merged::summary);
     MergedPr {
         number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
-        title: text("/title"),
+        title,
         url: text("/url"),
         repo: repo.to_string(),
         // A null author means a deleted account, which GitHub calls "ghost".
@@ -1359,6 +1372,9 @@ fn merged_entry(node: &Value, repo: &str, owner_avatar_url: &str, merged_at: &st
         owner_avatar_url: owner_avatar_url.to_string(),
         merged_at: merged_at.to_string(),
         deploy: None,
+        kind,
+        breaking,
+        summary,
     }
 }
 
@@ -6413,8 +6429,72 @@ mod tests {
                 owner_avatar_url: "https://avatars.example/acme".into(),
                 merged_at: "2026-07-12T10:00:00Z".into(),
                 deploy: None,
+                kind: None,
+                breaking: false,
+                summary: None,
             }]
         );
+    }
+
+    /// The entry the catch-up makes of a merged PR of acme/widgets.
+    fn caught_up_entry(overrides: Value) -> MergedPr {
+        let node = with(merged_node(9, "2026-07-12T10:00:00Z"), overrides);
+        let mut caught_up = widgets_catch_up(Some("2026-07-12T08:00:00Z"), vec![node]);
+        caught_up.merged.remove(0)
+    }
+
+    #[test]
+    fn a_merged_pr_enters_with_its_kind_and_the_summary_of_its_description() {
+        let entry = caught_up_entry(json!({
+            "title": "fix(sync)!: retry failed webhook deliveries",
+            "body": "## Summary\n\nRetries a delivery three times before giving up.\n\n## Testing\n\nUnit.",
+        }));
+
+        assert_eq!(entry.kind.as_deref(), Some("fix"));
+        assert!(entry.breaking);
+        assert_eq!(
+            entry.summary.as_deref(),
+            Some("Retries a delivery three times before giving up.")
+        );
+        // The row strips the prefix; the entry keeps the title GitHub gave.
+        assert_eq!(entry.title, "fix(sync)!: retry failed webhook deliveries");
+    }
+
+    #[test]
+    fn a_merged_pr_with_a_plain_title_and_no_description_has_neither() {
+        for body in [json!(""), Value::Null] {
+            let entry = caught_up_entry(json!({ "title": "Add X", "body": body }));
+            assert_eq!(entry.kind, None);
+            assert!(!entry.breaking);
+            assert_eq!(entry.summary, None);
+        }
+    }
+
+    #[test]
+    fn a_merged_pr_by_a_bot_has_a_kind_but_no_summary() {
+        let entry = caught_up_entry(json!({
+            "title": "chore(deps): bump stripe-node to 17.4",
+            "body": "Bumps stripe-node from 17.3 to 17.4.",
+            "author": {
+                "__typename": "Bot",
+                "login": "dependabot",
+                "avatarUrl": "https://avatars.example/dependabot"
+            },
+        }));
+
+        assert_eq!(entry.kind.as_deref(), Some("chore"));
+        assert_eq!(entry.summary, None);
+    }
+
+    #[test]
+    fn the_catch_up_asks_for_the_description_and_who_wrote_it() {
+        let github = Canned::new(vec![widgets_merged(vec![])]);
+        let from = watermarks(&[("acme/widgets", None)]);
+        catch_up(&github, &["acme/widgets"], &from).unwrap();
+
+        let query = github.query(0);
+        assert!(query.contains(" body "), "{query}");
+        assert!(query.contains("author { __typename "), "{query}");
     }
 
     #[test]

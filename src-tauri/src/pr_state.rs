@@ -2239,6 +2239,9 @@ mod tests {
                     completed_at: Some("2026-07-11T10:09:00Z".into()),
                     url: "https://github.com/acme/widgets/actions/runs/2".into(),
                 }),
+                kind: Some("fix".into()),
+                breaking: true,
+                summary: Some("Ships it.".into()),
             }],
             snoozed: vec!["acme/widgets#7".into()],
             has_synced: true,
@@ -2304,7 +2307,10 @@ mod tests {
                         "state": "deployed",
                         "completed_at": "2026-07-11T10:09:00Z",
                         "url": "https://github.com/acme/widgets/actions/runs/2"
-                    }
+                    },
+                    "kind": "fix",
+                    "breaking": true,
+                    "summary": "Ships it."
                 }],
                 "snoozed": ["acme/widgets#7"],
                 "has_synced": true,

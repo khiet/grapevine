@@ -232,6 +232,9 @@ const mergedPr = {
   owner_avatar_url: "",
   merged_at: "2026-07-11T09:30:00Z",
   deploy: null,
+  kind: null,
+  breaking: false,
+  summary: null,
 } satisfies MergedPr;
 
 function listView(prs: PullRequest[], snoozed: string[] = []): ListView {

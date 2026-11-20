@@ -139,6 +139,9 @@ export interface DeployView {
 
 export interface MergedRowView {
   pr: MergedPr;
+  /** The title as the row shows it: without its Conventional Commit prefix
+   * when the entry has a kind, since the origin line then says the kind. */
+  title: string;
   /** Null when no deploy run has been found: the row then shows nothing
    * about deploys at all. */
   deploy: DeployView | null;
@@ -443,9 +446,26 @@ export function yourTurnCount(snapshot: Snapshot): number {
   return snapshot.prs.filter((pr) => isYourTurn(pr, snoozedKeys)).length;
 }
 
-// The fields a filter term can match: title, repo, "#number", and author.
-// Only PullRequest and MergedPr flow through here, and both carry these.
+// What a filter term can match on any row: title, repo, "#number", and
+// author. PullRequest and MergedPr both carry these.
 type Filterable = Pick<PullRequest, "title" | "repo" | "author" | "number">;
+
+const searchText = (item: Filterable) =>
+  `${item.title} ${item.repo} #${item.number} ${item.author}`;
+
+// A Merged row also matches on what it says about its change: the kind, the
+// word "breaking", and the summary.
+const mergedSearchText = (pr: MergedPr) =>
+  [searchText(pr), pr.kind, pr.breaking && "breaking", pr.summary]
+    .filter(Boolean)
+    .join(" ");
+
+// The backend's rule for a kind, which is the only reader of it: this strips
+// the prefix from a title already known to carry one.
+const KIND_PREFIX = /^[a-z]+(\([^)]*\))?!?: /;
+
+const mergedTitle = (pr: MergedPr) =>
+  pr.kind === null ? pr.title : pr.title.replace(KIND_PREFIX, "");
 
 const queryTerms = (query: string) =>
   query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -454,9 +474,8 @@ const queryTerms = (query: string) =>
 // (case-insensitive). Terms are AND'd, so "acme fix" narrows rather than
 // widens. No terms matches everything; "is a filter active" is asked of the
 // same term list, so the two can never disagree.
-function matchesTerms(item: Filterable, terms: string[]): boolean {
-  const haystack =
-    `${item.title} ${item.repo} #${item.number} ${item.author}`.toLowerCase();
+function matchesTerms(text: string, terms: string[]): boolean {
+  const haystack = text.toLowerCase();
   return terms.every((term) => haystack.includes(term));
 }
 
@@ -526,8 +545,10 @@ export function derivePopover(
 
   const terms = queryTerms(query);
   const filtering = terms.length > 0;
-  const prs = snapshot.prs.filter((pr) => matchesTerms(pr, terms));
-  const merged = snapshot.merged.filter((pr) => matchesTerms(pr, terms));
+  const prs = snapshot.prs.filter((pr) => matchesTerms(searchText(pr), terms));
+  const merged = snapshot.merged.filter((pr) =>
+    matchesTerms(mergedSearchText(pr), terms),
+  );
   if (filtering && prs.length === 0 && merged.length === 0) {
     return { offerMarkAllRead, content: { kind: "no-matches", query } };
   }
@@ -632,6 +653,7 @@ export function derivePopover(
         kind: "merged",
         rows: merged.map((pr) => ({
           pr,
+          title: mergedTitle(pr),
           deploy: deployView(pr.deploy),
           actions: MERGED_ACTIONS,
         })),

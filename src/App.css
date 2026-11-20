@@ -760,6 +760,18 @@ body {
   text-align: right;
 }
 
+/* A merged row's one line of its PR description, between the title and the
+   metadata line and in the metadata's type: it explains the title, so it
+   never competes with it. Clipped to one line; the element's title
+   attribute carries the full text. */
+.pr-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--text-m);
+}
+
 .pr-origin {
   display: flex;
   gap: 8px;
@@ -772,6 +784,13 @@ body {
    Deliberately the same type as the rest of the line - the fixed position is
    the emphasis; the number is not a signal. */
 .pr-number {
+  flex: none;
+}
+
+/* A merged row's kind of change ("feat", "fix") and "breaking": plain words
+   in the metadata line's type, ahead of the number. They never shrink: the
+   repo gives way, as it does for the number. */
+.pr-kind {
   flex: none;
 }
 

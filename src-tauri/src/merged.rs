@@ -28,6 +28,238 @@ pub struct MergedPr {
     /// saved before this field existed.
     #[serde(default)]
     pub deploy: Option<Deploy>,
+    /// The Conventional Commit type the title opens with, as written
+    /// (see [`change_kind`]). `None` for a title with no such prefix, and for
+    /// entries saved before this field existed. Like the summary, taken when
+    /// the merge is first seen and never refreshed.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Whether the title's prefix marks a breaking change. Never true
+    /// without a `kind`.
+    #[serde(default)]
+    pub breaking: bool,
+    /// The first prose paragraph of the PR description (see [`summary`]).
+    /// `None` for a bot's PR, a description with no prose, and entries saved
+    /// before this field existed.
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+/// The kind of change a PR title names with a Conventional Commit prefix,
+/// `^([a-z]+)(\([^)]*\))?(!)?: `, and whether the prefix marks it breaking.
+/// The kind is kept as written, so any lowercase word counts, not only the
+/// well-known types. `None` for a title with no such prefix.
+pub fn change_kind(title: &str) -> Option<(String, bool)> {
+    let kind_len = title.bytes().take_while(u8::is_ascii_lowercase).count();
+    if kind_len == 0 {
+        return None;
+    }
+    let (kind, mut rest) = title.split_at(kind_len);
+    if let Some(scoped) = rest.strip_prefix('(') {
+        rest = &scoped[scoped.find(')')? + 1..];
+    }
+    let breaking = rest.starts_with('!');
+    rest = rest.strip_prefix('!').unwrap_or(rest);
+    rest.starts_with(": ").then(|| (kind.to_string(), breaking))
+}
+
+/// The most characters a summary keeps.
+const SUMMARY_CHARS: usize = 200;
+
+/// One line saying what a PR does: the first prose paragraph of its markdown
+/// description, reduced to plain text and cut to [`SUMMARY_CHARS`]. Headings,
+/// HTML comments, rules and lines holding only an image or HTML tags are
+/// passed over on the way to it. `None` when no prose is left.
+pub fn summary(body: &str) -> Option<String> {
+    let body = without_html_comments(body);
+    let mut lines = body
+        .lines()
+        .map(str::trim)
+        .skip_while(|line| !is_prose(line));
+    let first = lines.next()?;
+    let mut paragraph = list_item_text(first).unwrap_or(first).to_string();
+    // A list item ends where the next one starts, so the summary is one
+    // item and not the whole list run together.
+    for line in lines.take_while(|line| is_prose(line) && list_item_text(line).is_none()) {
+        paragraph.push(' ');
+        paragraph.push_str(line);
+    }
+    let text = inline_text(&paragraph);
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let cut: String = words.join(" ").chars().take(SUMMARY_CHARS).collect();
+    let cut = cut.trim_end();
+    (!cut.is_empty()).then(|| cut.to_string())
+}
+
+/// `body` without its `<!-- -->` comments. An unclosed comment runs to the
+/// end, as GitHub renders it.
+fn without_html_comments(body: &str) -> String {
+    let mut kept = String::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("<!--") {
+        kept.push_str(&rest[..start]);
+        rest = match rest[start..].find("-->") {
+            Some(end) => &rest[start + end + 3..],
+            None => "",
+        };
+    }
+    kept.push_str(rest);
+    kept
+}
+
+/// Whether a trimmed line can open or continue a summary: not blank, and not
+/// a heading, a horizontal rule, or a line of nothing but images and HTML
+/// tags.
+fn is_prose(line: &str) -> bool {
+    !(line.is_empty() || is_heading(line) || is_rule(line) || is_only_markup(line))
+}
+
+fn is_heading(line: &str) -> bool {
+    let text = line.trim_start_matches('#');
+    let hashes = line.len() - text.len();
+    (1..=6).contains(&hashes) && (text.is_empty() || text.starts_with(' '))
+}
+
+fn is_rule(line: &str) -> bool {
+    ['-', '*', '_'].into_iter().any(|mark| {
+        line.chars().filter(|&c| c == mark).count() >= 3
+            && line.chars().all(|c| c == mark || c == ' ')
+    })
+}
+
+/// Whether nothing is left of the line once its images and HTML tags are
+/// taken out. A badge is an image inside a link, so link wrappers go too.
+fn is_only_markup(line: &str) -> bool {
+    let mut rest = line;
+    let mut found = false;
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return found;
+        }
+        let after = if rest.starts_with('<') {
+            rest.find('>').map(|end| &rest[end + 1..])
+        } else if let Some(wrapped) = rest.strip_prefix("[!") {
+            // "[![alt](image)](target)": the image, then the link's target.
+            link_end(wrapped)
+                .and_then(|(_, after)| after.strip_prefix(']'))
+                .and_then(|after| after.strip_prefix('('))
+                .and_then(|target| target.find(')').map(|end| &target[end + 1..]))
+        } else if let Some(image) = rest.strip_prefix('!') {
+            link_end(image).map(|(_, after)| after)
+        } else {
+            None
+        };
+        match after {
+            Some(after) => {
+                rest = after;
+                found = true;
+            }
+            None => return false,
+        }
+    }
+}
+
+/// The text of a trimmed line that is a list item, without its bullet or
+/// number and without a task checkbox. `None` for any other line.
+fn list_item_text(line: &str) -> Option<&str> {
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    let item = if digits > 0 {
+        let numbered = &line[digits..];
+        numbered
+            .strip_prefix(". ")
+            .or_else(|| numbered.strip_prefix(") "))?
+    } else {
+        ["- ", "* ", "+ "]
+            .into_iter()
+            .find_map(|bullet| line.strip_prefix(bullet))?
+    };
+    let item = item.trim_start();
+    let task = ["[ ] ", "[x] ", "[X] "]
+        .into_iter()
+        .find_map(|checkbox| item.strip_prefix(checkbox));
+    Some(task.unwrap_or(item).trim_start())
+}
+
+/// For text starting at a markdown link's `[`: the label and what follows
+/// the closing `)` of its target. `None` when no `[label](target)` starts
+/// there. Brackets and parentheses nest, so a label holding a link and a
+/// target holding parentheses both close where they should.
+fn link_end(text: &str) -> Option<(&str, &str)> {
+    let close = matching(text, '[', ']')?;
+    let target = &text[close + 1..];
+    let end = matching(target, '(', ')')?;
+    Some((&text[1..close], &target[end + 1..]))
+}
+
+/// The byte index of the `close` that pairs with the `open` that `text`
+/// starts with.
+fn matching(text: &str, open: char, close: char) -> Option<usize> {
+    if !text.starts_with(open) {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (at, c) in text.char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(at);
+            }
+        }
+    }
+    None
+}
+
+/// Inline markdown as the text a reader sees: a link is its label, an image
+/// its alt text, and backticks and emphasis markers are gone. Code keeps its
+/// characters, so `snake_case` in backticks survives, and an underscore
+/// inside a word is never read as emphasis.
+fn inline_text(markdown: &str) -> String {
+    let mut text = String::new();
+    let mut rest = markdown;
+    let mut in_code = false;
+    let mut previous: Option<char> = None;
+    while let Some(c) = rest.chars().next() {
+        let after = &rest[c.len_utf8()..];
+        let next = after.chars().next();
+        if c == '`' {
+            in_code = !in_code;
+            rest = after;
+            continue;
+        }
+        if !in_code {
+            let link = match c {
+                '[' => link_end(rest),
+                '!' if next == Some('[') => link_end(after),
+                _ => None,
+            };
+            if let Some((label, after_link)) = link {
+                text.push_str(&inline_text(label));
+                previous = Some(']');
+                rest = after_link;
+                continue;
+            }
+            let spaced = |side: Option<char>| side.is_none_or(char::is_whitespace);
+            let in_word = |side: Option<char>| side.is_some_and(char::is_alphanumeric);
+            let emphasis = match c {
+                // Alone between spaces it is a bullet or a multiplication sign.
+                '*' => !(spaced(previous) && spaced(next)),
+                '_' => !(in_word(previous) && in_word(next)) && !(spaced(previous) && spaced(next)),
+                _ => false,
+            };
+            if emphasis {
+                previous = Some(c);
+                rest = after;
+                continue;
+            }
+        }
+        text.push(c);
+        previous = Some(c);
+        rest = after;
+    }
+    text
 }
 
 /// Where the deploy of a merge commit stands, folded from every deploy run on
@@ -164,6 +396,9 @@ pub mod testing {
             owner_avatar_url: "https://avatars.example/acme".into(),
             merged_at: merged_at.into(),
             deploy: None,
+            kind: None,
+            breaking: false,
+            summary: None,
         }
     }
 
@@ -342,5 +577,157 @@ mod tests {
         );
         let numbers: Vec<u64> = state.iter().map(|e| e.number).collect();
         assert_eq!(numbers, vec![2, 3, 1]);
+    }
+
+    fn kind(title: &str) -> Option<(String, bool)> {
+        change_kind(title)
+    }
+
+    #[test]
+    fn a_conventional_commit_prefix_names_the_kind() {
+        assert_eq!(kind("feat: add X"), Some(("feat".into(), false)));
+        assert_eq!(kind("fix(sync): Y"), Some(("fix".into(), false)));
+        // Kept as written: any lowercase word is a kind.
+        assert_eq!(kind("wip: thing"), Some(("wip".into(), false)));
+    }
+
+    #[test]
+    fn a_bang_before_the_colon_marks_the_change_breaking() {
+        assert_eq!(kind("refactor!: Z"), Some(("refactor".into(), true)));
+        assert_eq!(kind("feat(api)!: drop v1"), Some(("feat".into(), true)));
+    }
+
+    #[test]
+    fn a_title_without_the_prefix_has_no_kind() {
+        assert_eq!(kind("Add X"), None);
+        assert_eq!(kind("WIP: thing"), None);
+        assert_eq!(kind("Feat: add X"), None);
+        assert_eq!(kind("feat:add X"), None);
+        assert_eq!(kind("feat add X"), None);
+        assert_eq!(kind("feat(sync: add X"), None);
+        assert_eq!(kind(": add X"), None);
+        assert_eq!(kind(""), None);
+    }
+
+    fn summarized(body: &str) -> Option<&'static str> {
+        summary(body).map(|text| &*text.leak())
+    }
+
+    #[test]
+    fn the_summary_is_the_first_paragraph_on_one_line() {
+        assert_eq!(
+            summarized("Caches the rates\r\nfor   an hour.\r\n\r\nSecond paragraph."),
+            Some("Caches the rates for an hour.")
+        );
+    }
+
+    #[test]
+    fn a_heading_before_the_first_paragraph_is_passed_over() {
+        let body = "## Summary\n\nRegenerates the README demo gif so the Merged header \
+                    action matches the app after #150.\n\n## Testing\n\nNone.";
+        assert_eq!(
+            summarized(body),
+            Some("Regenerates the README demo gif so the Merged header action matches the app after #150.")
+        );
+        // A heading ends the paragraph above it, blank line or not.
+        assert_eq!(
+            summarized("Adds the thing.\n## Why"),
+            Some("Adds the thing.")
+        );
+        // "#150" opens no heading.
+        assert_eq!(summarized("#150 follow-up."), Some("#150 follow-up."));
+    }
+
+    #[test]
+    fn an_html_comment_template_is_removed() {
+        let body = "<!--\nDescribe your change.\nLink the issue.\n-->\n\nFixes the retry loop.";
+        assert_eq!(summarized(body), Some("Fixes the retry loop."));
+        assert_eq!(
+            summarized("Fixes <!-- which? --> the retry loop."),
+            Some("Fixes the retry loop.")
+        );
+        assert_eq!(summarized("<!-- never closed\nFixes the retry loop."), None);
+    }
+
+    #[test]
+    fn lines_of_only_images_tags_or_rules_are_passed_over() {
+        assert_eq!(
+            summarized("![before](https://img.example/a.png)\n\nMoves the button."),
+            Some("Moves the button.")
+        );
+        assert_eq!(
+            summarized(
+                "[![ci](https://img.example/badge.svg)](https://ci.example/run)\nMoves the button."
+            ),
+            Some("Moves the button.")
+        );
+        assert_eq!(
+            summarized("<img src=\"a.png\" width=\"200\">\n<details>\n---\n***\nMoves the button."),
+            Some("Moves the button.")
+        );
+        // Tags around words leave the words, so the line is prose.
+        assert_eq!(
+            summarized("<p>Moves the button.</p>"),
+            Some("<p>Moves the button.</p>")
+        );
+    }
+
+    #[test]
+    fn a_list_item_gives_its_text_without_the_marker() {
+        assert_eq!(
+            summarized("- Adds the cache\n- Drops the old one"),
+            Some("Adds the cache")
+        );
+        assert_eq!(summarized("* [x] Adds the cache"), Some("Adds the cache"));
+        assert_eq!(summarized("- [ ] Adds the cache"), Some("Adds the cache"));
+        assert_eq!(
+            summarized("1. Adds the cache\n2. More"),
+            Some("Adds the cache")
+        );
+        // An item wrapped over two lines is still one item.
+        assert_eq!(
+            summarized("- Adds the cache\n  for rates\n- More"),
+            Some("Adds the cache for rates")
+        );
+    }
+
+    #[test]
+    fn inline_markdown_is_reduced_to_its_text() {
+        assert_eq!(
+            summarized("Moves `is_bot` to [the **sync** module](https://example.com/a_(b)) and *renames* __it__."),
+            Some("Moves is_bot to the sync module and renames it.")
+        );
+        // An image inside prose leaves its alt text.
+        assert_eq!(
+            summarized("See ![the chart](https://img.example/c.png) below."),
+            Some("See the chart below.")
+        );
+        // Not emphasis: an underscore inside a word, a star between spaces,
+        // and brackets that are no link.
+        assert_eq!(
+            summarized("Sets max_retries to 2 * n [sic]."),
+            Some("Sets max_retries to 2 * n [sic].")
+        );
+    }
+
+    #[test]
+    fn a_body_with_no_prose_has_no_summary() {
+        assert_eq!(summarized(""), None);
+        assert_eq!(summarized("  \n\n"), None);
+        assert_eq!(summarized("## Summary\n\n<!-- fill me in -->\n\n---"), None);
+        assert_eq!(summarized("****"), None);
+    }
+
+    #[test]
+    fn a_long_summary_is_cut_to_200_characters_not_bytes() {
+        // 300 two-byte characters, then 300 four-byte ones.
+        assert_eq!(summary(&"\u{e9}".repeat(300)), Some("\u{e9}".repeat(200)));
+        assert_eq!(
+            summary(&"\u{1f347}".repeat(300)),
+            Some("\u{1f347}".repeat(200))
+        );
+        // The cut never leaves a trailing space.
+        let words = format!("{} tail", "a".repeat(199));
+        assert_eq!(summary(&words), Some("a".repeat(199)));
     }
 }

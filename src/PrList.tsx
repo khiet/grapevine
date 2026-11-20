@@ -852,7 +852,7 @@ function SnoozedGroup({ group }: { group: SnoozedGroupView }) {
    button, not nested in it, which would be invalid HTML. No mark_read here:
    merged PRs carry no unread state. */
 function MergedRow({ row }: { row: MergedRowView }) {
-  const { pr, deploy } = row;
+  const { pr, title, deploy } = row;
   const menu = useRowMenu(row.actions.length > 0);
   // The status in the row's state slot, toned like an open row's state. A
   // deploy that landed says when, in the row's own timestamp format.
@@ -886,10 +886,20 @@ function MergedRow({ row }: { row: MergedRowView }) {
         />
         <span className="pr-text">
           <span className="pr-title-row">
-            <span className="pr-title">{pr.title}</span>
+            <span className="pr-title">{title}</span>
             <span className="pr-updated">{formatUpdated(pr.merged_at)}</span>
           </span>
+          {/* One line of the description; title carries what the line
+              clips. */}
+          {pr.summary && (
+            <span className="pr-summary" title={pr.summary}>
+              {pr.summary}
+            </span>
+          )}
           <span className="pr-origin">
+            {/* What kind of change it was, in the title prefix's own word. */}
+            {pr.kind && <span className="pr-kind">{pr.kind}</span>}
+            {pr.breaking && <span className="pr-kind">breaking</span>}
             <span className="pr-number">#{pr.number}</span>
             <span className="pr-repo">{pr.repo}</span>
             {/* Holds the status's place in the state slot, so the repo

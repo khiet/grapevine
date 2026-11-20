@@ -3,10 +3,64 @@ import {
   SNAPSHOT_EVENT,
   type Adapter,
   type Appearance,
+  type MergedPr,
   type PrAction,
   type PullRequest,
   type Snapshot,
 } from "./index";
+
+/** Merged entries covering what a Merged row can say about its change: a
+ * kind with a summary, a breaking change, and neither, which is also how an
+ * entry saved before kinds and summaries existed looks. Newest merge first. */
+export const SAMPLE_MERGED: MergedPr[] = [
+  {
+    number: 1301,
+    title: "feat(checkout): retry failed webhook deliveries",
+    url: "https://github.com/acme/checkout-api/pull/1301",
+    repo: "acme/checkout-api",
+    author: "octocat",
+    avatar_url: "",
+    owner_avatar_url: "",
+    merged_at: "2026-11-20T15:36:00Z",
+    deploy: {
+      state: "deployed",
+      completed_at: "2026-11-20T15:40:00Z",
+      url: "https://github.com/acme/checkout-api/actions/runs/11873",
+    },
+    kind: "feat",
+    breaking: false,
+    summary:
+      "Retries a failed webhook delivery three times with backoff before marking it dead, so a brief outage on the receiving side no longer drops events.",
+  },
+  {
+    number: 2330,
+    title: "refactor!: drop the v1 orders endpoint",
+    url: "https://github.com/acme/web-app/pull/2330",
+    repo: "acme/web-app",
+    author: "hubot",
+    avatar_url: "",
+    owner_avatar_url: "",
+    merged_at: "2026-11-20T14:10:00Z",
+    deploy: null,
+    kind: "refactor",
+    breaking: true,
+    summary: "Removes /v1/orders. Clients must call /v2/orders.",
+  },
+  {
+    number: 2309,
+    title: "Show delivery ETA on the order confirmation",
+    url: "https://github.com/acme/web-app/pull/2309",
+    repo: "acme/web-app",
+    author: "octocat",
+    avatar_url: "",
+    owner_avatar_url: "",
+    merged_at: "2026-11-20T11:02:00Z",
+    deploy: null,
+    kind: null,
+    breaking: false,
+    summary: null,
+  },
+];
 
 export interface FakeBackend {
   adapter: Adapter;
@@ -129,6 +183,10 @@ export function createFakeBackend(
               // The fake has no clock; the PR's last update stands in.
               merged_at: pr.updated_at,
               deploy: null,
+              // The fake reads no title prefix and has no description.
+              kind: null,
+              breaking: false,
+              summary: null,
             },
             ...snapshot.merged,
           ],

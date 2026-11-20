@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 import { EMPTY_SNAPSHOT, type MergedPr, type PullRequest } from "./backend";
+import { SAMPLE_MERGED } from "./backend/fake";
 import { derivePopover, type ListView, type WritesPending } from "./popoverView";
 import PrList, {
   DEFAULT_COLLAPSED,
@@ -162,6 +163,9 @@ const mergedPr = {
   owner_avatar_url: "",
   merged_at: "2026-07-11T09:30:00Z",
   deploy: null,
+  kind: null,
+  breaking: false,
+  summary: null,
 } satisfies MergedPr;
 
 /** The synced list's markup with the default sections collapsed. */
@@ -431,6 +435,49 @@ test("the deploy control sits outside the row button, over a hidden copy in the 
   expect(row).toMatch(
     /<span class="pr-title">[^<]*<\/span><span class="pr-updated">[^<]+<\/span><\/span>/,
   );
+});
+
+// The row button of each sample Merged entry: kind with summary, breaking,
+// and neither.
+const sampleRows = () =>
+  renderList([], SAMPLE_MERGED).map(
+    (li) => li.match(/<button[^>]*class="pr-row[\s\S]*?<\/button>/)?.[0] ?? "",
+  );
+// The words of a row's origin line, in order.
+const originWords = (row: string) =>
+  [...(row.match(/<span class="pr-origin">[\s\S]*$/)?.[0] ?? "").matchAll(/>([^<]+)</g)].map(
+    (m) => m[1],
+  );
+
+test("a merged row with a kind leads its origin line with it and drops the prefix from the title", () => {
+  const [feat] = sampleRows();
+  expect(feat).toContain('<span class="pr-title">retry failed webhook deliveries</span>');
+  expect(originWords(feat).slice(0, 3)).toEqual(["feat", "#1301", "acme/checkout-api"]);
+});
+
+test("a breaking merged row says so after its kind", () => {
+  const [, breaking] = sampleRows();
+  expect(breaking).toContain('<span class="pr-title">drop the v1 orders endpoint</span>');
+  expect(originWords(breaking)).toEqual(["refactor", "breaking", "#2330", "acme/web-app"]);
+});
+
+test("a merged row shows its summary under the title, in full as the tooltip", () => {
+  const [feat] = sampleRows();
+  const summary = SAMPLE_MERGED[0].summary;
+  expect(feat).toContain(`<span class="pr-summary" title="${summary}">${summary}</span>`);
+  // Between the title and the origin line.
+  expect(feat.indexOf("pr-title-row")).toBeLessThan(feat.indexOf("pr-summary"));
+  expect(feat.indexOf("pr-summary")).toBeLessThan(feat.indexOf("pr-origin"));
+});
+
+test("a merged row with neither kind nor summary is the row it was", () => {
+  const [, , plain] = sampleRows();
+  expect(plain).toContain(
+    '<span class="pr-title">Show delivery ETA on the order confirmation</span>',
+  );
+  expect(originWords(plain)).toEqual(["#2309", "acme/web-app"]);
+  expect(plain).not.toContain("pr-summary");
+  expect(plain).not.toContain("pr-kind");
 });
 
 test("a merged row with no deploy run shows nothing in the state slot", () => {

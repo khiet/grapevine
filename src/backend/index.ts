@@ -143,6 +143,16 @@ export interface MergedPr {
   /** The deploy of the merge commit; null when no deploy run has
    * been found, which is forever for a repo that has none. */
   deploy: Deploy | null;
+  /** The Conventional Commit type the title opens with ("feat", "fix"), as
+   * written; null for a title with no such prefix and for an entry saved
+   * before kinds existed. */
+  kind: string | null;
+  /** The title's prefix marks a breaking change. Never true without a kind. */
+  breaking: boolean;
+  /** The first prose paragraph of the PR description as plain text, at most
+   * 200 characters; null for a bot's PR, a description with no prose, and an
+   * entry saved before summaries existed. */
+  summary: string | null;
 }
 
 /** Every state but "deploying" is final. */

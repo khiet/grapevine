@@ -70,6 +70,9 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     owner_avatar_url: avatars[repo.split("/")[0]],
     merged_at: at(mergedAt),
     deploy,
+    kind: null,
+    breaking: false,
+    summary: null,
   });
   const run = (repo: string, id: number) =>
     `https://github.com/${repo}/actions/runs/${id}`;

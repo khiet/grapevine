@@ -64,6 +64,9 @@ const mergedPr = (overrides: Partial<MergedPr> = {}): MergedPr => ({
   owner_avatar_url: "https://avatars.example/acme",
   merged_at: "2026-07-11T09:30:00Z",
   deploy: null,
+  kind: null,
+  breaking: false,
+  summary: null,
   ...overrides,
 });
 
@@ -426,7 +429,12 @@ test("Merged follows the PR sections while it holds rows", () => {
   expect(mergedSection.count).toBe(2);
   expect(mergedSection.body).toEqual({
     kind: "merged",
-    rows: merged.map((pr) => ({ pr, deploy: null, actions: expect.any(Array) })),
+    rows: merged.map((pr) => ({
+      pr,
+      title: pr.title,
+      deploy: null,
+      actions: expect.any(Array),
+    })),
   });
 });
 
@@ -545,9 +553,78 @@ test("a filter force-expands collapsed sections and keeps only matching rows", (
   expect(numbers(view, "mine")).toEqual([42]);
   expect(section(view, "merged").body).toEqual({
     kind: "merged",
-    rows: [{ pr: FILTER_FIXTURE.merged[0], deploy: null, actions: expect.any(Array) }],
+    rows: [
+      {
+        pr: FILTER_FIXTURE.merged[0],
+        title: "Flaky retry removed",
+        deploy: null,
+        actions: expect.any(Array),
+      },
+    ],
   });
   expect(view.canToggle).toBe(false);
+});
+
+// The Merged rows of a snapshot holding just `merged`, under `query`.
+const mergedRows = (merged: MergedPr[], query = "") => {
+  const view = derivePopover(synced({ merged }), query, ALL_EXPANDED, NOW);
+  if (view.content.kind !== "list") return [];
+  const { body } = section(view.content, "merged");
+  if (body.kind !== "merged") throw new Error(`merged body is ${body.kind}`);
+  return body.rows;
+};
+
+test("a merged row with a kind shows its title without the prefix", () => {
+  const titles = mergedRows([
+    mergedPr({ title: "feat: add X", kind: "feat" }),
+    mergedPr({ title: "fix(sync): Y", kind: "fix" }),
+    mergedPr({ title: "refactor!: Z", kind: "refactor", breaking: true }),
+    mergedPr({ title: "feat(a: b)!: nested: colons", kind: "feat", breaking: true }),
+  ]).map((row) => row.title);
+  expect(titles).toEqual(["add X", "Y", "Z", "nested: colons"]);
+});
+
+test("a merged row without a kind shows its title as GitHub has it", () => {
+  const titles = mergedRows([
+    mergedPr({ title: "Add X" }),
+    mergedPr({ title: "WIP: thing" }),
+    // Saved before kinds existed: the prefix is not read after the fact.
+    mergedPr({ title: "feat: add X" }),
+  ]).map((row) => row.title);
+  expect(titles).toEqual(["Add X", "WIP: thing", "feat: add X"]);
+});
+
+const KINDS_FIXTURE = [
+  mergedPr({ number: 93, title: "feat: add X", kind: "feat", summary: "Adds the exporter." }),
+  mergedPr({ number: 92, title: "refactor!: Z", kind: "refactor", breaking: true }),
+  mergedPr({ number: 91, title: "fix(sync): Y", kind: "fix", summary: "Stops the Double retry." }),
+  mergedPr({ number: 90, title: "feat: add W", kind: "feat" }),
+  mergedPr({ number: 89, title: "Add V" }),
+];
+
+const filteredNumbers = (query: string) =>
+  mergedRows(KINDS_FIXTURE, query).map((row) => row.pr.number);
+
+test("typing a kind narrows Merged to that kind, newest merge first", () => {
+  expect(filteredNumbers("feat")).toEqual([93, 90]);
+  expect(filteredNumbers("FIX")).toEqual([91]);
+});
+
+test("typing breaking narrows Merged to the breaking changes", () => {
+  expect(filteredNumbers("breaking")).toEqual([92]);
+  expect(filteredNumbers("break")).toEqual([92]);
+});
+
+test("a word that appears only in a summary finds its merged row", () => {
+  expect(filteredNumbers("exporter")).toEqual([93]);
+  expect(filteredNumbers("double")).toEqual([91]);
+  // Terms are AND'd across the kind and the summary.
+  expect(filteredNumbers("feat exporter")).toEqual([93]);
+  expect(filteredNumbers("fix exporter")).toEqual([]);
+});
+
+test("Merged keeps the order of the snapshot whatever its rows say", () => {
+  expect(filteredNumbers("")).toEqual([93, 92, 91, 90, 89]);
 });
 
 test("a term matches title, repo, author, or #number, case-insensitively", () => {

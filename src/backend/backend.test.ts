@@ -31,6 +31,9 @@ function merged(repo: string, number: number): MergedPr {
     owner_avatar_url: "",
     merged_at: "2026-09-30T09:00:00Z",
     deploy: null,
+    kind: null,
+    breaking: false,
+    summary: null,
   };
 }
 
