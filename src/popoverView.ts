@@ -460,8 +460,9 @@ const mergedSearchText = (pr: MergedPr) =>
     .filter(Boolean)
     .join(" ");
 
-// The backend's rule for a kind, which is the only reader of it: this strips
-// the prefix from a title already known to carry one.
+// The prefix as the backend's `change_kind` reads it. The backend alone
+// decides whether a title has a kind; this only strips the prefix from a
+// title it gave one.
 const KIND_PREFIX = /^[a-z]+(\([^)]*\))?!?: /;
 
 const mergedTitle = (pr: MergedPr) =>

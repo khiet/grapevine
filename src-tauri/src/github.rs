@@ -1352,8 +1352,6 @@ fn merged_entry(node: &Value, repo: &str, owner_avatar_url: &str, merged_at: &st
         Some((kind, breaking)) => (Some(kind), breaking),
         None => (None, false),
     };
-    // A bot's description is boilerplate: release notes, a changelog, a
-    // table of bumped versions.
     let summary = (!is_bot(node))
         .then(|| node.get("body").and_then(Value::as_str))
         .flatten()

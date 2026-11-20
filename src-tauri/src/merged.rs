@@ -28,19 +28,19 @@ pub struct MergedPr {
     /// saved before this field existed.
     #[serde(default)]
     pub deploy: Option<Deploy>,
-    /// The Conventional Commit type the title opens with, as written
-    /// (see [`crate::pr_text::change_kind`]). `None` for a title with no such prefix, and for
-    /// entries saved before this field existed. Like the summary, taken when
-    /// the merge is first seen and never refreshed.
+    /// The Conventional Commit type the title opens with, as written (see
+    /// [`crate::pr_text::change_kind`]). `None` for a title with no such
+    /// prefix, and for entries saved before this field existed. Like the
+    /// summary, taken when the merge is first seen and never refreshed.
     #[serde(default)]
     pub kind: Option<String>,
     /// Whether the title's prefix marks a breaking change. Never true
     /// without a `kind`.
     #[serde(default)]
     pub breaking: bool,
-    /// The first prose paragraph of the PR description (see [`crate::pr_text::summary`]).
-    /// `None` for a bot's PR, a description with no prose, and entries saved
-    /// before this field existed.
+    /// The first prose paragraph of the PR description (see
+    /// [`crate::pr_text::summary`]). `None` for a bot's PR, a description
+    /// with no prose, and entries saved before this field existed.
     #[serde(default)]
     pub summary: Option<String>,
 }
