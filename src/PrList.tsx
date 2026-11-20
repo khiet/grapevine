@@ -897,7 +897,6 @@ function MergedRow({ row }: { row: MergedRowView }) {
             </span>
           )}
           <span className="pr-origin">
-            {/* What kind of change it was, in the title prefix's own word. */}
             {pr.kind && <span className="pr-kind">{pr.kind}</span>}
             {pr.breaking && <span className="pr-kind">breaking</span>}
             <span className="pr-number">#{pr.number}</span>

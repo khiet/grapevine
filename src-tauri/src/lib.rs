@@ -21,6 +21,7 @@ mod linux_popover;
 mod merged;
 mod popover;
 mod pr_state;
+mod pr_text;
 mod settings;
 mod snooze;
 mod store;

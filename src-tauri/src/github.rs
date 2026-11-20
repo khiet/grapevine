@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::merged::{self, CatchUp, Deploy, DeployState, MergedPr, Watermarks};
+use crate::merged::{CatchUp, Deploy, DeployState, MergedPr, Watermarks};
+use crate::pr_text;
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
@@ -1347,7 +1348,7 @@ fn merged_entry(node: &Value, repo: &str, owner_avatar_url: &str, merged_at: &st
             .to_string()
     };
     let title = text("/title");
-    let (kind, breaking) = match merged::change_kind(&title) {
+    let (kind, breaking) = match pr_text::change_kind(&title) {
         Some((kind, breaking)) => (Some(kind), breaking),
         None => (None, false),
     };
@@ -1356,7 +1357,7 @@ fn merged_entry(node: &Value, repo: &str, owner_avatar_url: &str, merged_at: &st
     let summary = (!is_bot(node))
         .then(|| node.get("body").and_then(Value::as_str))
         .flatten()
-        .and_then(merged::summary);
+        .and_then(pr_text::summary);
     MergedPr {
         number: node.get("number").and_then(Value::as_u64).unwrap_or(0),
         title,

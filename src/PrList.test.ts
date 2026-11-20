@@ -470,7 +470,7 @@ test("a merged row shows its summary under the title, in full as the tooltip", (
   expect(feat.indexOf("pr-summary")).toBeLessThan(feat.indexOf("pr-origin"));
 });
 
-test("a merged row with neither kind nor summary is the row it was", () => {
+test("a merged row with neither kind nor summary shows its full title and origin alone", () => {
   const [, , plain] = sampleRows();
   expect(plain).toContain(
     '<span class="pr-title">Show delivery ETA on the order confirmation</span>',
