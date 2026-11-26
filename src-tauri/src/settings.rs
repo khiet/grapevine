@@ -32,6 +32,55 @@ fn lenient_appearance<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Appe
     Ok(serde_json::from_value(raw).unwrap_or_default())
 }
 
+/// The lengths a snooze limit can be, in days: 1 day, 3 days, 1 week,
+/// 2 weeks, 1 month, 3 months. A month is 30 days.
+pub const SNOOZE_LIMIT_DAYS: [u32; 6] = [1, 3, 7, 14, 30, 90];
+
+/// How long a snooze may last. Read by the webview when a row is snoozed,
+/// so a change applies to snoozes made after it and never to a row already
+/// parked.
+///
+/// Wire type: `src/backend/index.ts` holds the hand-written TypeScript copy.
+/// Change both together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnoozeLimit {
+    /// Off means a snooze has no expiry and only news wakes the row.
+    pub enabled: bool,
+    /// The first, second and third duration offered when snoozing, each one
+    /// of [`SNOOZE_LIMIT_DAYS`]. Kept while `enabled` is off. Two may be
+    /// alike.
+    pub days: [u32; 3],
+}
+
+impl Default for SnoozeLimit {
+    fn default() -> Self {
+        SnoozeLimit {
+            enabled: true,
+            days: [1, 7, 30],
+        }
+    }
+}
+
+impl SnoozeLimit {
+    pub fn is_valid(&self) -> bool {
+        self.days
+            .iter()
+            .all(|days| SNOOZE_LIMIT_DAYS.contains(days))
+    }
+}
+
+/// Reads a snooze limit of any shape, so that a hand-edited value this build
+/// cannot read falls back to the default instead of failing the whole file.
+fn lenient_snooze_limit<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<SnoozeLimit, D::Error> {
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(raw)
+        .ok()
+        .filter(SnoozeLimit::is_valid)
+        .unwrap_or_default())
+}
+
 /// App state persisted to `settings.json` in the app data directory. The
 /// GitHub token is deliberately absent: it lives only in the system credential
 /// store (see `keychain`).
@@ -48,6 +97,10 @@ pub struct Settings {
     /// loads as `System`.
     #[serde(deserialize_with = "lenient_appearance")]
     pub appearance: Appearance,
+    /// A file without this field, or with a value this build cannot read,
+    /// loads as the default: on, with 1 day, 1 week and 1 month.
+    #[serde(deserialize_with = "lenient_snooze_limit")]
+    pub snooze_limit: SnoozeLimit,
 }
 
 impl Default for Settings {
@@ -57,6 +110,7 @@ impl Default for Settings {
             github_login: None,
             poll_interval_secs: DEFAULT_POLL_SECS,
             appearance: Appearance::default(),
+            snooze_limit: SnoozeLimit::default(),
         }
     }
 }
@@ -166,6 +220,64 @@ mod tests {
         let raw = fs::read_to_string(dir.path().join("settings.json")).unwrap();
         let stored: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(stored["appearance"], "dark");
+    }
+
+    const DEFAULT_SNOOZE_LIMIT: SnoozeLimit = SnoozeLimit {
+        enabled: true,
+        days: [1, 7, 30],
+    };
+
+    /// Settings files written before the snooze limit have no such field.
+    #[test]
+    fn a_settings_file_without_a_snooze_limit_loads_with_the_default() {
+        let (_dir, store) = store_with_settings_file(
+            r#"{"repos": ["acme/widgets"], "poll_interval_secs": 300, "appearance": "dark"}"#,
+        );
+        let settings = load(&store).unwrap();
+        assert_eq!(settings.snooze_limit, DEFAULT_SNOOZE_LIMIT);
+        assert_eq!(settings.repos, ["acme/widgets"]);
+        assert_eq!(settings.poll_interval_secs, 300);
+        assert_eq!(settings.appearance, Appearance::Dark);
+    }
+
+    /// A hand-edited value must not cost the user the rest of the file.
+    #[test]
+    fn an_unreadable_snooze_limit_loads_as_the_default_and_keeps_the_rest() {
+        for limit in [
+            r#""never""#,
+            r#"{"enabled": "yes", "days": [1, 7, 30]}"#,
+            r#"{"enabled": true, "days": [1, 7]}"#,
+            // Five days is not a length this build offers.
+            r#"{"enabled": false, "days": [1, 5, 30]}"#,
+        ] {
+            let raw = format!(
+                r#"{{"snooze_limit": {limit}, "repos": ["acme/widgets"],
+                    "poll_interval_secs": 300, "appearance": "dark"}}"#
+            );
+            let (_dir, store) = store_with_settings_file(&raw);
+            let settings = load(&store).unwrap();
+            assert_eq!(settings.snooze_limit, DEFAULT_SNOOZE_LIMIT, "{limit}");
+            assert_eq!(settings.repos, ["acme/widgets"]);
+            assert_eq!(settings.poll_interval_secs, 300);
+            assert_eq!(settings.appearance, Appearance::Dark);
+        }
+    }
+
+    /// The durations outlive the switch: off keeps them for when it is on
+    /// again.
+    #[test]
+    fn a_chosen_snooze_limit_round_trips_with_the_switch_off() {
+        let (_dir, store) = temp_store();
+        let chosen = SnoozeLimit {
+            enabled: false,
+            days: [3, 3, 90],
+        };
+        update(&store, |settings| {
+            settings.snooze_limit = chosen;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(load(&store).unwrap().snooze_limit, chosen);
     }
 
     #[test]

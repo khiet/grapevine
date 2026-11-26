@@ -18,6 +18,7 @@ import PrList, {
   useListKeys,
 } from "./PrList";
 import SettingsView from "./SettingsView";
+import { loadSnoozeLimit } from "./snoozeLimit";
 import {
   restartLabel,
   restartToUpdate,
@@ -193,6 +194,7 @@ function App() {
 
   useEffect(() => {
     startUpdateChecks();
+    void loadSnoozeLimit();
     return subscribeSnapshot(setSnapshot);
   }, []);
 

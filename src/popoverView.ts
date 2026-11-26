@@ -13,6 +13,7 @@ import {
   type PrAction,
   type PullRequest,
   type Snapshot,
+  type SnoozeLimit,
 } from "./backend";
 
 const SECTIONS = [
@@ -330,6 +331,8 @@ const immediate = (
   hint: string | null = null,
 ): RowAction => ({ id, label, hint, confirm: null, menuOnly: false });
 
+// One action whether or not snoozes have a limit: with one, its click opens
+// the pick of durations (see snoozeChoices) and the pick does the snoozing.
 const SNOOZE = immediate("snooze", "Snooze", "Snooze until it changes");
 const WAKE = immediate("wake", "Wake");
 const DISMISS = immediate("dismiss", "Dismiss");
@@ -377,6 +380,39 @@ function confirmHint(id: WriteId, pr: PullRequest): string {
     case "disable_auto_merge":
       return `Confirm: cancel auto-merge into ${base}`;
   }
+}
+
+const SNOOZE_DAYS_LABELS: Record<number, string> = {
+  7: "1 week",
+  14: "2 weeks",
+  30: "1 month",
+  90: "3 months",
+};
+
+/** A snooze limit of `days` in words: weeks and months for the lengths that
+ * are offered as such, days otherwise. */
+export function snoozeDaysLabel(days: number): string {
+  return SNOOZE_DAYS_LABELS[days] ?? (days === 1 ? "1 day" : `${days} days`);
+}
+
+/** One duration in the pick a row shows when it is asked to snooze. */
+export interface SnoozeChoice {
+  /** The limit, as snooze() takes it. */
+  days: number;
+  label: string;
+  /** What the label leaves unsaid, for a tooltip. */
+  hint: string;
+}
+
+/** The durations a row asked to snooze offers, in the order set, one set
+ * twice offered once. Empty when snoozes have no limit: there is nothing to
+ * pick then, and Snooze takes its one click. */
+export function snoozeChoices(limit: SnoozeLimit): SnoozeChoice[] {
+  if (!limit.enabled) return [];
+  return [...new Set(limit.days)].map((days) => {
+    const label = snoozeDaysLabel(days);
+    return { days, label, hint: `Wake after ${label} at the latest` };
+  });
 }
 
 // The writes the row offers. None on a snoozed row: that one was put out of

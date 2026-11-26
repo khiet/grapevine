@@ -4,7 +4,7 @@
 // The updater plugins are the one exception; updater.ts owns those.
 //
 // The wire types are hand-written copies of the Rust structs that serialize
-// them (github.rs, merged.rs, pr_state.rs, commands.rs). A field added or
+// them (github.rs, merged.rs, pr_state.rs, commands.rs, settings.rs). A field added or
 // renamed there must be mirrored here, and the reverse.
 
 import { tauriAdapter } from "./tauri";
@@ -276,12 +276,13 @@ export const markAllRead = () => adapter.invoke<void>("mark_all_read");
 export const dismissMerged = (key: string) =>
   adapter.invoke<void>("dismiss_merged", { key });
 export const dismissAllMerged = () => adapter.invoke<void>("dismiss_all_merged");
-/** Parks a Mine or Participated row until it has news or morning comes. The
- * expiry is worked out here because the webview knows the local time zone. */
-export const snooze = (key: string) =>
+/** Parks a Mine or Participated row until it has news, or until the limit
+ * of `days` runs out if that comes first; null is no limit. The expiry is
+ * worked out here because the webview knows the local time zone. */
+export const snooze = (key: string, days: number | null) =>
   adapter.invoke<void>("snooze", {
     key,
-    expiresAt: nextLocalMorning(new Date()),
+    expiresAt: days === null ? null : snoozeExpiry(new Date(), days),
   });
 export const wake = (key: string) => adapter.invoke<void>("wake", { key });
 
@@ -305,13 +306,18 @@ export const fixConflict = (key: string) =>
 export const actOnPr = (key: string, action: PrAction, head: string) =>
   adapter.invoke<void>("act_on_pr", { key, action, head });
 
-/** Epoch ms of the next local 08:00 strictly after `now`: when a snooze runs
- * out on its own. */
-export function nextLocalMorning(now: Date): number {
-  const morning = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8);
-  // Calendar arithmetic, not +24h: a DST day is not 24 hours long.
-  if (morning.getTime() <= now.getTime()) morning.setDate(morning.getDate() + 1);
-  return morning.getTime();
+/** Epoch ms at which a snooze made at `now` with a limit of `days` runs out
+ * on its own: 08:00 local on the day that many days later, whatever the
+ * hour of the snooze. */
+export function snoozeExpiry(now: Date, days: number): number {
+  // Calendar arithmetic, not multiples of 24h: a DST day is not 24 hours
+  // long, and the hour must not move.
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + days,
+    8,
+  ).getTime();
 }
 
 export const tokenStatus = () => adapter.invoke<TokenStatus>("token_status");
@@ -338,6 +344,31 @@ export const getAppearance = () => adapter.invoke<Appearance>("get_appearance");
 /** Stores the choice and resolves to it. Showing it is appearance.ts's job. */
 export const setAppearance = (appearance: Appearance) =>
   adapter.invoke<Appearance>("set_appearance", { appearance });
+
+/** The lengths a snooze limit can be, in days, shortest first. A month is 30
+ * days. The backend refuses any other. */
+export const SNOOZE_LIMIT_DAYS = [1, 3, 7, 14, 30, 90] as const;
+
+/** How long a snooze may last. A change applies to snoozes made after it. */
+export interface SnoozeLimit {
+  /** Off means a snooze has no expiry and only news wakes the row. */
+  enabled: boolean;
+  /** The first, second and third duration offered when snoozing, each one
+   * of SNOOZE_LIMIT_DAYS. Kept while `enabled` is off. Two may be alike. */
+  days: [number, number, number];
+}
+
+/** What a settings file that has never held a limit loads as; equal to the
+ * Rust `SnoozeLimit::default()`. */
+export const DEFAULT_SNOOZE_LIMIT: SnoozeLimit = {
+  enabled: true,
+  days: [1, 7, 30],
+};
+
+export const getSnoozeLimit = () => adapter.invoke<SnoozeLimit>("get_snooze_limit");
+/** Stores the limit and resolves to it as stored. */
+export const setSnoozeLimit = (limit: SnoozeLimit) =>
+  adapter.invoke<SnoozeLimit>("set_snooze_limit", { limit });
 export const getLaunchAtLogin = () => adapter.invoke<boolean>("get_launch_at_login");
 export const setLaunchAtLogin = (enabled: boolean) =>
   adapter.invoke<void>("set_launch_at_login", { enabled });

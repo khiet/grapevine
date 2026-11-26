@@ -1,24 +1,32 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import {
   dismissAllMerged,
   dismissMerged,
   listRepos,
+  getSnoozeLimit,
   markRead,
-  nextLocalMorning,
   prKey,
   setAdapter,
+  setSnoozeLimit,
   snooze,
+  snoozeExpiry,
   subscribeSnapshot,
   syncNow,
   wake,
+  type Adapter,
   type MergedPr,
   type PullRequest,
   type Snapshot,
+  type SnoozeLimit,
 } from "./index";
 import { createFakeBackend } from "./fake";
 import { tauriAdapter } from "./tauri";
 
-afterEach(() => setAdapter(tauriAdapter));
+afterEach(() => {
+  setAdapter(tauriAdapter);
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 function merged(repo: string, number: number): MergedPr {
   return {
@@ -209,7 +217,7 @@ test("snoozing a PR lists its key as snoozed without marking it read, and waking
   subscribeSnapshot((next) => seen.push(next));
   await settle();
 
-  await snooze("acme/api#1");
+  await snooze("acme/api#1", null);
   const parked = seen[seen.length - 1];
   expect(parked.snoozed).toEqual(["acme/api#1"]);
   expect(parked.prs[0].unread_count).toBe(2);
@@ -219,12 +227,84 @@ test("snoozing a PR lists its key as snoozed without marking it read, and waking
 });
 
 // Built in local time, so the expectations hold in any timezone.
-test("a snooze runs until the next local 08:00", () => {
-  const local = (d: number, h: number, m = 0) => new Date(2026, 6, d, h, m);
-  expect(nextLocalMorning(local(16, 15, 30))).toBe(local(17, 8).getTime());
-  expect(nextLocalMorning(local(16, 7, 59))).toBe(local(16, 8).getTime());
-  // At 08:00 sharp the next one is tomorrow's: a snooze never expires at once.
-  expect(nextLocalMorning(local(16, 8))).toBe(local(17, 8).getTime());
+const local = (d: number, h: number, m = 0) => new Date(2026, 6, d, h, m);
+
+// 13 July 2026 is a Monday.
+test("a snooze's limit ends at 08:00 local, that many days after the snooze", () => {
+  expect(snoozeExpiry(local(13, 15), 1)).toBe(local(14, 8).getTime());
+  expect(snoozeExpiry(local(13, 15), 3)).toBe(local(16, 8).getTime());
+  expect(snoozeExpiry(local(13, 15), 7)).toBe(local(20, 8).getTime());
+  expect(snoozeExpiry(local(13, 15), 30)).toBe(
+    new Date(2026, 7, 12, 8).getTime(),
+  );
+  expect(snoozeExpiry(local(13, 15), 90)).toBe(
+    new Date(2026, 9, 11, 8).getTime(),
+  );
+});
+
+test("a snooze made before 08:00 still lasts until the next day's 08:00", () => {
+  expect(snoozeExpiry(local(13, 7), 1)).toBe(local(14, 8).getTime());
+  expect(snoozeExpiry(local(13, 0, 1), 1)).toBe(local(14, 8).getTime());
+});
+
+// London's clocks go forward at 01:00 on 29 March 2026, so that day is 23
+// hours long: 08:00 on it is 07:00 UTC, not the 08:00 UTC a +24h step from
+// the day before would give.
+test("a limit that ends on a DST day still ends at 08:00 local", () => {
+  vi.stubEnv("TZ", "Europe/London");
+  expect(snoozeExpiry(new Date(2026, 2, 28, 15), 1)).toBe(
+    Date.UTC(2026, 2, 29, 7),
+  );
+  expect(snoozeExpiry(new Date(2026, 2, 27, 15), 7)).toBe(
+    Date.UTC(2026, 3, 3, 7),
+  );
+});
+
+// The fake drops the expiry, so the command is read off the wire.
+function recordingAdapter(): { adapter: Adapter; calls: unknown[][] } {
+  const fake = createFakeBackend(snapshot([pr("acme/api", 1, 0)]));
+  const calls: unknown[][] = [];
+  return {
+    calls,
+    adapter: {
+      ...fake.adapter,
+      invoke: (command, args) => {
+        calls.push([command, args]);
+        return fake.adapter.invoke(command, args);
+      },
+    },
+  };
+}
+
+test("snoozing with a limit sends the expiry it works out", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(local(13, 15));
+  const { adapter, calls } = recordingAdapter();
+  setAdapter(adapter);
+
+  await snooze("acme/api#1", 7);
+
+  expect(calls).toEqual([
+    ["snooze", { key: "acme/api#1", expiresAt: local(20, 8).getTime() }],
+  ]);
+});
+
+test("snoozing with no limit sends no expiry", async () => {
+  const { adapter, calls } = recordingAdapter();
+  setAdapter(adapter);
+
+  await snooze("acme/api#1", null);
+
+  expect(calls).toEqual([["snooze", { key: "acme/api#1", expiresAt: null }]]);
+});
+
+test("the fake starts with the default snooze limit and remembers a change", async () => {
+  setAdapter(createFakeBackend(snapshot([])).adapter);
+  expect(await getSnoozeLimit()).toEqual({ enabled: true, days: [1, 7, 30] });
+
+  const chosen: SnoozeLimit = { enabled: false, days: [3, 3, 90] };
+  expect(await setSnoozeLimit(chosen)).toEqual(chosen);
+  expect(await getSnoozeLimit()).toEqual(chosen);
 });
 
 test("a command the fake does not implement rejects", async () => {

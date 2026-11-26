@@ -6,6 +6,7 @@ import {
   keyHints,
   listCommand,
   moveSelection,
+  pickCommand,
   rowCommand,
   selectionAfter,
   strayKeyZone,
@@ -118,6 +119,29 @@ test("S snoozes a row that can be snoozed and wakes a snoozed one", () => {
   expect(rowCommand(key("s"), [SNOOZE])).toBe("snooze");
   expect(rowCommand(key("S", { shiftKey: true }), [SNOOZE])).toBe("snooze");
   expect(rowCommand(key("s"), [WAKE])).toBe("wake");
+});
+
+test("with the snooze pick open, 1 to 3 choose the first to third duration", () => {
+  expect(pickCommand(key("1"), 3)).toBe(0);
+  expect(pickCommand(key("2"), 3)).toBe(1);
+  expect(pickCommand(key("3"), 3)).toBe(2);
+});
+
+// Durations set alike leave a pick of two.
+test("a number past the durations on offer chooses nothing", () => {
+  expect(pickCommand(key("3"), 2)).toBeNull();
+  expect(pickCommand(key("0"), 3)).toBeNull();
+  expect(pickCommand(key("4"), 3)).toBeNull();
+  expect(pickCommand(key("1"), 0)).toBeNull();
+});
+
+test("only a bare, fresh number key chooses a duration", () => {
+  expect(pickCommand(key("s"), 3)).toBeNull();
+  expect(pickCommand(key("Enter"), 3)).toBeNull();
+  expect(pickCommand(key("1", { metaKey: true }), 3)).toBeNull();
+  expect(pickCommand(key("1", { ctrlKey: true }), 3)).toBeNull();
+  expect(pickCommand(key("1", { altKey: true }), 3)).toBeNull();
+  expect(pickCommand(key("1", { repeat: true }), 3)).toBeNull();
 });
 
 test("S does nothing on a row that offers neither", () => {

@@ -379,11 +379,11 @@ impl PrState {
     }
 
     /// Parks the matching PR until it has news or `expires_at` (epoch ms)
-    /// passes. News is measured from the last successful sync, not from this
+    /// passes; with `None`, until it has news. News is measured from the last successful sync, not from this
     /// call: that sync is the row the viewer saw. Nothing happens for a key that is not a Mine or Participated
     /// PR in the Snapshot. The read watermark stays where it is: snoozing is
     /// not reading.
-    pub fn snooze(&self, key: &str, expires_at: u64) -> Effects {
+    pub fn snooze(&self, key: &str, expires_at: Option<u64>) -> Effects {
         let mut inner = self.inner.lock().unwrap();
         let inner = &mut *inner;
         // Every PR in the Snapshot came from a successful sync, so a missing
@@ -1168,7 +1168,7 @@ mod tests {
     fn snoozed_state(pr: PullRequest) -> PrState {
         let state = PrState::default();
         sync_one(&state, pr, LAST_SYNC);
-        state.snooze(KEY, EXPIRES_AT);
+        state.snooze(KEY, Some(EXPIRES_AT));
         state
     }
 
@@ -1189,7 +1189,7 @@ mod tests {
         );
         assert_eq!(synced.tray_count, Some(2));
 
-        let effects = state.snooze(KEY, EXPIRES_AT);
+        let effects = state.snooze(KEY, Some(EXPIRES_AT));
 
         assert_eq!(effects.tray_count, Some(1));
         assert!(is_snoozed(&effects));
@@ -1245,7 +1245,7 @@ mod tests {
         sync_one(&state, pr("acme/widgets", 7, &[]), LAST_SYNC - 1);
         let unread = sync_one(&state, pr("acme/widgets", 7, &[BEFORE_SYNC]), LAST_SYNC);
         assert_eq!(unread_counts(&unread.snapshot), [1]);
-        state.snooze(KEY, EXPIRES_AT);
+        state.snooze(KEY, Some(EXPIRES_AT));
 
         let effects = sync_one(&state, pr("acme/widgets", 7, &[BEFORE_SYNC]), LAST_SYNC + 1);
 
@@ -1257,7 +1257,7 @@ mod tests {
     fn snoozing_does_not_mark_the_row_read() {
         let state = state_with_one_unread();
 
-        let effects = state.snooze(KEY, EXPIRES_AT);
+        let effects = state.snooze(KEY, Some(EXPIRES_AT));
 
         assert_eq!(unread_counts(&effects.snapshot), [1, 0]);
         assert_eq!(effects.save_read, None);
@@ -1326,12 +1326,89 @@ mod tests {
         assert_eq!(effects.tray_count, Some(1));
     }
 
+    /// One PR synced at `LAST_SYNC`, then snoozed with no limit.
+    fn snoozed_without_limit(pr: PullRequest) -> PrState {
+        let state = PrState::default();
+        sync_one(&state, pr, LAST_SYNC);
+        state.snooze(KEY, None);
+        state
+    }
+
+    const YEAR_MS: u64 = 365 * 24 * 3_600_000;
+
+    #[test]
+    fn a_snooze_with_no_limit_outlasts_any_wait_with_no_news() {
+        let state = snoozed_without_limit(yours(pr("acme/widgets", 7, &[])));
+        assert_eq!(state.next_expiry(), None);
+
+        let by_clock = state.expire(LAST_SYNC + YEAR_MS);
+        assert!(is_snoozed(&by_clock));
+        assert_eq!(by_clock.save_snoozes, None);
+
+        let quiet = yours(pr("acme/widgets", 7, &[BEFORE_SYNC]));
+        let by_sync = sync_one(&state, quiet, LAST_SYNC + YEAR_MS);
+        assert!(is_snoozed(&by_sync));
+        assert_eq!(by_sync.tray_count, Some(0));
+    }
+
+    #[test]
+    fn a_snooze_with_no_limit_wakes_on_news() {
+        let state = snoozed_without_limit(yours(pr("acme/widgets", 7, &[])));
+        let commented = yours(pr("acme/widgets", 7, &[AFTER_SYNC]));
+        assert!(!is_snoozed(&sync_one(&state, commented, LAST_SYNC + 1)));
+
+        let state = snoozed_without_limit(pr("acme/widgets", 7, &[]));
+        let asked = requested(pr("acme/widgets", 7, &[]));
+        assert!(!is_snoozed(&sync_one(&state, asked, LAST_SYNC + 1)));
+    }
+
+    /// A limited snooze beside it must still be timed.
+    #[test]
+    fn the_next_expiry_passes_over_a_snooze_with_no_limit() {
+        let state = PrState::default();
+        let prs = vec![pr("acme/widgets", 7, &[]), pr("acme/widgets", 8, &[])];
+        state.sync_succeeded(prs, merged::CatchUp::default(), LAST_SYNC);
+        state.snooze(KEY, None);
+        state.snooze("acme/widgets#8", Some(EXPIRES_AT));
+
+        assert_eq!(state.next_expiry(), Some(EXPIRES_AT));
+        let effects = state.expire(EXPIRES_AT);
+        assert_eq!(effects.snapshot.snoozed, [KEY]);
+    }
+
+    #[test]
+    fn a_snooze_with_no_limit_survives_a_restart() {
+        let before = PrState::default();
+        sync_one(&before, yours(pr("acme/widgets", 7, &[])), LAST_SYNC);
+        let saved = before
+            .snooze(KEY, None)
+            .save_snoozes
+            .expect("snoozes need saving");
+
+        let after = PrState::default();
+        after.restore(
+            HashMap::new(),
+            vec![],
+            None,
+            saved,
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let effects = sync_one(
+            &after,
+            yours(pr("acme/widgets", 7, &[])),
+            LAST_SYNC + YEAR_MS,
+        );
+
+        assert!(is_snoozed(&effects));
+    }
+
     #[test]
     fn the_snoozed_set_survives_a_restart() {
         let before = PrState::default();
         sync_one(&before, yours(pr("acme/widgets", 7, &[])), LAST_SYNC);
         let saved = before
-            .snooze(KEY, EXPIRES_AT)
+            .snooze(KEY, Some(EXPIRES_AT))
             .save_snoozes
             .expect("snoozes need saving");
 
@@ -1386,7 +1463,7 @@ mod tests {
         };
         sync_one(&state, browse_only, LAST_SYNC);
 
-        let effects = state.snooze(KEY, EXPIRES_AT);
+        let effects = state.snooze(KEY, Some(EXPIRES_AT));
 
         assert!(effects.snapshot.snoozed.is_empty());
         assert_eq!(effects.save_snoozes, None);
@@ -1753,7 +1830,7 @@ mod tests {
     fn a_row_with_a_requested_fix_snoozes_and_wakes_as_usual() {
         let state = fix_requested_state();
 
-        let snoozed = state.snooze(KEY, EXPIRES_AT);
+        let snoozed = state.snooze(KEY, Some(EXPIRES_AT));
         assert!(is_snoozed(&snoozed));
         assert!(is_fixing(&snoozed));
 
@@ -2169,7 +2246,7 @@ mod tests {
     fn a_snoozed_pr_cannot_be_acted_on() {
         let state = PrState::default();
         state.sync_succeeded(vec![at_head("abc123")], merged::CatchUp::default(), NOW_MS);
-        state.snooze(KEY, NOW_MS + 60_000);
+        state.snooze(KEY, Some(NOW_MS + 60_000));
 
         assert_eq!(
             state.to_act_on(KEY, "abc123").unwrap_err(),

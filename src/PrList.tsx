@@ -27,15 +27,18 @@ import {
   keyHints,
   listCommand,
   moveSelection,
+  pickCommand,
   rowCommand,
   selectionAfter,
   strayKeyZone,
   type KeyHint,
   type Zone,
 } from "./listKeys";
-import RowMenu, { opensMenu, type Point } from "./RowMenu";
+import RowMenu, { opensMenu, type Point, type RowMenuProps } from "./RowMenu";
 import { clickWrite } from "./rowWrites";
+import { useSnoozeLimit } from "./snoozeLimit";
 import {
+  snoozeChoices,
   YOUR_TURN_KEY,
   type DeployView,
   type ListView,
@@ -46,6 +49,7 @@ import {
   type RowView,
   type SectionKey,
   type SectionView,
+  type SnoozeChoice,
   type SnoozedGroupView,
   type WriteId,
 } from "./popoverView";
@@ -326,13 +330,15 @@ export function useListKeys(view: ListView | null): {
 
 /* What a row's li takes to join the keyboard model: the key the selection
    knows it by, selection following focus into it, and the row's own keys.
-   `run` is the row's action runner. Spread after the menu's handlers: its
-   onKeyDown includes theirs. */
+   `run` is the row's action runner, and `pick` its snooze pick, on a row
+   that has one. Spread after the menu's handlers: its onKeyDown includes
+   theirs. */
 function useRowKeys(
   key: string,
   actions: RowAction[],
   run: (id: RowActionId) => void,
   menu: ReturnType<typeof useRowMenu>,
+  pick: ReturnType<typeof useSnoozePick> | null = null,
 ) {
   const keys = useContext(ListKeysContext);
   return {
@@ -344,10 +350,19 @@ function useRowKeys(
         menu.item.onKeyDown(event);
         // While the menu is open its keys are its own.
         if (menu.at !== null) return;
+        const picked =
+          pick?.choices && pick.choices[pickCommand(event, pick.choices.length) ?? -1];
+        if (picked) {
+          event.preventDefault();
+          keys.acted();
+          pick.choose(picked.days);
+          return;
+        }
         const id = rowCommand(event, actions);
         if (id === null) return;
         event.preventDefault();
-        keys.acted();
+        // Opening the pick moves no row, so focus is owed nothing.
+        if (!(id === "snooze" && pick?.limited)) keys.acted();
         run(id);
       },
     },
@@ -524,8 +539,9 @@ function StateView({ state }: { state: RowState }) {
   );
 }
 
-// How long an armed write waits for its second click before standing down.
-const WRITE_CONFIRM_MS = 4000;
+// How long an armed write waits for its second click, and an open snooze
+// pick for its duration, before standing down.
+const SECOND_CLICK_MS = 4000;
 
 /* A row's writes to GitHub: the actions that carry a `confirm`. Each acts
    under the user's name, so it takes two clicks from the bar or the menu
@@ -538,7 +554,7 @@ function useWrites(row: RowView) {
   );
   useEffect(() => {
     if (armed === null) return;
-    const timer = setTimeout(() => setArmed(null), WRITE_CONFIRM_MS);
+    const timer = setTimeout(() => setArmed(null), SECOND_CLICK_MS);
     return () => clearTimeout(timer);
   }, [armed]);
   // Armed on the PR as it was then: commits that arrive before the second
@@ -572,6 +588,38 @@ function useWrites(row: RowView) {
       failed && row.actions.some((action) => action.id === failed.id)
         ? failed.message
         : null,
+  };
+}
+
+/* A row's snooze, which takes a second click where snoozes have a limit: the
+   first opens the pick of durations, in the bar and the menu alike, and the
+   second chooses one. Nothing is snoozed until then, and the pick stands
+   down on the schedule an armed write does: after a few seconds, or when
+   the row says so. With no limit there is nothing to pick, and asking
+   snoozes at once. */
+function useSnoozePick(key: string) {
+  const choices = snoozeChoices(useSnoozeLimit());
+  const limited = choices.length > 0;
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => setOpen(false), SECOND_CLICK_MS);
+    return () => clearTimeout(timer);
+  }, [open]);
+  return {
+    /* Whether asking opens the pick rather than snoozing. */
+    limited,
+    /* The durations on offer while the pick is open; null while it is not. */
+    choices: open && limited ? choices : null,
+    ask: () => {
+      if (limited) setOpen(true);
+      else snooze(key, null).catch(() => {});
+    },
+    choose: (days: number) => {
+      setOpen(false);
+      snooze(key, days).catch(() => {});
+    },
+    standDown: () => setOpen(false),
   };
 }
 
@@ -620,7 +668,7 @@ function useRowMenu(hasActions: boolean) {
 /* An open row menu, mounted on the body rather than in its row: nothing
    there clips it or scrolls it, and it reaches past the row it belongs to.
    Its events still bubble to the row through React's tree. */
-function MenuLayer(props: Parameters<typeof RowMenu>[0]) {
+function MenuLayer<Id extends string = RowActionId>(props: RowMenuProps<Id>) {
   return createPortal(<RowMenu {...props} />, document.body);
 }
 
@@ -636,18 +684,41 @@ const rowClass = (menuOpen: boolean, selected: boolean) =>
    row's metadata line and shown only while the row is hovered or holds
    focus. `confirm` is the action waiting for its confirming click, under the
    words it shows meanwhile, and `status` stands where an action would while
-   it cannot be asked for. A row with neither has no bar. */
-function ActionBar({
+   it cannot be asked for. A row with neither has no bar. `pick` is the open
+   snooze pick: its durations take the whole strip, with none lit, since
+   none is chosen yet. */
+export function ActionBar({
   actions,
   confirm = null,
   status = null,
+  pick = null,
   onPick,
 }: {
   actions: RowAction[];
   confirm?: RowAction | null;
   status?: string | null;
+  pick?: { choices: SnoozeChoice[]; onChoose: (days: number) => void } | null;
   onPick: (id: RowActionId) => void;
 }) {
+  if (pick) {
+    return (
+      <span className="pr-actions" role="group" aria-label="Snooze for">
+        {pick.choices.map(({ days, label, hint }) => (
+          <button
+            key={days}
+            type="button"
+            className="pr-action"
+            // Not the spoken name, which must start with the label; the
+            // group says what the durations are for.
+            title={hint}
+            onClick={() => pick.onChoose(days)}
+          >
+            {label}
+          </button>
+        ))}
+      </span>
+    );
+  }
   if (actions.length === 0 && !status) return null;
   return (
     <span className="pr-actions" role="group" aria-label="Actions">
@@ -700,6 +771,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const writes = useWrites(row);
   const { confirm } = writes;
   const menu = useRowMenu(row.actions.length > 0);
+  const pick = useSnoozePick(key);
   const open = () => {
     openUrl(pr.url).catch(() => {});
     // The backend clears the badge and pushes a fresh snapshot.
@@ -708,7 +780,14 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
   const run = (id: RowActionId) => {
     switch (id) {
       case "snooze":
-        snooze(key).catch(() => {});
+        // One second click is waited for at a time.
+        writes.standDown();
+        // The pick takes the Snooze button out of the bar. Focus it held
+        // goes to the row, where the number keys are heard, not to nothing.
+        if (pick.limited && document.activeElement?.closest(".pr-actions")) {
+          menu.row.current?.focus();
+        }
+        pick.ask();
         break;
       case "wake":
         wake(key).catch(() => {});
@@ -720,13 +799,18 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
         writes.click(id);
     }
   };
-  const rowKeys = useRowKeys(key, row.actions, run, menu);
+  const rowKeys = useRowKeys(key, row.actions, run, menu, pick);
+  const standDown = () => {
+    writes.standDown();
+    pick.standDown();
+  };
   return (
     <li
       className={rowClass(menu.at !== null, rowKeys.selected)}
       // Not while the menu is open: the pointer may be nowhere near a menu
-      // opened by key, and the armed item must wait there for its confirm.
-      onPointerLeave={menu.at === null ? writes.standDown : undefined}
+      // opened by key, and the armed item, or the pick, must wait there for
+      // its second click.
+      onPointerLeave={menu.at === null ? standDown : undefined}
       {...menu.item}
       {...rowKeys.item}
     >
@@ -781,6 +865,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           actions={row.actions.filter((action) => !action.menuOnly)}
           confirm={confirm}
           status={row.pending}
+          pick={pick.choices && { choices: pick.choices, onChoose: pick.choose }}
           onPick={run}
         />
         {/* Hold the width of Draft and of the state after the bar, so the
@@ -798,23 +883,45 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           </span>
         )}
       </span>
-      {menu.at && (
-        <MenuLayer
-          at={menu.at}
-          items={row.actions.map((action) =>
-            action.id === confirm?.id ? confirm : action,
-          )}
-          onPick={(id) => {
-            run(id);
-            // The pick that arms a write leaves the menu up for its confirm.
-            const arms = row.actions.some(
-              (action) => action.id === id && action.confirm !== null,
-            );
-            if (!arms || confirm?.id === id) menu.close(true);
-          }}
-          onClose={menu.close}
-        />
-      )}
+      {menu.at &&
+        (pick.choices ? (
+          /* A menu of its own, not new items in the old one: it takes
+             focus afresh, on the first duration. */
+          <MenuLayer
+            key="snooze-pick"
+            at={menu.at}
+            items={pick.choices.map(({ days, label, hint }) => ({
+              id: String(days),
+              label,
+              hint,
+            }))}
+            onPick={(days) => {
+              pick.choose(Number(days));
+              menu.close(true);
+            }}
+            onClose={menu.close}
+          />
+        ) : (
+          <MenuLayer
+            key="actions"
+            at={menu.at}
+            items={row.actions.map((action) =>
+              action.id === confirm?.id ? confirm : action,
+            )}
+            onPick={(id) => {
+              run(id);
+              // The pick that arms a write leaves the menu up for its
+              // confirm, and Snooze leaves it up for the durations.
+              const arms = row.actions.some(
+                (action) => action.id === id && action.confirm !== null,
+              );
+              const picks = id === "snooze" && pick.limited;
+              if (picks) return;
+              if (!arms || confirm?.id === id) menu.close(true);
+            }}
+            onClose={menu.close}
+          />
+        ))}
     </li>
   );
 }

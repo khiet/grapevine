@@ -3,7 +3,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     github, keychain, launch_at_login, pr_state,
-    settings::{self, Appearance},
+    settings::{self, Appearance, SnoozeLimit},
     store::Store,
     sync,
 };
@@ -47,9 +47,10 @@ pub fn dismiss_all_merged(app: AppHandle) -> Result<(), String> {
 }
 
 /// `expires_at` is epoch ms and comes from the webview, which knows the local
-/// time zone: the next local 08:00.
+/// time zone: 08:00 local on the day the chosen limit ends. `None` is a
+/// snooze with no limit.
 #[tauri::command]
-pub fn snooze(app: AppHandle, key: String, expires_at: u64) -> Result<(), String> {
+pub fn snooze(app: AppHandle, key: String, expires_at: Option<u64>) -> Result<(), String> {
     sync::transition(&app, |prs| prs.snooze(&key, expires_at))
 }
 
@@ -263,6 +264,25 @@ pub async fn set_appearance(app: AppHandle, appearance: Appearance) -> Result<Ap
         Ok(())
     })?;
     Ok(appearance)
+}
+
+#[tauri::command]
+pub async fn get_snooze_limit(app: AppHandle) -> Result<SnoozeLimit, String> {
+    Ok(settings::load(&app.state::<Store>())?.snooze_limit)
+}
+
+/// Stores the choice and returns it. It is read back when a row is next
+/// snoozed; rows already snoozed keep the expiry they were given.
+#[tauri::command]
+pub async fn set_snooze_limit(app: AppHandle, limit: SnoozeLimit) -> Result<SnoozeLimit, String> {
+    if !limit.is_valid() {
+        return Err("That is not a snooze length on offer.".into());
+    }
+    settings::update(&app.state::<Store>(), |settings| {
+        settings.snooze_limit = limit;
+        Ok(())
+    })?;
+    Ok(limit)
 }
 
 #[tauri::command]

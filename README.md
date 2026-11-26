@@ -47,7 +47,9 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   section until you dismiss them. Merges made while Grapevine was not running
   are caught up at the next sync, back to 7 days.
 - **Filter and snooze.** Type to filter across every repo. Snooze a PR until
-  it changes.
+  it changes, or until the limit you pick passes: a day, a week, a month, or
+  three durations of your own from Settings. Turn the limit off there and a
+  snooze lasts until the PR changes.
 - **Fix a conflict with Copilot.** On one of your own PRs with a merge
   conflict, ask Copilot to resolve it from the row. Two clicks, and only in
   repos where Copilot's cloud agent is enabled. The PR then waits on Copilot,
