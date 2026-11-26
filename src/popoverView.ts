@@ -233,17 +233,17 @@ interface TonedState {
 // Every state the PR is in, in priority order; the row shows the first and
 // folds the rest. A new signal needs one line here, placed where it ranks.
 //
-// A write the viewer confirmed on the row outranks everything, `pending` on
-// its way and `pr.acted` once GitHub has taken it: it is the newest thing
-// true of the PR, and the sync has not caught up with it. It is neutral,
-// since green is for what GitHub has confirmed. The state it makes stale is
-// left out, and so is one that already reads as the word does: a sync that
+// `word` is the row's write in a word (see writeWord) and outranks
+// everything: it is the newest thing true of the PR, and the sync has not
+// caught up with it. It is neutral, since green is for what GitHub has
+// confirmed. The state the write makes stale is left out, and so is one
+// that says what the word does, the queue position included: a sync that
 // began before the write can still have read the PR after it.
 //
 // A Copilot task that stopped, to ask the viewer something or because it
-// failed, outranks everything: the first is the backend's reason for the
-// turn whatever else is true of the PR, and the second is the task giving
-// up, which no other state on the row says.
+// failed, outranks every state GitHub reports: the first is the backend's
+// reason for the turn whatever else is true of the PR, and the second is
+// the task giving up, which no other state on the row says.
 //
 // After those, the head of the order (a review asked of you, then the
 // blockers in the backend's severity order, then mergeable) is the order the
@@ -257,9 +257,12 @@ interface TonedState {
 // position on a draft, so whatever it does send shows. Ready is the
 // backend's call as well and does not imply approved, since a repo with no
 // required reviews is ready without an approval.
-function rowStates(pr: PullRequest, pending: WriteId | null): TonedState[] {
+function rowStates(
+  pr: PullRequest,
+  pending: WriteId | null,
+  word: string | null,
+): TonedState[] {
   const states: TonedState[] = [];
-  const word = writeWord(pr, pending);
   const write = pending ?? pr.acted;
   const add = (
     text: string,
@@ -285,7 +288,7 @@ function rowStates(pr: PullRequest, pending: WriteId | null): TonedState[] {
   }
   // Position only: the entry's state and the queue's size are deliberately
   // not shown.
-  if (pr.merge_queue_position !== null) {
+  if (pr.merge_queue_position !== null && write !== "queue") {
     add(`Queued ${ordinal(pr.merge_queue_position)}`);
   }
   // After the conflict it answers: the PR is still conflicting, and this
@@ -308,8 +311,12 @@ function rowStates(pr: PullRequest, pending: WriteId | null): TonedState[] {
   return states;
 }
 
-function rowState(pr: PullRequest, pending: WriteId | null): RowState | null {
-  const states = rowStates(pr, pending);
+function rowState(
+  pr: PullRequest,
+  pending: WriteId | null,
+  word: string | null,
+): RowState | null {
+  const states = rowStates(pr, pending, word);
   const [first, ...rest] = states;
   if (!first) return null;
   return {
@@ -357,42 +364,50 @@ const DISMISS = immediate("dismiss", "Dismiss");
 
 const MERGED_ACTIONS = [DISMISS];
 
-// Each write in words: its label, and what the row's state reads while it
-// is on its way. Arming and cancelling auto-merge are `menuOnly`: a behind
-// row would otherwise carry four worded buttons.
+// Each write in words: its label, what the row's state reads while it is
+// on its way (`pending`), and what it reads once GitHub has taken it, until
+// a sync says so in GitHub's terms (`taken`). "Queued" carries no position:
+// only the sync knows it. The fix has no `taken`: the backend marks the PR
+// `fix_requested`, which has its own words. Arming and cancelling
+// auto-merge are `menuOnly`: a behind row would otherwise carry four worded
+// buttons.
 const WRITES: Record<
   WriteId,
-  { label: string; pending: string; menuOnly: boolean }
+  { label: string; pending: string; taken: string | null; menuOnly: boolean }
 > = {
-  fix: { label: "Fix with Copilot", pending: "Asking", menuOnly: false },
-  merge: { label: "Merge", pending: "Merging", menuOnly: false },
-  queue: { label: "Queue", pending: "Queueing", menuOnly: false },
-  update_branch: { label: "Update branch", pending: "Updating", menuOnly: false },
-  enable_auto_merge: { label: "Auto-merge", pending: "Arming", menuOnly: true },
+  fix: {
+    label: "Fix with Copilot",
+    pending: "Asking",
+    taken: null,
+    menuOnly: false,
+  },
+  merge: { label: "Merge", pending: "Merging", taken: "Merged", menuOnly: false },
+  queue: { label: "Queue", pending: "Queueing", taken: "Queued", menuOnly: false },
+  update_branch: {
+    label: "Update branch",
+    pending: "Updating",
+    taken: "Branch updated",
+    menuOnly: false,
+  },
+  enable_auto_merge: {
+    label: "Auto-merge",
+    pending: "Arming",
+    taken: "Auto-merge on",
+    menuOnly: true,
+  },
   disable_auto_merge: {
     label: "Cancel auto-merge",
     pending: "Cancelling",
+    taken: "Auto-merge off",
     menuOnly: true,
   },
-};
-
-// What the row's state reads once GitHub has taken the write, until a sync
-// says it in GitHub's terms. "Queued" carries no position: only the sync
-// knows it. The fix is not here: the backend marks the PR `fix_requested`,
-// which has its own words.
-const SENT: Record<PrAction, string> = {
-  merge: "Merged",
-  queue: "Queued",
-  update_branch: "Branch updated",
-  enable_auto_merge: "Auto-merge on",
-  disable_auto_merge: "Auto-merge off",
 };
 
 // The row's write in a word, the one on its way before the one taken: it
 // is the later of the two. Null when the row has neither.
 function writeWord(pr: PullRequest, pending: WriteId | null): string | null {
   if (pending !== null) return WRITES[pending].pending;
-  return pr.acted && SENT[pr.acted];
+  return pr.acted && WRITES[pr.acted].taken;
 }
 
 // What the confirming click of a write confirms: the act and the base
@@ -498,15 +513,16 @@ function rowView(
   writesPending: WritesPending,
 ): RowView {
   const pending = writesPending.get(prKey(pr)) ?? null;
+  const write = writeWord(pr, pending);
   return {
     pr,
     draft: pr.is_draft,
-    state: rowState(pr, pending),
+    state: rowState(pr, pending, write),
     botAuthor: pr.author_is_bot,
     botNote:
       pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
     waiting: waitingLabel(pr, now),
-    write: writeWord(pr, pending),
+    write,
     actions: rowActions(pr, snooze, pending !== null),
   };
 }

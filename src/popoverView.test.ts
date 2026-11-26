@@ -1171,10 +1171,11 @@ test("a write leaves the states it does not make stale", () => {
 });
 
 // A sync that began before the write can still have read the PR after it.
-test("a state that already reads as the write's word is said once", () => {
+test("a state that says what the write's word does is not said beside it", () => {
   expect(writing({ auto_merge: true, acted: "enable_auto_merge" }).all).toEqual([
     "Auto-merge on",
   ]);
+  expect(writing({ merge_queue_position: 2, acted: "queue" }).all).toEqual(["Queued"]);
 });
 
 test("a snoozed row's unread stays off its collapsed section's badge", () => {
