@@ -46,12 +46,41 @@ test("a choice is stored, and is the limit the next snooze reads", async () => {
   expect(snoozeLimit()).toEqual(CHOSEN);
 });
 
-// The stored value was read before the choice was made.
+// The read is held open until the choice is stored, then answers with what
+// the file held before it.
 test("a load that lands after a choice does not undo it", async () => {
+  const fake = createFakeBackend(SNAPSHOT).adapter;
+  let release = () => {};
+  setAdapter({
+    ...fake,
+    invoke: (command, args) =>
+      command === "get_snooze_limit"
+        ? new Promise((resolve) => {
+            release = () => resolve(DEFAULT as never);
+          })
+        : fake.invoke(command, args),
+  });
+
   const loading = loadSnoozeLimit();
-  const choosing = chooseSnoozeLimit(CHOSEN);
-  await Promise.all([loading, choosing]);
+  await chooseSnoozeLimit(CHOSEN);
+  release();
+  await loading;
+
   expect(snoozeLimit()).toEqual(CHOSEN);
+});
+
+// Settings shows the limit from here, so the second dropdown changed must
+// not send the first one's old value back.
+test("a second choice made before the first is stored builds on the first", async () => {
+  const [, second, third] = snoozeLimit().days;
+  const first = chooseSnoozeLimit({ enabled: true, days: [3, second, third] });
+  const shown = snoozeLimit().days;
+  const next = chooseSnoozeLimit({ enabled: true, days: [shown[0], 14, shown[2]] });
+  await Promise.all([first, next]);
+
+  resetSnoozeLimit();
+  await loadSnoozeLimit();
+  expect(snoozeLimit()).toEqual({ enabled: true, days: [3, 14, 30] });
 });
 
 test("settings that cannot be read leave the default in place", async () => {
@@ -63,7 +92,8 @@ test("settings that cannot be read leave the default in place", async () => {
   expect(snoozeLimit()).toEqual(DEFAULT);
 });
 
-test("a choice the backend refuses changes nothing", async () => {
+test("a choice the backend refuses leaves the limit as last stored", async () => {
+  await chooseSnoozeLimit({ enabled: true, days: [3, 7, 30] });
   setAdapter({
     ...createFakeBackend(SNAPSHOT).adapter,
     invoke: () => Promise.reject("That is not a snooze length on offer."),
@@ -71,5 +101,5 @@ test("a choice the backend refuses changes nothing", async () => {
   await expect(chooseSnoozeLimit(CHOSEN)).rejects.toBe(
     "That is not a snooze length on offer.",
   );
-  expect(snoozeLimit()).toEqual(DEFAULT);
+  expect(snoozeLimit()).toEqual({ enabled: true, days: [3, 7, 30] });
 });

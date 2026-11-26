@@ -30,9 +30,9 @@ pub struct Snooze {
     #[serde(default)]
     pub task_waiting: bool,
     /// Epoch ms at which the row wakes with or without news. `None` is a
-    /// snooze with no limit, which only news ends. Absent from the file for
-    /// such a snooze; one stored before the limit became a choice always
-    /// has it, and keeps it.
+    /// snooze with no limit, which only news ends, written as null and read
+    /// from null or a missing field. A snooze stored before the limit became
+    /// a choice always has an expiry, and keeps it.
     #[serde(default)]
     pub expires_at: Option<u64>,
 }

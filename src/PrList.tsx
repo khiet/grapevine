@@ -800,6 +800,12 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
     }
   };
   const rowKeys = useRowKeys(key, row.actions, run, menu, pick);
+  // A menu opens on the row's actions: a pick left open in the bar does not
+  // follow it there, since Snooze in the menu is what opens the pick.
+  const menuOpen = menu.at !== null;
+  useEffect(() => {
+    if (menuOpen) pick.standDown();
+  }, [menuOpen]);
   const standDown = () => {
     writes.standDown();
     pick.standDown();
@@ -905,9 +911,11 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           <MenuLayer
             key="actions"
             at={menu.at}
-            items={row.actions.map((action) =>
-              action.id === confirm?.id ? confirm : action,
-            )}
+            // The label alone, as the menu has always shown its actions.
+            items={row.actions.map((action) => {
+              const { id, label } = action.id === confirm?.id ? confirm : action;
+              return { id, label };
+            })}
             onPick={(id) => {
               run(id);
               // The pick that arms a write leaves the menu up for its
