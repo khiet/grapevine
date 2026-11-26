@@ -42,7 +42,7 @@ export function useSnoozeLimit(): SnoozeLimit {
 }
 
 /** Brings in the stored limit. Never rejects: settings that cannot be read
- * leave the default, which is what the backend would load them as. */
+ * leave the limit as it is. */
 export function loadSnoozeLimit(): Promise<void> {
   return getSnoozeLimit()
     .then((loaded) => {

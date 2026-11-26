@@ -911,7 +911,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           <MenuLayer
             key="actions"
             at={menu.at}
-            // The label alone, as the menu has always shown its actions.
+            // The label alone: an action's hint is the bar's tooltip.
             items={row.actions.map((action) => {
               const { id, label } = action.id === confirm?.id ? confirm : action;
               return { id, label };

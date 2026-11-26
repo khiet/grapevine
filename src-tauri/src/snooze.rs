@@ -84,7 +84,8 @@ pub fn next_expiry(snoozes: &Snoozes) -> Option<u64> {
 /// the list or can no longer be snoozed, and when the row wakes, which is the
 /// first of human activity after the baseline, a fresh review request naming
 /// the viewer, a Copilot task newly waiting for the viewer, or the expiry
-/// passing where the snooze has one. Bot activity never wakes a row. Returns true when the state
+/// passing where the snooze has one. Bot activity never wakes a row.
+/// Returns true when the state
 /// changed and needs persisting.
 pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> bool {
     let mut next = Snoozes::new();

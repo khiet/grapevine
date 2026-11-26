@@ -102,7 +102,8 @@ const offered = (actions: RowAction[], ...ids: RowActionId[]) =>
 
 /** The action a key pressed on a row runs, out of the ones that row offers:
  * S snoozes or wakes, Delete dismisses. Where snoozes have a limit, running
- * "snooze" opens the row's pick and pickCommand reads the next key. One press, one row: focus moves to
+ * "snooze" opens the row's pick and pickCommand reads the next key. One
+ * press, one row: focus moves to
  * the next row when the action removes this one, so a held key would
  * otherwise run down the list. */
 export function rowCommand(

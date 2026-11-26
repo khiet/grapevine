@@ -379,7 +379,8 @@ impl PrState {
     }
 
     /// Parks the matching PR until it has news or `expires_at` (epoch ms)
-    /// passes; with `None`, until it has news. News is measured from the last successful sync, not from this
+    /// passes; with `None`, until it has news. News is measured from the
+    /// last successful sync, not from this
     /// call: that sync is the row the viewer saw. Nothing happens for a key that is not a Mine or Participated
     /// PR in the Snapshot. The read watermark stays where it is: snoozing is
     /// not reading.

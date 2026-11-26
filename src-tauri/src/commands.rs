@@ -271,8 +271,8 @@ pub async fn get_snooze_limit(app: AppHandle) -> Result<SnoozeLimit, String> {
     Ok(settings::load(&app.state::<Store>())?.snooze_limit)
 }
 
-/// Stores the choice and returns it. It is read back when a row is next
-/// snoozed; rows already snoozed keep the expiry they were given.
+/// Stores the choice and returns it. Rows already snoozed keep the expiry
+/// they were given.
 #[tauri::command]
 pub async fn set_snooze_limit(app: AppHandle, limit: SnoozeLimit) -> Result<SnoozeLimit, String> {
     if !limit.is_valid() {

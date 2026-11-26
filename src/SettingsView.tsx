@@ -218,7 +218,7 @@ function SettingsView() {
   // default the user did not pick.
   const [pollSecs, setPollSecs] = useState<number | null>(null);
   const [chosenAppearance, setChosenAppearance] = useState<Appearance | null>(null);
-  // Loaded with the popover, long before Settings can be opened.
+  // App loads it when the popover starts.
   const snoozeLimit = useSnoozeLimit();
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [generalError, setGeneralError] = useState("");

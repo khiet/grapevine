@@ -4,7 +4,8 @@
 // The updater plugins are the one exception; updater.ts owns those.
 //
 // The wire types are hand-written copies of the Rust structs that serialize
-// them (github.rs, merged.rs, pr_state.rs, commands.rs, settings.rs). A field added or
+// them (github.rs, merged.rs, pr_state.rs, commands.rs, settings.rs). A
+// field added or
 // renamed there must be mirrored here, and the reverse.
 
 import { tauriAdapter } from "./tauri";
