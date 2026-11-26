@@ -2,8 +2,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 import { EMPTY_SNAPSHOT, type MergedPr, type PullRequest } from "./backend";
-import { derivePopover, type ListView, type WritesPending } from "./popoverView";
+import {
+  derivePopover,
+  snoozeChoices,
+  type ListView,
+  type RowAction,
+  type WritesPending,
+} from "./popoverView";
 import PrList, {
+  ActionBar,
   DEFAULT_COLLAPSED,
   deployTip,
   formatLastSync,
@@ -374,6 +381,48 @@ test("each kind of row words its actions in a bar", () => {
   expect(barOf(plain)).toEqual(["Snooze"]);
   expect(barOf(fixable)).toEqual(["Snooze", "Fix with Copilot"]);
   expect(barOf(merged)).toEqual(["Dismiss"]);
+});
+
+const barAction = (id: RowAction["id"], label: string): RowAction => ({
+  id,
+  label,
+  hint: null,
+  confirm: null,
+  menuOnly: false,
+});
+
+// The pick takes the strip over: a duration must not sit beside Merge.
+test("a bar picking a snooze shows the durations in place of the row's actions", () => {
+  const html = renderToStaticMarkup(
+    createElement(ActionBar, {
+      actions: [barAction("snooze", "Snooze"), barAction("merge", "Merge")],
+      status: "Asking",
+      pick: {
+        choices: snoozeChoices({ enabled: true, days: [1, 7, 30] }),
+        onChoose: () => {},
+      },
+      onPick: () => {},
+    }),
+  );
+  expect(barOf(html)).toEqual(["1 day", "1 week", "1 month"]);
+  expect(html).not.toContain("Asking");
+  expect(html).toContain('title="Wake after 1 week at the latest"');
+});
+
+// A lit button reads as the one a click confirms; here none is chosen yet.
+test("no duration in the pick is lit", () => {
+  const html = renderToStaticMarkup(
+    createElement(ActionBar, {
+      actions: [barAction("snooze", "Snooze")],
+      pick: {
+        choices: snoozeChoices({ enabled: true, days: [7, 7, 1] }),
+        onChoose: () => {},
+      },
+      onPick: () => {},
+    }),
+  );
+  expect(barOf(html)).toEqual(["1 week", "1 day"]);
+  expect(html).not.toContain("is-armed");
 });
 
 // The deploy status of a merged row: the control that opens the run, and

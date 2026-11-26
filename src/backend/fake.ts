@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SNOOZE_LIMIT,
   prKey,
   SNAPSHOT_EVENT,
   type Adapter,
@@ -6,6 +7,7 @@ import {
   type PrAction,
   type PullRequest,
   type Snapshot,
+  type SnoozeLimit,
 } from "./index";
 
 export interface FakeBackend {
@@ -24,6 +26,7 @@ export function createFakeBackend(
 ): FakeBackend {
   let snapshot = initial;
   let appearance: Appearance = "system";
+  let snoozeLimit = DEFAULT_SNOOZE_LIMIT;
   const subscribers = new Set<(snapshot: Snapshot) => void>();
 
   const publish = (next: Snapshot) => {
@@ -36,6 +39,8 @@ export function createFakeBackend(
     get_prs: () => snapshot,
     get_appearance: () => appearance,
     set_appearance: (args) => (appearance = args.appearance as Appearance),
+    get_snooze_limit: () => snoozeLimit,
+    set_snooze_limit: (args) => (snoozeLimit = args.limit as SnoozeLimit),
     // Claims the sync as the backend does and leaves it running: the fake
     // has no GitHub to ask, so whoever drives it publishes the result.
     sync_now: () => {
@@ -65,7 +70,8 @@ export function createFakeBackend(
         merged: snapshot.merged.filter((pr) => prKey(pr) !== key),
       }),
     dismiss_all_merged: () => publish({ ...snapshot, merged: [] }),
-    // No expiry and no waking on news: the fake never syncs.
+    // The expiry is dropped and news wakes nothing: the fake has no clock
+    // and never syncs.
     snooze: ({ key }) =>
       publish({
         ...snapshot,

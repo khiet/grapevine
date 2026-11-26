@@ -1160,13 +1160,25 @@ body {
   gap: 8px;
 }
 
-.settings-field-row select {
+.settings-field-row select,
+.snooze-limit-row select {
   padding: 3px 6px;
   border: 1px solid var(--field-line);
   border-radius: var(--radius-m);
   background-color: var(--field);
   color: inherit;
   font: inherit;
+}
+
+/* The snooze durations, on the line under their switch: three dropdowns of
+   one width across the card, with no label of their own to make room for. */
+.snooze-limit-row {
+  padding-top: 0;
+}
+
+.snooze-limit-row select {
+  flex: 1;
+  min-width: 0;
 }
 
 /* The button ranking: filled for the one primary action in a card, bordered

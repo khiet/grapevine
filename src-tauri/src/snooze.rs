@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// One parked PR: what it looked like when it was snoozed, and when the
-/// snooze runs out regardless.
+/// snooze runs out regardless, if it does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snooze {
     /// The activity baseline: epoch ms of the last successful sync before
@@ -29,8 +29,12 @@ pub struct Snooze {
     /// stored before tasks were read, none of which had one.
     #[serde(default)]
     pub task_waiting: bool,
-    /// Epoch ms at which the row wakes with or without news.
-    pub expires_at: u64,
+    /// Epoch ms at which the row wakes with or without news. `None` is a
+    /// snooze with no limit, which only news ends, written as null and read
+    /// from null or a missing field. A snooze stored before the limit became
+    /// a choice always has an expiry, and keeps it.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
 }
 
 /// The snoozed PRs, keyed by `owner/repo#number` like the read watermarks.
@@ -42,7 +46,7 @@ pub fn can_snooze(pr: &PullRequest) -> bool {
     pr.section != Section::All
 }
 
-pub fn entry(pr: &PullRequest, baseline_at: u64, expires_at: u64) -> Snooze {
+pub fn entry(pr: &PullRequest, baseline_at: u64, expires_at: Option<u64>) -> Snooze {
     Snooze {
         baseline_at,
         request_outstanding: pr.review_requested,
@@ -55,25 +59,33 @@ fn task_waiting(pr: &PullRequest) -> bool {
     pr.agent_task == Some(AgentTask::NeedsYou)
 }
 
+fn has_expired(snooze: &Snooze, now_epoch_ms: u64) -> bool {
+    snooze.expires_at.is_some_and(|at| at <= now_epoch_ms)
+}
+
 /// Drops every entry whose expiry has passed. Returns true when the state
 /// changed and needs persisting.
 pub fn wake_expired(snoozes: &mut Snoozes, now_epoch_ms: u64) -> bool {
     let before = snoozes.len();
-    snoozes.retain(|_, snooze| snooze.expires_at > now_epoch_ms);
+    snoozes.retain(|_, snooze| !has_expired(snooze, now_epoch_ms));
     snoozes.len() != before
 }
 
 /// The earliest expiry among the entries: when the clock next has a row to
-/// wake.
+/// wake. `None` when no entry has a limit.
 pub fn next_expiry(snoozes: &Snoozes) -> Option<u64> {
-    snoozes.values().map(|snooze| snooze.expires_at).min()
+    snoozes
+        .values()
+        .filter_map(|snooze| snooze.expires_at)
+        .min()
 }
 
 /// Brings `snoozes` level with a fetch: an entry is dropped when its PR left
 /// the list or can no longer be snoozed, and when the row wakes, which is the
 /// first of human activity after the baseline, a fresh review request naming
 /// the viewer, a Copilot task newly waiting for the viewer, or the expiry
-/// passing. Bot activity never wakes a row. Returns true when the state
+/// passing where the snooze has one. Bot activity never wakes a row.
+/// Returns true when the state
 /// changed and needs persisting.
 pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> bool {
     let mut next = Snoozes::new();
@@ -85,7 +97,7 @@ pub fn apply(prs: &[PullRequest], snoozes: &mut Snoozes, now_epoch_ms: u64) -> b
         let fresh_request = pr.review_requested && !snooze.request_outstanding;
         let fresh_wait = task_waiting(pr) && !snooze.task_waiting;
         if !can_snooze(pr)
-            || snooze.expires_at <= now_epoch_ms
+            || has_expired(snooze, now_epoch_ms)
             || fresh_request
             || fresh_wait
             || has_activity_after(pr, snooze.baseline_at)

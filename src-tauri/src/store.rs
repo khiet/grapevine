@@ -176,7 +176,7 @@ mod tests {
     use crate::{
         fix_requests::FixRequest,
         merged::{Deploy, DeployState, MergedPr},
-        settings::Appearance,
+        settings::{Appearance, SnoozeLimit},
         snooze::Snooze,
     };
 
@@ -206,6 +206,10 @@ mod tests {
             github_login: Some("someone".into()),
             poll_interval_secs: 300,
             appearance: Appearance::Dark,
+            snooze_limit: SnoozeLimit {
+                enabled: false,
+                days: [3, 14, 90],
+            },
         };
         store.save(&SETTINGS, &settings).unwrap();
         let loaded = store.load(&SETTINGS).unwrap();
@@ -213,6 +217,7 @@ mod tests {
         assert_eq!(loaded.github_login.as_deref(), Some("someone"));
         assert_eq!(loaded.poll_interval_secs, 300);
         assert_eq!(loaded.appearance, Appearance::Dark);
+        assert_eq!(loaded.snooze_limit, settings.snooze_limit);
     }
 
     #[test]
@@ -283,7 +288,7 @@ mod tests {
                 baseline_at: 1_784_205_296_000,
                 request_outstanding: true,
                 task_waiting: true,
-                expires_at: 1_784_250_000_000,
+                expires_at: Some(1_784_250_000_000),
             },
         )]);
         store.save(&SNOOZES, &state).unwrap();
@@ -401,5 +406,22 @@ mod tests {
         let state = store.load(&SNOOZES).unwrap();
         assert_eq!(state.len(), 1);
         assert!(!state["acme/widgets#3"].task_waiting);
+        // Given before the limit became a choice, and kept.
+        assert_eq!(state["acme/widgets#3"].expires_at, Some(1_784_250_000_000));
+    }
+
+    #[test]
+    fn a_snooze_with_no_limit_round_trips_through_the_file() {
+        let (dir, store) = temp_store();
+        for raw in [
+            r#"{ "acme/widgets#3": { "baseline_at": 1, "request_outstanding": false } }"#,
+            r#"{ "acme/widgets#3": { "baseline_at": 1, "request_outstanding": false, "expires_at": null } }"#,
+        ] {
+            fs::write(dir.path().join(SNOOZES.file), raw).unwrap();
+            let state = store.load(&SNOOZES).unwrap();
+            assert_eq!(state["acme/widgets#3"].expires_at, None);
+            store.save(&SNOOZES, &state).unwrap();
+            assert_eq!(store.load(&SNOOZES).unwrap(), state);
+        }
     }
 }

@@ -13,6 +13,9 @@ import {
   type SectionKey,
   type SectionView,
   type WriteId,
+  barActions,
+  snoozeChoices,
+  snoozeDaysLabel,
   yourTurnCount,
 } from "./popoverView";
 
@@ -1258,4 +1261,51 @@ test("a row offers no Copilot fix while Copilot is mid-task on it", () => {
     ["Snooze", "Fix with Copilot"],
     ["Snooze", "Fix with Copilot"],
   ]);
+});
+
+test("the snooze pick offers the durations in the order set, each saying its limit in full", () => {
+  expect(snoozeChoices({ enabled: true, days: [1, 7, 30] })).toEqual([
+    { days: 1, label: "1 day", hint: "Wake after 1 day at the latest" },
+    { days: 7, label: "1 week", hint: "Wake after 1 week at the latest" },
+    { days: 30, label: "1 month", hint: "Wake after 1 month at the latest" },
+  ]);
+  const labels = (days: [number, number, number]) =>
+    snoozeChoices({ enabled: true, days }).map((choice) => choice.label);
+  expect(labels([90, 3, 14])).toEqual(["3 months", "3 days", "2 weeks"]);
+});
+
+test("durations set alike are offered once, where the first of them stands", () => {
+  const days = (set: [number, number, number]) =>
+    snoozeChoices({ enabled: true, days: set }).map((choice) => choice.days);
+  expect(days([7, 1, 7])).toEqual([7, 1]);
+  expect(days([30, 30, 1])).toEqual([30, 1]);
+  expect(days([3, 3, 3])).toEqual([3]);
+});
+
+// No choices is how a row knows Snooze takes one click.
+test("with the limit off there is nothing to pick", () => {
+  expect(snoozeChoices({ enabled: false, days: [1, 7, 30] })).toEqual([]);
+});
+
+test("each length a limit can be reads as days, weeks or months", () => {
+  expect([1, 3, 7, 14, 30, 90].map(snoozeDaysLabel)).toEqual([
+    "1 day",
+    "3 days",
+    "1 week",
+    "2 weeks",
+    "1 month",
+    "3 months",
+  ]);
+});
+
+const snoozeHint = (limited: boolean) => {
+  const [row] = rows(list(SNOOZE_FIXTURE), "mine");
+  return barActions(row.actions, limited).find((action) => action.id === "snooze")?.hint;
+};
+
+// With a limit the click only opens the pick, and each duration there says
+// how long it lasts; "until it changes" would promise more than any of them.
+test("Snooze says it lasts until the PR changes only where snoozes have no limit", () => {
+  expect(snoozeHint(false)).toBe("Snooze until it changes");
+  expect(snoozeHint(true)).toBeNull();
 });

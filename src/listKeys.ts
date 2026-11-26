@@ -101,7 +101,9 @@ const offered = (actions: RowAction[], ...ids: RowActionId[]) =>
   actions.find((action) => ids.includes(action.id)) ?? null;
 
 /** The action a key pressed on a row runs, out of the ones that row offers:
- * S snoozes or wakes, Delete dismisses. One press, one row: focus moves to
+ * S snoozes or wakes, Delete dismisses. Where snoozes have a limit, running
+ * "snooze" opens the row's pick and pickCommand reads the next key. One
+ * press, one row: focus moves to
  * the next row when the action removes this one, so a held key would
  * otherwise run down the list. */
 export function rowCommand(
@@ -120,6 +122,16 @@ export function rowCommand(
     default:
       return null;
   }
+}
+
+/** The duration a key pressed on a row picks while the row's snooze pick is
+ * open with `count` durations: 1 the first, 2 the second, 3 the third, as an
+ * index into them. Null for any other key, which keeps its usual meaning. */
+export function pickCommand(press: KeyPress, count: number): number | null {
+  if (modified(press) || press.repeat) return null;
+  if (!/^[1-9]$/.test(press.key)) return null;
+  const index = Number(press.key) - 1;
+  return index < count ? index : null;
 }
 
 /** The zone a key pressed with focus on nothing is sent to: the one focus

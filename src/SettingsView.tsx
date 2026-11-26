@@ -1,7 +1,14 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { appearance } from "./appearance";
 import * as backend from "./backend";
-import type { Appearance, TokenStatus } from "./backend";
+import {
+  SNOOZE_LIMIT_DAYS,
+  type Appearance,
+  type SnoozeLimit,
+  type TokenStatus,
+} from "./backend";
+import { snoozeDaysLabel } from "./popoverView";
+import { chooseSnoozeLimit, useSnoozeLimit } from "./snoozeLimit";
 import { checkForUpdates, updateStatusLabel, useUpdateState } from "./updater";
 
 // The query parameters pre-tick the scope and fill the description. This is
@@ -53,6 +60,62 @@ export function AppearanceRow({
         ))}
       </select>
     </label>
+  );
+}
+
+const DURATION_NAMES = ["First duration", "Second duration", "Third duration"];
+
+/** The General card's snooze limit: the switch, and under it, while it is
+ * on, the three durations a row offers when it is snoozed. Off hides the
+ * durations and keeps them in `value` for when it is on again. */
+export function SnoozeLimitRows({
+  value,
+  onChange,
+}: {
+  value: SnoozeLimit;
+  onChange: (limit: SnoozeLimit) => void;
+}) {
+  const setDays = (index: number, days: number) => {
+    const next: SnoozeLimit["days"] = [...value.days];
+    next[index] = days;
+    onChange({ ...value, days: next });
+  };
+  return (
+    // One child of the card, so the durations sit under the switch with no
+    // rule between them.
+    <div>
+      <label className="settings-row settings-field-row">
+        <span>Limit how long a snooze lasts</span>
+        <input
+          type="checkbox"
+          className="settings-switch"
+          checked={value.enabled}
+          onChange={(event) => onChange({ ...value, enabled: event.target.checked })}
+        />
+      </label>
+      {value.enabled && (
+        <div
+          className="settings-row snooze-limit-row"
+          role="group"
+          aria-label="Snooze durations"
+        >
+          {value.days.map((days, index) => (
+            <select
+              key={index}
+              aria-label={DURATION_NAMES[index]}
+              value={days}
+              onChange={(event) => setDays(index, Number(event.target.value))}
+            >
+              {SNOOZE_LIMIT_DAYS.map((length) => (
+                <option key={length} value={length}>
+                  {snoozeDaysLabel(length)}
+                </option>
+              ))}
+            </select>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -155,6 +218,8 @@ function SettingsView() {
   // default the user did not pick.
   const [pollSecs, setPollSecs] = useState<number | null>(null);
   const [chosenAppearance, setChosenAppearance] = useState<Appearance | null>(null);
+  // App loads it when the popover starts.
+  const snoozeLimit = useSnoozeLimit();
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [generalError, setGeneralError] = useState("");
 
@@ -198,6 +263,15 @@ function SettingsView() {
     setGeneralError("");
     try {
       setChosenAppearance(await appearance.choose(next));
+    } catch (error) {
+      setGeneralError(String(error));
+    }
+  }
+
+  async function changeSnoozeLimit(next: SnoozeLimit) {
+    setGeneralError("");
+    try {
+      await chooseSnoozeLimit(next);
     } catch (error) {
       setGeneralError(String(error));
     }
@@ -460,6 +534,7 @@ function SettingsView() {
             </select>
           </label>
           <AppearanceRow value={chosenAppearance} onChange={changeAppearance} />
+          <SnoozeLimitRows value={snoozeLimit} onChange={changeSnoozeLimit} />
           <label className="settings-row settings-field-row">
             <span>Launch at login</span>
             <input

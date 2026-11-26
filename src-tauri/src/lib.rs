@@ -186,6 +186,8 @@ pub fn run() {
             commands::set_poll_interval,
             commands::get_appearance,
             commands::set_appearance,
+            commands::get_snooze_limit,
+            commands::set_snooze_limit,
             commands::get_launch_at_login,
             commands::set_launch_at_login,
         ])

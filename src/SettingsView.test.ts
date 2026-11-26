@@ -1,8 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
-import type { Appearance } from "./backend";
-import { AppearanceRow, filterGroups, groupRepos, pollLabel } from "./SettingsView";
+import type { Appearance, SnoozeLimit } from "./backend";
+import {
+  AppearanceRow,
+  filterGroups,
+  groupRepos,
+  pollLabel,
+  SnoozeLimitRows,
+} from "./SettingsView";
 
 const appearanceRow = (value: Appearance | null) =>
   renderToStaticMarkup(createElement(AppearanceRow, { value, onChange: () => {} }));
@@ -27,6 +33,58 @@ test("the appearance row is blank and disabled until the stored choice arrives",
   const html = appearanceRow(null);
   expect(html).toMatch(/<select[^>]*disabled=""/);
   expect(html).toMatch(/<option value="" selected="">/);
+});
+
+const snoozeRows = (value: SnoozeLimit) =>
+  renderToStaticMarkup(createElement(SnoozeLimitRows, { value, onChange: () => {} }));
+const selectsOf = (html: string) => html.match(/<select[\s\S]*?<\/select>/g) ?? [];
+
+test("the snooze limit is a switch, on with the limit", () => {
+  const on = snoozeRows({ enabled: true, days: [1, 7, 30] });
+  expect(on).toContain("<span>Limit how long a snooze lasts</span>");
+  expect(on).toMatch(/<input[^>]*type="checkbox"[^>]*checked=""/);
+  const off = snoozeRows({ enabled: false, days: [1, 7, 30] });
+  expect(off).toMatch(/<input[^>]*type="checkbox"/);
+  expect(off).not.toMatch(/<input[^>]*checked=""/);
+});
+
+test("with the limit on, three dropdowns each offer the six lengths and show the one set", () => {
+  const selects = selectsOf(snoozeRows({ enabled: true, days: [3, 14, 90] }));
+  expect(selects).toHaveLength(3);
+  for (const select of selects) {
+    expect(
+      [...select.matchAll(/<option value="(\d+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [
+        m[1],
+        m[2],
+      ]),
+    ).toEqual([
+      ["1", "1 day"],
+      ["3", "3 days"],
+      ["7", "1 week"],
+      ["14", "2 weeks"],
+      ["30", "1 month"],
+      ["90", "3 months"],
+    ]);
+  }
+  expect(selects.map((select) => select.match(/value="(\d+)" selected=""/)?.[1])).toEqual([
+    "3",
+    "14",
+    "90",
+  ]);
+});
+
+// Three unlabelled dropdowns in a row would all read alike.
+test("each duration dropdown says which of the three it is", () => {
+  const selects = selectsOf(snoozeRows({ enabled: true, days: [1, 7, 30] }));
+  expect(selects.map((select) => select.match(/aria-label="([^"]+)"/)?.[1])).toEqual([
+    "First duration",
+    "Second duration",
+    "Third duration",
+  ]);
+});
+
+test("with the limit off, the dropdowns are not shown", () => {
+  expect(selectsOf(snoozeRows({ enabled: false, days: [3, 14, 90] }))).toEqual([]);
 });
 
 test("preset intervals label as minutes or an hour", () => {
