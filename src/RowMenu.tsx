@@ -1,6 +1,5 @@
 // A row's right-click menu, drawn in the webview: the same actions as the
-// row's action bar, and the same pick of snooze durations, on a route that
-// does not come and go with hover.
+// row's action bar, on a route that does not come and go with hover.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RowActionId } from "./popoverView";
@@ -59,18 +58,9 @@ export function opensMenu(event: { key: string; shiftKey: boolean }): boolean {
   return event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
 }
 
-export interface MenuItem<Id extends string = RowActionId> {
-  id: Id;
+export interface MenuItem {
+  id: RowActionId;
   label: string;
-  /** What the label leaves unsaid, for a tooltip. */
-  hint?: string | null;
-}
-
-export interface RowMenuProps<Id extends string = RowActionId> {
-  at: Point;
-  items: MenuItem<Id>[];
-  onPick: (id: Id) => void;
-  onClose: (refocus: boolean) => void;
 }
 
 /** The open menu. Mount it to open and unmount it to close: it takes focus
@@ -78,14 +68,18 @@ export interface RowMenuProps<Id extends string = RowActionId> {
  * says whether focus should go back to the row (a close from the keyboard
  * or from picking an item) or stay where the user put it (a click
  * elsewhere). Picking does not close the menu; the caller decides, since
- * an item can need a second pick. To swap every item for another set, mount
- * a new menu under another key: it takes focus afresh. */
-function RowMenu<Id extends string = RowActionId>({
+ * an item can need a second pick. */
+function RowMenu({
   at,
   items,
   onPick,
   onClose,
-}: RowMenuProps<Id>) {
+}: {
+  at: Point;
+  items: MenuItem[];
+  onPick: (id: RowActionId) => void;
+  onClose: (refocus: boolean) => void;
+}) {
   const menu = useRef<HTMLDivElement>(null);
   const [placed, setPlaced] = useState(at);
 
@@ -157,7 +151,6 @@ function RowMenu<Id extends string = RowActionId>({
           type="button"
           role="menuitem"
           className="pr-menu-item"
-          title={item.hint ?? undefined}
           onClick={() => onPick(item.id)}
         >
           {item.label}
