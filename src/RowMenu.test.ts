@@ -64,3 +64,21 @@ test("the menu lists each action as a named menu item, in order", () => {
   const items = [...html.matchAll(/<button[^>]* role="menuitem"[^>]*>([^<]*)</g)];
   expect(items.map((m) => m[1])).toEqual(["Snooze", "Dismiss"]);
 });
+
+// The snooze pick's durations come through here with their limit spelt out.
+test("an item with more to say than its label says it in a tooltip", () => {
+  const html = renderToStaticMarkup(
+    createElement(RowMenu<string>, {
+      at: { x: 10, y: 10 },
+      items: [
+        { id: "7", label: "1 week", hint: "Wake after 1 week at the latest" },
+        { id: "30", label: "1 month" },
+      ],
+      onPick: () => {},
+      onClose: () => {},
+    }),
+  );
+  const items = [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
+  expect(items[0]).toContain('title="Wake after 1 week at the latest"');
+  expect(items[1]).not.toContain("title=");
+});
