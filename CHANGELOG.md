@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.18.0](https://github.com/khiet/grapevine/compare/grapevine-v0.17.0...grapevine-v0.18.0) (2026-11-26)
+
+
+### Features
+
+* show a write on the row as soon as it is confirmed ([5978906](https://github.com/khiet/grapevine/commit/5978906cf34c0087ba344e43642638d835502f13)), closes [#166](https://github.com/khiet/grapevine/issues/166)
+* snooze with a chosen limit, or with none ([#164](https://github.com/khiet/grapevine/issues/164)) ([a3fbf85](https://github.com/khiet/grapevine/commit/a3fbf853f9fe1bd02ff957444a17f130d5d5f39f)), closes [#163](https://github.com/khiet/grapevine/issues/163)
+
+
+### Bug Fixes
+
+* say a queued write once when a sync already carries its position ([9efff17](https://github.com/khiet/grapevine/commit/9efff170e02bbf88bff9c3a19022c27e64e17d1d)), closes [#166](https://github.com/khiet/grapevine/issues/166)
+
 ## [0.17.0](https://github.com/khiet/grapevine/compare/grapevine-v0.16.2...grapevine-v0.17.0) (2026-11-20)
 
 
