@@ -13,6 +13,7 @@ import {
   type SectionKey,
   type SectionView,
   type WriteId,
+  barActions,
   snoozeChoices,
   snoozeDaysLabel,
   yourTurnCount,
@@ -1295,4 +1296,16 @@ test("each length a limit can be reads as days, weeks or months", () => {
     "1 month",
     "3 months",
   ]);
+});
+
+const snoozeHint = (limited: boolean) => {
+  const [row] = rows(list(SNOOZE_FIXTURE), "mine");
+  return barActions(row.actions, limited).find((action) => action.id === "snooze")?.hint;
+};
+
+// With a limit the click only opens the pick, and each duration there says
+// how long it lasts; "until it changes" would promise more than any of them.
+test("Snooze says it lasts until the PR changes only where snoozes have no limit", () => {
+  expect(snoozeHint(false)).toBe("Snooze until it changes");
+  expect(snoozeHint(true)).toBeNull();
 });

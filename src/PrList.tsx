@@ -38,6 +38,7 @@ import RowMenu, { opensMenu, type Point, type RowMenuProps } from "./RowMenu";
 import { clickWrite } from "./rowWrites";
 import { useSnoozeLimit } from "./snoozeLimit";
 import {
+  barActions,
   snoozeChoices,
   YOUR_TURN_KEY,
   type DeployView,
@@ -868,7 +869,7 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
       </button>
       <span className="pr-row-end">
         <ActionBar
-          actions={row.actions.filter((action) => !action.menuOnly)}
+          actions={barActions(row.actions, pick.limited)}
           confirm={confirm}
           status={row.pending}
           pick={pick.choices && { choices: pick.choices, onChoose: pick.choose }}

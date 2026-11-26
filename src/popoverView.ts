@@ -333,6 +333,7 @@ const immediate = (
 
 // One action whether or not snoozes have a limit: with one, its click opens
 // the pick of durations (see snoozeChoices) and the pick does the snoozing.
+// The hint is true only without a limit; barActions drops it otherwise.
 const SNOOZE = immediate("snooze", "Snooze", "Snooze until it changes");
 const WAKE = immediate("wake", "Wake");
 const DISMISS = immediate("dismiss", "Dismiss");
@@ -413,6 +414,17 @@ export function snoozeChoices(limit: SnoozeLimit): SnoozeChoice[] {
     const label = snoozeDaysLabel(days);
     return { days, label, hint: `Wake after ${label} at the latest` };
   });
+}
+
+/** The actions a row's bar shows: all but the `menuOnly` ones. `snoozePicks`
+ * is whether Snooze opens the pick of durations, where it carries no hint:
+ * how long the snooze lasts is each duration's to say. */
+export function barActions(actions: RowAction[], snoozePicks: boolean): RowAction[] {
+  return actions
+    .filter((action) => !action.menuOnly)
+    .map((action) =>
+      action.id === "snooze" && snoozePicks ? { ...action, hint: null } : action,
+    );
 }
 
 // The writes the row offers. None on a snoozed row: that one was put out of
