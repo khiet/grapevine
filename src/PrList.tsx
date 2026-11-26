@@ -684,20 +684,17 @@ const rowClass = (menuOpen: boolean, selected: boolean) =>
    children (nested buttons are invalid HTML), floated over the end of the
    row's metadata line and shown only while the row is hovered or holds
    focus. `confirm` is the action waiting for its confirming click, under the
-   words it shows meanwhile, and `status` stands where an action would while
-   it cannot be asked for. A row with neither has no bar. `pick` is the open
-   snooze pick: its durations take the whole strip, with none lit, since
-   none is chosen yet. */
+   words it shows meanwhile. A row with no actions has no bar. `pick` is the
+   open snooze pick: its durations take the whole strip, with none lit,
+   since none is chosen yet. */
 export function ActionBar({
   actions,
   confirm = null,
-  status = null,
   pick = null,
   onPick,
 }: {
   actions: RowAction[];
   confirm?: RowAction | null;
-  status?: string | null;
   pick?: { choices: SnoozeChoice[]; onChoose: (days: number) => void } | null;
   onPick: (id: RowActionId) => void;
 }) {
@@ -720,14 +717,9 @@ export function ActionBar({
       </span>
     );
   }
-  if (actions.length === 0 && !status) return null;
+  if (actions.length === 0) return null;
   return (
     <span className="pr-actions" role="group" aria-label="Actions">
-      {status && (
-        <span className="pr-action-status" role="status">
-          {status}
-        </span>
-      )}
       {actions.map((action) => {
         const { id, label, hint } =
           action.id === confirm?.id ? confirm : action;
@@ -867,11 +859,17 @@ function PrRow({ row, showRepo = true }: { row: RowView; showRepo?: boolean }) {
           </span>
         </span>
       </button>
+      {/* Speaks the row's write when its word changes. On every row and
+          empty until then: a live region that arrives with its text already
+          in it is not announced. The word is shown by the state, inside the
+          row button, where nothing is live. */}
+      <span className="visually-hidden" role="status">
+        {row.write}
+      </span>
       <span className="pr-row-end">
         <ActionBar
           actions={barActions(row.actions, pick.limited)}
           confirm={confirm}
-          status={row.pending}
           pick={pick.choices && { choices: pick.choices, onChoose: pick.choose }}
           onPick={run}
         />

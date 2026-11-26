@@ -50,6 +50,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   fix_requested: false,
   agent_task: null,
   actions: [],
+  acted: null,
   merge_method: "merge",
   base_branch: "main",
   head_oid: "abc123",
@@ -953,7 +954,7 @@ test("a row whose fix is being posted shows that in place of the offer", () => {
   const snapshot = synced({ prs: [fixable({ number: 1 }), fixable({ number: 2 })] });
   const posting = new Map([["acme/widgets#1", "fix" as const]]);
   const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, posting);
-  expect(rows(content as ListView, "mine").map((row) => row.pending)).toEqual([
+  expect(rows(content as ListView, "mine").map((row) => row.write)).toEqual([
     "Asking",
     null,
   ]);
@@ -1069,6 +1070,20 @@ test("a snoozed row offers none of the backend's actions", () => {
   expect(labels(snoozedGroup(view, "mine").rows[0])).toEqual(["Wake"]);
 });
 
+// The states of the one Mine row of a snapshot holding just `overrides`,
+// with `pending` on its way from it if given.
+function writing(overrides: Partial<PullRequest>, pending: WriteId | null = null) {
+  const { content } = derivePopover(
+    synced({ prs: [pr(overrides)] }),
+    "",
+    ALL_EXPANDED,
+    NOW,
+    new Map(pending ? [["acme/widgets#7", pending]] : []),
+  );
+  const [row] = rows(content as ListView, "mine");
+  return { row, state: row.state, all: row.state?.all ?? [] };
+}
+
 test("a row with a write on its way says which, and offers no write until it lands", () => {
   const snapshot = synced({
     prs: [
@@ -1079,23 +1094,95 @@ test("a row with a write on its way says which, and offers no write until it lan
   const pending = new Map([["acme/widgets#1", "update_branch" as const]]);
   const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, pending);
   const [updating, other] = rows(content as ListView, "mine");
-  expect(updating.pending).toBe("Updating");
+  expect(updating.write).toBe("Updating");
+  expect(updating.state?.reason).toBe("Updating");
   expect(labels(updating)).toEqual(["Snooze"]);
-  expect(other.pending).toBeNull();
+  expect(other.write).toBeNull();
+  expect(other.state).toBeNull();
   expect(labels(other)).toEqual(["Snooze", "Merge"]);
 });
 
 test("each write has its own word while it is on its way", () => {
-  const word = (id: WriteId) => {
-    const snapshot = synced({ prs: [pr()] });
-    const pending = new Map([["acme/widgets#7", id]]);
-    const { content } = derivePopover(snapshot, "", ALL_EXPANDED, NOW, pending);
-    return rows(content as ListView, "mine")[0].pending;
-  };
+  const word = (id: WriteId) => writing({}, id).state?.reason;
+  expect(word("fix")).toBe("Asking");
   expect(word("merge")).toBe("Merging");
   expect(word("queue")).toBe("Queueing");
+  expect(word("update_branch")).toBe("Updating");
   expect(word("enable_auto_merge")).toBe("Arming");
   expect(word("disable_auto_merge")).toBe("Cancelling");
+});
+
+test("each write GitHub has taken has its own word until the sync replaces it", () => {
+  const word = (acted: PrAction) => writing({ acted }).state?.reason;
+  expect(word("merge")).toBe("Merged");
+  expect(word("queue")).toBe("Queued");
+  expect(word("update_branch")).toBe("Branch updated");
+  expect(word("enable_auto_merge")).toBe("Auto-merge on");
+  expect(word("disable_auto_merge")).toBe("Auto-merge off");
+});
+
+// Green is for what GitHub has confirmed, and a sync is what confirms.
+test("the word for a write leads the row's states, in the neutral tone", () => {
+  const blocked: Partial<PullRequest> = { blocked_reasons: ["ci"], approved: true };
+  const onItsWay = writing({ ...blocked, actions: ["enable_auto_merge"] }, "enable_auto_merge");
+  expect(onItsWay.state).toMatchObject({ reason: "Arming", tone: "neutral", more: "+2" });
+  expect(onItsWay.all).toEqual(["Arming", "CI failing", "Approved"]);
+
+  const taken = writing({ ...blocked, acted: "enable_auto_merge" });
+  expect(taken.state).toMatchObject({ reason: "Auto-merge on", tone: "neutral", more: "+2" });
+  expect(taken.all).toEqual(["Auto-merge on", "CI failing", "Approved"]);
+  expect(taken.row.write).toBe("Auto-merge on");
+});
+
+test("a merge or a queue drops Mergeable, on its way and once taken", () => {
+  const ready = { ready_to_merge: true, approved: true } as const;
+  expect(writing(ready).all).toEqual(["Mergeable", "Approved"]);
+  expect(writing(ready, "merge").all).toEqual(["Merging", "Approved"]);
+  expect(writing({ ...ready, acted: "merge" }).all).toEqual(["Merged", "Approved"]);
+  expect(writing(ready, "queue").all).toEqual(["Queueing", "Approved"]);
+  expect(writing({ ...ready, acted: "queue" }).all).toEqual(["Queued", "Approved"]);
+});
+
+test("a branch update drops the behind blocker and keeps the others", () => {
+  const behind: Partial<PullRequest> = { blocked_reasons: ["ci", "behind"] };
+  expect(writing(behind, "update_branch").all).toEqual(["Updating", "CI failing"]);
+  expect(writing({ ...behind, acted: "update_branch" }).all).toEqual([
+    "Branch updated",
+    "CI failing",
+  ]);
+});
+
+test("cancelling auto-merge drops Auto-merge on", () => {
+  const armed = { auto_merge: true, checks_running: true } as const;
+  expect(writing(armed, "disable_auto_merge").all).toEqual(["Cancelling", "Checks running"]);
+  expect(writing({ ...armed, acted: "disable_auto_merge" }).all).toEqual([
+    "Auto-merge off",
+    "Checks running",
+  ]);
+});
+
+test("a write leaves the states it does not make stale", () => {
+  const ready = { ready_to_merge: true, auto_merge: true } as const;
+  expect(writing({ ...ready, acted: "update_branch" }).all).toEqual([
+    "Branch updated",
+    "Mergeable",
+    "Auto-merge on",
+  ]);
+});
+
+// A sync that began before the write can still have read the PR after it.
+test("a state that already reads as the write's word is said once", () => {
+  expect(writing({ auto_merge: true, acted: "enable_auto_merge" }).all).toEqual([
+    "Auto-merge on",
+  ]);
+});
+
+// The fix has no word of its own once it is taken: the backend sets
+// fix_requested, and the row reads as it always has.
+test("a fix GitHub has taken reads Copilot fixing after the conflict", () => {
+  const asked = writing({ blocked_reasons: ["conflict"], fix_requested: true });
+  expect(asked.all).toEqual(["Merge conflict", "Copilot fixing"]);
+  expect(asked.row.write).toBeNull();
 });
 
 test("a snoozed row's unread stays off its collapsed section's badge", () => {

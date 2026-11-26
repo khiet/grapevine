@@ -214,6 +214,7 @@ mod tests {
             agent_task: None,
             agent_task_updated_at: None,
             actions: Vec::new(),
+            acted: None,
             merge_method: crate::github::MergeMethod::Merge,
             base_branch: String::new(),
             head_oid: String::new(),

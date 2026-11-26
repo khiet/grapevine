@@ -93,9 +93,9 @@ async fn post_conflict_fix(pr: &github::PullRequest) -> Result<(), String> {
 /// the row that was confirmed, which can only stop a write: the PR comes
 /// from the Snapshot, and [`github::act_on_pr`] holds the rule for what may
 /// be done to it. `Err` is the message the row shows. A write that went
-/// through takes the row's actions away. Either way a sync follows: it says
-/// what the PR offers now, or brings the row up to the PR GitHub turned the
-/// write down for.
+/// through is said on the row in place of its actions. Either way a sync
+/// follows: it says what the PR offers now, or brings the row up to the PR
+/// GitHub turned the write down for.
 #[tauri::command]
 pub async fn act_on_pr(
     app: AppHandle,
@@ -111,7 +111,7 @@ pub async fn act_on_pr(
     if written.is_ok() {
         // The write is done, so a failed delivery must not read as a failed
         // write: the row would offer it again.
-        if let Err(e) = sync::transition(&app, |prs| prs.acted(&key)) {
+        if let Err(e) = sync::transition(&app, |prs| prs.acted(&key, action)) {
             eprintln!("cannot deliver the acted-on row: {e}");
         }
     }

@@ -74,6 +74,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     fix_requested: false,
     agent_task: null,
     actions: [],
+    acted: null,
     merge_method: "merge",
     base_branch: "main",
     head_oid: "abc123",
