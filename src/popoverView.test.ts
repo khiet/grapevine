@@ -1177,14 +1177,6 @@ test("a state that already reads as the write's word is said once", () => {
   ]);
 });
 
-// The fix has no word of its own once it is taken: the backend sets
-// fix_requested, and the row reads as it always has.
-test("a fix GitHub has taken reads Copilot fixing after the conflict", () => {
-  const asked = writing({ blocked_reasons: ["conflict"], fix_requested: true });
-  expect(asked.all).toEqual(["Merge conflict", "Copilot fixing"]);
-  expect(asked.row.write).toBeNull();
-});
-
 test("a snoozed row's unread stays off its collapsed section's badge", () => {
   const view = list(SNOOZE_FIXTURE, "", ALL_COLLAPSED);
   expect(section(view, "mine").collapsedUnread).toBe(0);

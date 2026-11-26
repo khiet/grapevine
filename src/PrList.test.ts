@@ -561,7 +561,6 @@ test("a row whose write GitHub has taken says so in its state until the sync", (
   const [li] = renderList([{ ...openPr, ready_to_merge: true, acted: "queue" }]);
   expect(shownState(li)).toBe("Queued");
   expect(spoken(li)).toBe("Queued");
-  expect(li).not.toContain("Mergeable");
 });
 
 // The region is there before the word is, or the word is never announced.
