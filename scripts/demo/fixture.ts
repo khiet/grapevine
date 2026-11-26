@@ -47,6 +47,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     fix_requested: false,
     agent_task: null,
     actions: [],
+    acted: null,
     merge_method: "merge",
     base_branch: "main",
     head_oid: "abc123",

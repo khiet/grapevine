@@ -153,6 +153,7 @@ const openPr = {
   fix_requested: false,
   agent_task: null,
   actions: [],
+  acted: null,
   merge_method: "merge",
   base_branch: "main",
   head_oid: "abc123",
@@ -396,7 +397,6 @@ test("a bar picking a snooze shows the durations in place of the row's actions",
   const html = renderToStaticMarkup(
     createElement(ActionBar, {
       actions: [barAction("snooze", "Snooze"), barAction("merge", "Merge")],
-      status: "Asking",
       pick: {
         choices: snoozeChoices({ enabled: true, days: [1, 7, 30] }),
         onChoose: () => {},
@@ -405,7 +405,6 @@ test("a bar picking a snooze shows the durations in place of the row's actions",
     }),
   );
   expect(barOf(html)).toEqual(["1 day", "1 week", "1 month"]);
-  expect(html).not.toContain("Asking");
   expect(html).toContain('title="Wake after 1 week at the latest"');
 });
 
@@ -508,15 +507,22 @@ test("the timestamp sits inside the row button on every kind of row", () => {
   }
 });
 
-// While the request is on its way there is nothing to ask for, so the bar
-// says so where the fix was.
-test("a row whose Copilot fix is being posted says Asking in place of the fix", () => {
+// The state a row shows without hover, and what its live region speaks.
+const shownState = (li: string) =>
+  li.match(/<span class="pr-state-reason">([^<]*)<\/span>/)?.[1];
+const spoken = (li: string) =>
+  li.match(/<span class="visually-hidden" role="status">([^<]*)<\/span>/)?.[1];
+
+// While the request is on its way there is nothing to ask for, and the row
+// says so in its state, hovered or not.
+test("a row whose Copilot fix is being posted says Asking in its state, not in the bar", () => {
   const [li] = renderList(
     [{ ...openPr, can_fix_conflict: true, blocked_reasons: ["conflict"] }],
     [],
     new Map([["acme/widgets#7", "fix"]]),
   );
-  expect(li).toContain('<span class="pr-action-status" role="status">Asking</span>');
+  expect(shownState(li)).toBe("Asking");
+  expect(spoken(li)).toBe("Asking");
   expect(barOf(li)).toEqual(["Snooze"]);
 });
 
@@ -540,14 +546,29 @@ test("the bar leaves auto-merge to the menu", () => {
   expect(barOf(armed)).toEqual(["Snooze"]);
 });
 
-test("a row whose merge is on its way says Merging in place of its writes", () => {
+test("a row whose merge is on its way says Merging in its state and offers no write", () => {
   const [li] = renderList(
     [{ ...openPr, actions: ["merge", "enable_auto_merge"] }],
     [],
     new Map([["acme/widgets#7", "merge"]]),
   );
-  expect(li).toContain('<span class="pr-action-status" role="status">Merging</span>');
+  expect(shownState(li)).toBe("Merging");
+  expect(spoken(li)).toBe("Merging");
   expect(barOf(li)).toEqual(["Snooze"]);
+});
+
+test("a row whose write GitHub has taken says so in its state until the sync", () => {
+  const [li] = renderList([{ ...openPr, ready_to_merge: true, acted: "queue" }]);
+  expect(shownState(li)).toBe("Queued");
+  expect(spoken(li)).toBe("Queued");
+  expect(li).not.toContain("Mergeable");
+});
+
+// The region is there before the word is, or the word is never announced.
+test("a row with no write keeps an empty live region for one to be spoken in", () => {
+  const [li] = renderList([{ ...openPr, ready_to_merge: true }]);
+  expect(shownState(li)).toBe("Mergeable");
+  expect(spoken(li)).toBe("");
 });
 
 test("the selected row, and only that row, is marked as the selection", () => {

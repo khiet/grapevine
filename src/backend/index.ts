@@ -105,6 +105,11 @@ export interface PullRequest {
    * the base branch has a merge queue. The backend checks it again before
    * writing, so this only decides what is offered. */
   actions: PrAction[];
+  /** What the viewer did to the PR from its row that no sync has read back
+   * yet; null otherwise. Backend-set once GitHub has taken the write, beside
+   * an empty `actions`, and cleared by the first sync that began after it
+   * and landed. The row says it until then ("Queued"). */
+  acted: PrAction | null;
   /** How "merge" and "enable_auto_merge" merge in this PR's repo: rebase
    * where the repo allows it, otherwise the repo's default for the viewer.
    * Named in the confirm hint; there is no picker. */

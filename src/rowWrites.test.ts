@@ -54,6 +54,7 @@ const conflicted: PullRequest = {
   fix_requested: false,
   agent_task: null,
   actions: [],
+  acted: null,
   merge_method: "merge",
   base_branch: "main",
   head_oid: "abc123",
@@ -179,15 +180,15 @@ test("one click on a write never sends it", async () => {
   expect(sent).toEqual([]);
 });
 
-test("two clicks on Merge merge once, and the PR moves to Merged", async () => {
+test("two clicks on Merge merge once, and the PR says so and offers nothing more", async () => {
   const { sent, snapshot } = backend();
   const row = control(ready);
   await row.click("merge");
   expect(await row.click("merge")).toBeNull();
   expect(sent).toEqual([`${READY_KEY} merge`]);
-  const after = await snapshot();
-  expect(after.prs.map((pr) => pr.number)).toEqual([7]);
-  expect(after.merged.map((pr) => pr.number)).toEqual([8]);
+  const [untouched, merged] = (await snapshot()).prs;
+  expect(merged).toMatchObject({ acted: "merge", actions: [] });
+  expect(untouched.acted).toBeNull();
 });
 
 test("a click on another write stands the armed one down and arms that one instead", async () => {
@@ -200,20 +201,14 @@ test("a click on another write stands the armed one down and arms that one inste
   expect(sent).toEqual([`${READY_KEY} enable_auto_merge`]);
 });
 
-test("auto-merge armed from the row shows on the PR, which then offers to cancel it", async () => {
+test("a write the backend took cannot be sent again from the row it left", async () => {
   const { snapshot } = backend();
   await requestWrite(ready, "enable_auto_merge");
-  expect((await snapshot()).prs[1]).toMatchObject({
-    auto_merge: true,
-    ready_to_merge: false,
-    turn: "theirs",
-    actions: ["disable_auto_merge"],
-  });
-  await requestWrite(ready, "disable_auto_merge");
-  expect((await snapshot()).prs[1]).toMatchObject({
-    auto_merge: false,
-    actions: ["enable_auto_merge"],
-  });
+  const [, armed] = (await snapshot()).prs;
+  expect(armed).toMatchObject({ acted: "enable_auto_merge", actions: [] });
+  expect(await requestWrite(armed, "enable_auto_merge")).toBe(
+    "That is no longer on offer for this PR.",
+  );
 });
 
 test("a write reads as pending only while it is on its way, under its own name", async () => {

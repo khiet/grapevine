@@ -240,6 +240,7 @@ const openPr = {
   fix_requested: false,
   agent_task: null,
   actions: [],
+  acted: null,
   merge_method: "merge",
   base_branch: "main",
   head_oid: "abc123",

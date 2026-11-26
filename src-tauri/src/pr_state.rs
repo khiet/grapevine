@@ -48,7 +48,7 @@ use serde::Serialize;
 
 use crate::{
     fix_requests,
-    github::{PullRequest, Turn},
+    github::{PrAction, PullRequest, Turn},
     merged, snooze, turns, unread,
 };
 
@@ -119,10 +119,17 @@ struct Inner {
     /// Keys whose fix request is on its way to GitHub, from
     /// [`PrState::begin_fix`] until it is recorded or abandoned.
     fixes_posting: HashSet<String>,
-    /// Keys of the PRs acted on since a sync last began. A sync that lands
-    /// while a key is here read its PR before the write, so what it says
-    /// that PR offers is out of date (see [`PrState::acted`]).
-    acted: HashSet<String>,
+    /// What was done to each PR acted on since a sync last began, by key. A
+    /// sync that lands while a key is here read its PR before the write, so
+    /// what it says of that PR is out of date (see [`PrState::acted`]).
+    acted: HashMap<String, PrAction>,
+}
+
+/// Leaves `pr` as a write of `action` leaves its row: saying what was done,
+/// and offering nothing more until a sync reads the PR again.
+fn mark_acted(pr: &mut PullRequest, action: PrAction) {
+    pr.acted = Some(action);
+    pr.actions.clear();
 }
 
 impl Inner {
@@ -277,8 +284,8 @@ impl PrState {
         let read_changed = unread::apply(&mut prs, &mut inner.read_state);
         let snoozes_changed = snooze::apply(&prs, &mut inner.snoozes, now_epoch_ms);
         for pr in &mut prs {
-            if inner.acted.contains(&unread::key(pr)) {
-                pr.actions.clear();
+            if let Some(&action) = inner.acted.get(&unread::key(pr)) {
+                mark_acted(pr, action);
             }
         }
         inner.snapshot = Snapshot {
@@ -524,21 +531,21 @@ impl PrState {
         Ok(pr.clone())
     }
 
-    /// One of the matching PR's actions was carried out on GitHub. The row
-    /// offers none from here until a sync that began after the write says
-    /// what the PR offers now: what it offered was true of a PR that has
-    /// just changed, and so is the answer of a sync already under way. Call
-    /// it only after the write went through.
-    pub fn acted(&self, key: &str) -> Effects {
+    /// `action` was carried out on the matching PR on GitHub. The row says
+    /// so and offers nothing from here until a sync that began after the
+    /// write lands: what the PR offered was true of a PR that has just
+    /// changed, and so is the answer of a sync already under way. Call it
+    /// only after the write went through.
+    pub fn acted(&self, key: &str, action: PrAction) -> Effects {
         let mut inner = self.inner.lock().unwrap();
-        inner.acted.insert(key.to_string());
+        inner.acted.insert(key.to_string(), action);
         if let Some(pr) = inner
             .snapshot
             .prs
             .iter_mut()
             .find(|pr| unread::key(pr) == key)
         {
-            pr.actions.clear();
+            mark_acted(pr, action);
         }
         inner.no_effects()
     }
@@ -659,6 +666,7 @@ mod tests {
             agent_task: None,
             agent_task_updated_at: None,
             actions: Vec::new(),
+            acted: None,
             merge_method: MergeMethod::Merge,
             base_branch: String::new(),
             head_oid: String::new(),
@@ -2148,9 +2156,10 @@ mod tests {
     }
 
     /// Until the next sync says what the PR offers now, a row that was just
-    /// acted on offers nothing: the same write must not be asked for twice.
+    /// acted on offers nothing, and says what was done to it: the same write
+    /// must not be asked for twice.
     #[test]
-    fn a_pr_that_was_acted_on_offers_nothing_until_the_next_sync() {
+    fn a_pr_that_was_acted_on_says_so_and_offers_nothing_until_the_next_sync() {
         let offering = |number| PullRequest {
             section: Section::Mine,
             actions: vec![PrAction::Merge, PrAction::EnableAutoMerge],
@@ -2163,13 +2172,18 @@ mod tests {
             NOW_MS,
         );
 
-        let effects = state.acted("acme/widgets#7");
+        let effects = state.acted("acme/widgets#7", PrAction::EnableAutoMerge);
 
         assert_eq!(effects.snapshot.prs[0].actions, vec![]);
+        assert_eq!(
+            effects.snapshot.prs[0].acted,
+            Some(PrAction::EnableAutoMerge)
+        );
         assert_eq!(
             effects.snapshot.prs[1].actions,
             vec![PrAction::Merge, PrAction::EnableAutoMerge]
         );
+        assert_eq!(effects.snapshot.prs[1].acted, None);
 
         state.begin_sync();
         let synced = state.sync_succeeded(
@@ -2181,12 +2195,14 @@ mod tests {
             synced.snapshot.prs[0].actions,
             vec![PrAction::Merge, PrAction::EnableAutoMerge]
         );
+        assert_eq!(synced.snapshot.prs[0].acted, None);
     }
 
     /// A sync already under way read the PR before the write, so it would
-    /// put back the very action that was just carried out.
+    /// put back the very action that was just carried out, and take away
+    /// the word for it.
     #[test]
-    fn a_sync_that_began_before_the_write_does_not_bring_the_actions_back() {
+    fn a_sync_that_began_before_the_write_keeps_the_row_as_the_write_left_it() {
         let offering = || PullRequest {
             section: Section::Mine,
             actions: vec![PrAction::Merge],
@@ -2195,14 +2211,39 @@ mod tests {
         let state = PrState::default();
         state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
         state.begin_sync();
-        state.acted("acme/widgets#7");
+        state.acted("acme/widgets#7", PrAction::Merge);
 
         let stale = state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
         assert_eq!(stale.snapshot.prs[0].actions, vec![]);
+        assert_eq!(stale.snapshot.prs[0].acted, Some(PrAction::Merge));
 
         state.begin_sync();
         let fresh = state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
         assert_eq!(fresh.snapshot.prs[0].actions, vec![PrAction::Merge]);
+        assert_eq!(fresh.snapshot.prs[0].acted, None);
+    }
+
+    /// The sync that would have said what the write did never landed, so
+    /// the row has nothing newer to show than the write itself.
+    #[test]
+    fn a_failed_sync_leaves_the_row_as_the_write_left_it() {
+        let offering = || PullRequest {
+            section: Section::Mine,
+            actions: vec![PrAction::Queue],
+            ..pr("acme/widgets", 7, &[])
+        };
+        let state = PrState::default();
+        state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
+        state.acted("acme/widgets#7", PrAction::Queue);
+
+        state.begin_sync();
+        let failed = state.sync_failed("GitHub is unreachable.".into());
+        assert_eq!(failed.snapshot.prs[0].actions, vec![]);
+        assert_eq!(failed.snapshot.prs[0].acted, Some(PrAction::Queue));
+
+        state.begin_sync();
+        let landed = state.sync_succeeded(vec![offering()], merged::CatchUp::default(), NOW_MS);
+        assert_eq!(landed.snapshot.prs[0].acted, None);
     }
 
     /// A row can outlive its PR by one click: the sync that drops the PR
@@ -2300,6 +2341,7 @@ mod tests {
                     PrAction::EnableAutoMerge,
                     PrAction::DisableAutoMerge,
                 ],
+                acted: Some(PrAction::UpdateBranch),
                 merge_method: MergeMethod::Rebase,
                 base_branch: "main".into(),
                 head_oid: "abc123".into(),
@@ -2376,6 +2418,7 @@ mod tests {
                         "enable_auto_merge",
                         "disable_auto_merge"
                     ],
+                    "acted": "update_branch",
                     "merge_method": "rebase",
                     "base_branch": "main",
                     "head_oid": "abc123",

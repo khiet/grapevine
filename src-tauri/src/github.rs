@@ -331,6 +331,11 @@ pub struct PullRequest {
     /// [`Client::act_on_pr`] refuses an action that is not listed here. Same
     /// property-not-event rule as `blocked_reasons`.
     pub actions: Vec<PrAction>,
+    /// The action carried out on the PR since a sync last read it, for the
+    /// row to say until one does; filled in by
+    /// [`crate::pr_state::PrState::acted`], always `None` out of this
+    /// module. Never set beside a non-empty `actions`.
+    pub acted: Option<PrAction>,
     /// The method `Merge` and `EnableAutoMerge` use in this PR's repo. The
     /// row names it in the confirm hint; a queue ignores it.
     pub merge_method: MergeMethod,
@@ -1884,6 +1889,7 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             agent_task: None,
             agent_task_updated_at: None,
             actions,
+            acted: None,
             merge_method,
             base_branch: text("baseRefName"),
             head_oid: text("headRefOid"),

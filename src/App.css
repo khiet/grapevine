@@ -542,15 +542,6 @@ body {
   visibility: hidden;
 }
 
-/* Stands where an action would while it cannot be asked for ("Asking"). */
-.pr-action-status {
-  padding: 0 8px;
-  color: var(--text-2);
-  font-size: var(--text-s);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
 /* The right-click menu, placed in window coordinates at the pointer. Above
    the sticky section headers and the hover bubbles. */
 .pr-menu {

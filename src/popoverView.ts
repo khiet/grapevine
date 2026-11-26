@@ -101,9 +101,11 @@ export interface RowView {
    * time. Null when the turn is not the viewer's; the row keeps the updated
    * time then. */
   waiting: string | null;
-  /** The write on its way to GitHub from this row, in a word ("Merging");
-   * null when there is none. `actions` offers no write meanwhile. */
-  pending: string | null;
+  /** The row's write in a word, on its way to GitHub ("Merging") or taken
+   * by it and not yet read back by a sync ("Merged"); null when there is
+   * neither. It is `state.reason` too; here for the row to announce when
+   * it changes. */
+  write: string | null;
   /** Never empty: every row can at least be opened. */
   actions: RowAction[];
 }
@@ -231,6 +233,13 @@ interface TonedState {
 // Every state the PR is in, in priority order; the row shows the first and
 // folds the rest. A new signal needs one line here, placed where it ranks.
 //
+// A write the viewer confirmed on the row outranks everything, `pending` on
+// its way and `pr.acted` once GitHub has taken it: it is the newest thing
+// true of the PR, and the sync has not caught up with it. It is neutral,
+// since green is for what GitHub has confirmed. The state it makes stale is
+// left out, and so is one that already reads as the word does: a sync that
+// began before the write can still have read the PR after it.
+//
 // A Copilot task that stopped, to ask the viewer something or because it
 // failed, outranks everything: the first is the backend's reason for the
 // turn whatever else is true of the PR, and the second is the task giving
@@ -248,13 +257,18 @@ interface TonedState {
 // position on a draft, so whatever it does send shows. Ready is the
 // backend's call as well and does not imply approved, since a repo with no
 // required reviews is ready without an approval.
-function rowStates(pr: PullRequest): TonedState[] {
+function rowStates(pr: PullRequest, pending: WriteId | null): TonedState[] {
   const states: TonedState[] = [];
+  const word = writeWord(pr, pending);
+  const write = pending ?? pr.acted;
   const add = (
     text: string,
     tone: Tone = "neutral",
     detail: string | null = null,
-  ) => states.push({ text, tone, detail });
+  ) => {
+    if (text !== word) states.push({ text, tone, detail });
+  };
+  if (word !== null) states.push({ text: word, tone: "neutral", detail: null });
   if (pr.agent_task === "needs_you") add("Copilot needs you", "accent");
   if (pr.agent_task === "failed") add("Copilot failed", "warn");
   // The accent is the viewer's turn, not the request: the same words on a row
@@ -263,9 +277,12 @@ function rowStates(pr: PullRequest): TonedState[] {
     add("Review requested", pr.turn === "yours" ? "accent" : "neutral");
   }
   for (const reason of pr.blocked_reasons) {
+    if (reason === "behind" && write === "update_branch") continue;
     add(BLOCKED_LABELS[reason], "warn", blockedDetail(reason, pr));
   }
-  if (pr.ready_to_merge) add("Mergeable", "ok");
+  if (pr.ready_to_merge && write !== "merge" && write !== "queue") {
+    add("Mergeable", "ok");
+  }
   // Position only: the entry's state and the queue's size are deliberately
   // not shown.
   if (pr.merge_queue_position !== null) {
@@ -277,7 +294,7 @@ function rowStates(pr: PullRequest): TonedState[] {
   if (pr.agent_task === "working") add("Copilot working");
   else if (pr.fix_requested) add("Copilot fixing");
   if (pr.checks_running) add("Checks running");
-  if (pr.auto_merge) add("Auto-merge on");
+  if (pr.auto_merge && write !== "disable_auto_merge") add("Auto-merge on");
   // The same words as the blocker, in the neutral tone: the backend sends
   // one or the other, by whether the base branch requires resolution.
   if (pr.threads_open) add(BLOCKED_LABELS.threads);
@@ -291,8 +308,8 @@ function rowStates(pr: PullRequest): TonedState[] {
   return states;
 }
 
-function rowState(pr: PullRequest): RowState | null {
-  const states = rowStates(pr);
+function rowState(pr: PullRequest, pending: WriteId | null): RowState | null {
+  const states = rowStates(pr, pending);
   const [first, ...rest] = states;
   if (!first) return null;
   return {
@@ -340,9 +357,9 @@ const DISMISS = immediate("dismiss", "Dismiss");
 
 const MERGED_ACTIONS = [DISMISS];
 
-// Each write in words: its label, and what the status in the bar reads
-// while it is on its way. Arming and cancelling auto-merge are `menuOnly`:
-// a behind row would otherwise carry four worded buttons.
+// Each write in words: its label, and what the row's state reads while it
+// is on its way. Arming and cancelling auto-merge are `menuOnly`: a behind
+// row would otherwise carry four worded buttons.
 const WRITES: Record<
   WriteId,
   { label: string; pending: string; menuOnly: boolean }
@@ -358,6 +375,25 @@ const WRITES: Record<
     menuOnly: true,
   },
 };
+
+// What the row's state reads once GitHub has taken the write, until a sync
+// says it in GitHub's terms. "Queued" carries no position: only the sync
+// knows it. The fix is not here: the backend marks the PR `fix_requested`,
+// which has its own words.
+const SENT: Record<PrAction, string> = {
+  merge: "Merged",
+  queue: "Queued",
+  update_branch: "Branch updated",
+  enable_auto_merge: "Auto-merge on",
+  disable_auto_merge: "Auto-merge off",
+};
+
+// The row's write in a word, the one on its way before the one taken: it
+// is the later of the two. Null when the row has neither.
+function writeWord(pr: PullRequest, pending: WriteId | null): string | null {
+  if (pending !== null) return WRITES[pending].pending;
+  return pr.acted && SENT[pr.acted];
+}
 
 // What the confirming click of a write confirms: the act and the base
 // branch, which only the fix has no use for. Only a direct merge names the
@@ -465,12 +501,12 @@ function rowView(
   return {
     pr,
     draft: pr.is_draft,
-    state: rowState(pr),
+    state: rowState(pr, pending),
     botAuthor: pr.author_is_bot,
     botNote:
       pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
     waiting: waitingLabel(pr, now),
-    pending: pending && WRITES[pending].pending,
+    write: writeWord(pr, pending),
     actions: rowActions(pr, snooze, pending !== null),
   };
 }
