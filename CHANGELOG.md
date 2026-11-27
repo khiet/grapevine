@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/khiet/grapevine/compare/grapevine-v0.18.0...grapevine-v0.19.0) (2026-11-27)
+
+
+### Features
+
+* show the merge queue ETA on a queued row ([#169](https://github.com/khiet/grapevine/issues/169)) ([ea91640](https://github.com/khiet/grapevine/commit/ea9164088ac3c9216d7979703ef2802485e074e8)), closes [#168](https://github.com/khiet/grapevine/issues/168)
+
 ## [0.18.0](https://github.com/khiet/grapevine/compare/grapevine-v0.17.0...grapevine-v0.18.0) (2026-11-26)
 
 
