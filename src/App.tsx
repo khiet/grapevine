@@ -8,6 +8,7 @@ import {
   syncNow,
   type Snapshot,
 } from "./backend";
+import { useRedrawWhileOpen } from "./redraw";
 import { useWritesPending } from "./rowWrites";
 import type { KeyHint } from "./listKeys";
 import { derivePopover } from "./popoverView";
@@ -168,11 +169,11 @@ function App() {
   const [collapsed, toggleSection] = useCollapsedSections();
   const writesPending = useWritesPending();
 
+  useRedrawWhileOpen();
+
   // Recomputed each render: what to show is a pure view over the snapshot,
   // the filter, the collapse state, the writes on their way to GitHub and the
-  // time.
-  // Nothing ticks: the waiting labels are as fresh as the last render, and
-  // every sync causes one.
+  // time. The redraw above keeps the time-based labels current between syncs.
   const { offerMarkAllRead, content } = derivePopover(
     snapshot,
     filter,

@@ -38,6 +38,7 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   awaiting_review: false,
   approved: false,
   merge_queue_position: null,
+  merge_queue_eta: null,
   failing_checks: [],
   failing_checks_truncated: false,
   checks_running: false,
@@ -339,8 +340,9 @@ test("a mergeable PR with an open thread still leads with Mergeable", () => {
 
 // GitHub's wording, two words at most: the ordinal rides on "Queued" and
 // "auto-merge" is one word. Each state is read as the row shows it when it
-// leads, a named failing check included.
-test("every state reads on the row in at most two words", () => {
+// leads, a named failing check included. The merge queue's ETA is the one
+// addition beyond two words, tested on its own.
+test("every state without an ETA reads on the row in at most two words", () => {
   const leading: Partial<PullRequest>[] = [
     { review_requested: true },
     { blocked_reasons: ["conflict"] },
@@ -385,6 +387,56 @@ test("a ready PR leads with Mergeable, ahead of its approval", () => {
     "Approved",
   ]);
   expect(state({ ready_to_merge: true })?.all).toEqual(["Mergeable"]);
+});
+
+// The ETA counts down from `now`, not from the sync that read it, rounding to
+// the nearest minute. Under a minute is never "0m", and a passed ETA is
+// dropped rather than shown overdue.
+test("a queued row gives GitHub's merge estimate as time left", () => {
+  const reason = (left: number | null, position = 2) =>
+    state({
+      merge_queue_position: position,
+      merge_queue_eta: left === null ? null : NOW + left,
+    })?.reason;
+  const MINUTE = 60_000;
+  expect(reason(null)).toBe("Queued 2nd");
+  expect(reason(20 * MINUTE + 57_000)).toBe("Queued 2nd · ETA 21m");
+  expect(reason(72 * MINUTE, 4)).toBe("Queued 4th · ETA 1h 12m");
+  expect(reason(120 * MINUTE, 4)).toBe("Queued 4th · ETA 2h");
+  expect(reason(119 * MINUTE + 40_000, 4)).toBe("Queued 4th · ETA 2h");
+  expect(reason(59_000, 1)).toBe("Queued 1st · ETA <1m");
+  expect(reason(90_000, 1)).toBe("Queued 1st · ETA 2m");
+  expect(reason(0, 1)).toBe("Queued 1st");
+  expect(reason(-5 * MINUTE, 1)).toBe("Queued 1st");
+});
+
+test("a queued row's tooltip gives the clock time of the merge", () => {
+  // 15:42 on the test machine's own clock, whatever its zone, and still
+  // ahead of now.
+  const eta = new Date(NOW + DAY).setHours(15, 42, 0, 0);
+  const queued = state({ merge_queue_position: 2, merge_queue_eta: eta });
+  expect(queued?.hasTip).toBe(true);
+  // 12- or 24-hour, as the system's locale writes it.
+  expect(queued?.all).toHaveLength(1);
+  expect(queued?.all[0]).toMatch(
+    /^Queued 2nd, merges around (3\D42\s?pm|15\D42)$/i,
+  );
+  // Without an estimate the row's words say it all.
+  expect(state({ merge_queue_position: 2 })?.hasTip).toBe(false);
+});
+
+// Re-deriving with a later `now` is how the open popover counts down.
+test("the ETA counts down as now moves on", () => {
+  const only = pr({
+    merge_queue_position: 1,
+    merge_queue_eta: NOW + 10 * 60_000,
+  });
+  const reasonAt = (now: number) =>
+    rows(list(synced({ prs: [only] }), "", ALL_EXPANDED, now), "mine")[0]
+      .state?.reason;
+  expect(reasonAt(NOW)).toBe("Queued 1st · ETA 10m");
+  expect(reasonAt(NOW + 4 * 60_000)).toBe("Queued 1st · ETA 6m");
+  expect(reasonAt(NOW + 11 * 60_000)).toBe("Queued 1st");
 });
 
 // The teens are the trap: 11, 12 and 13 take "th" although they end in 1, 2

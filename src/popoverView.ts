@@ -2,7 +2,8 @@
 // collapse state: the placeholder choice, which sections exist and what they
 // hold, and each row's state. App, PrList, SectionHeader and PrRow render the
 // result; a rule about what appears belongs here, where a test can reach it.
-// Pure: no React, no storage, no clock; the caller passes `now`.
+// Pure: no React, no storage, no clock; the caller passes `now`. Clock times
+// are written in the system's own format, so they follow its locale and zone.
 
 import {
   prKey,
@@ -222,8 +223,33 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
+const MINUTE_MS = 60_000;
+
+// Time left until a merge queue ETA, to the nearest minute: "21m", "1h 12m",
+// "2h". Under a minute is "<1m", never "0m". Null once the ETA has passed:
+// the row drops it until a sync brings a new estimate, so it never reads
+// overdue.
+function etaLabel(eta: number, now: number): string | null {
+  if (eta <= now) return null;
+  if (eta - now < MINUTE_MS) return "<1m";
+  const minutes = Math.round((eta - now) / MINUTE_MS);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}
+
+// The wall-clock time of an epoch ms, in the system's own time format.
+function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 interface TonedState {
-  /** What the row shows: GitHub's own wording, two words at most. */
+  /** What the row shows: GitHub's own wording, two words at most, the
+   * merge queue's ETA aside. */
   text: string;
   tone: Tone;
   /** The longer form the tooltip gives; null when `text` is all there is. */
@@ -261,6 +287,7 @@ function rowStates(
   pr: PullRequest,
   pending: WriteId | null,
   word: string | null,
+  now: number,
 ): TonedState[] {
   const states: TonedState[] = [];
   const write = pending ?? pr.acted;
@@ -286,10 +313,17 @@ function rowStates(
   if (pr.ready_to_merge && write !== "merge" && write !== "queue") {
     add("Mergeable", "ok");
   }
-  // Position only: the entry's state and the queue's size are deliberately
-  // not shown.
+  // Position and GitHub's estimate only: the entry's state and the queue's
+  // size are deliberately not shown.
   if (pr.merge_queue_position !== null && write !== "queue") {
-    add(`Queued ${ordinal(pr.merge_queue_position)}`);
+    const queued = `Queued ${ordinal(pr.merge_queue_position)}`;
+    const eta = pr.merge_queue_eta;
+    const left = eta === null ? null : etaLabel(eta, now);
+    if (eta === null || left === null) add(queued);
+    else {
+      const merges = `${queued}, merges around ${clockTime(eta)}`;
+      add(`${queued} · ETA ${left}`, "neutral", merges);
+    }
   }
   // After the conflict it answers: the PR is still conflicting, and this
   // says who is on it. A task under way is the same news from GitHub's own
@@ -315,8 +349,9 @@ function rowState(
   pr: PullRequest,
   pending: WriteId | null,
   word: string | null,
+  now: number,
 ): RowState | null {
-  const states = rowStates(pr, pending, word);
+  const states = rowStates(pr, pending, word, now);
   const [first, ...rest] = states;
   if (!first) return null;
   return {
@@ -517,7 +552,7 @@ function rowView(
   return {
     pr,
     draft: pr.is_draft,
-    state: rowState(pr, pending, write),
+    state: rowState(pr, pending, write, now),
     botAuthor: pr.author_is_bot,
     botNote:
       pr.bot_unread_count > 0 ? `${pr.bot_unread_count} new from bots` : null,
