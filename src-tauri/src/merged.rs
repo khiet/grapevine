@@ -201,6 +201,7 @@ mod tests {
             awaiting_review: false,
             approved: false,
             merge_queue_position: None,
+            merge_queue_eta: None,
             failing_checks: Vec::new(),
             failing_checks_truncated: false,
             checks_running: false,

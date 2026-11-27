@@ -261,6 +261,12 @@ pub struct PullRequest {
     /// property-not-event rule as `blocked_reasons`, so a position change
     /// never counts as unread.
     pub merge_queue_position: Option<u64>,
+    /// When GitHub expects the queued PR to merge, in epoch ms: its estimate
+    /// counted from the sync that read it. `None` when the PR is not queued
+    /// or GitHub has no estimate. Shown after the position as a countdown,
+    /// so the row stays fresh between syncs. Same property-not-event rule as
+    /// `blocked_reasons`: a new estimate never counts as unread.
+    pub merge_queue_eta: Option<u64>,
     /// Names of the failed checks behind the `Ci` reason, in GitHub's order;
     /// the state's tooltip names the first. Only the checks that gate the merge are
     /// listed (see [`checks_for`]). Empty whenever `Ci` is not raised, and
@@ -655,6 +661,8 @@ impl<T: Transport> Client<'_, T> {
             query.push('}');
 
             let response = self.graphql(&query, json!({})).await?;
+            // GitHub's merge estimates count from when it answered.
+            let answered_at = crate::sync::now_epoch_ms();
             let Some(mut data) = response.data else {
                 let error = error_from_graphql(response.errors);
                 // GitHub refuses a whole query over one field it will not
@@ -708,7 +716,7 @@ impl<T: Transport> Client<'_, T> {
                 };
                 self.add_check_detail(repo, owner, name, &mut rate_limit)
                     .await?;
-                if let Some(cursor) = collect_repo_prs(repo, &viewer, &mut prs) {
+                if let Some(cursor) = collect_repo_prs(repo, &viewer, answered_at, &mut prs) {
                     still_pending.push((owner.clone(), name.clone(), Some(cursor)));
                 }
             }
@@ -1726,7 +1734,7 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot
                headRefOid baseRefName isMergeQueueEnabled \
                viewerCanUpdateBranch viewerCanEnableAutoMerge viewerCanDisableAutoMerge \
                viewerLatestReview {{ state }} \
-               mergeQueueEntry {{ position }} \
+               mergeQueueEntry {{ position estimatedTimeToMerge }} \
                autoMergeRequest {{ enabledAt }} \
                author {{ __typename login avatarUrl }} \
                assignees(first: {ASSIGNEE_PAGE}) {{ nodes {{ login }} }} \
@@ -1750,8 +1758,14 @@ fn repo_field(alias: &str, owner: &str, name: &str, after: Option<&str>, copilot
 }
 
 /// Appends one repo's page of PRs to `out`. Returns the cursor to resume
-/// from when the repo has further pages.
-fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> Option<String> {
+/// from when the repo has further pages. `answered_at` is when GitHub
+/// answered for the page, in epoch ms.
+fn collect_repo_prs(
+    repo: &Value,
+    viewer: &str,
+    answered_at: u64,
+    out: &mut Vec<PullRequest>,
+) -> Option<String> {
     let repo_name = repo
         .pointer("/nameWithOwner")
         .and_then(Value::as_str)
@@ -1868,6 +1882,10 @@ fn collect_repo_prs(repo: &Value, viewer: &str, out: &mut Vec<PullRequest>) -> O
             merge_queue_position: node
                 .pointer("/mergeQueueEntry/position")
                 .and_then(Value::as_u64),
+            merge_queue_eta: node
+                .pointer("/mergeQueueEntry/estimatedTimeToMerge")
+                .and_then(Value::as_u64)
+                .map(|seconds| answered_at + seconds * 1000),
             failing_checks_truncated: ci_raised && checks.truncated,
             checks_running: !is_draft && checks.pending && !checks.failed,
             failing_checks: if ci_raised {
@@ -2499,6 +2517,9 @@ mod tests {
     use crate::merged::testing::watermarks;
     use crate::pr_state::{Effects, PrState};
 
+    /// When a parsed page arrived, in epoch ms.
+    const SYNCED_AT: u64 = 1_795_000_000_000;
+
     /// `node` with the top-level fields of `overrides` laid over it.
     fn with(mut node: Value, overrides: Value) -> Value {
         node.as_object_mut()
@@ -2683,7 +2704,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        let cursor = collect_repo_prs(&repo, "khiet", &mut out);
+        let cursor = collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert_eq!(cursor, None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].repo, "acme/widgets");
@@ -2705,7 +2726,7 @@ mod tests {
         });
         let mut out = Vec::new();
         assert_eq!(
-            collect_repo_prs(&repo, "khiet", &mut out),
+            collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out),
             Some("abc".to_string())
         );
     }
@@ -2720,7 +2741,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert_eq!(out[0].author, "ghost");
         assert_eq!(out[0].avatar_url, "");
     }
@@ -2738,7 +2759,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert_eq!(out[0].owner_avatar_url, "https://avatars.example/acme");
         assert_eq!(out[1].owner_avatar_url, "https://avatars.example/acme");
     }
@@ -3097,7 +3118,12 @@ mod tests {
     /// The row `collect_repo_prs` builds for one PR node.
     fn row(overrides: Value) -> PullRequest {
         let mut out = Vec::new();
-        collect_repo_prs(&repo_with(vec![pr_node(overrides)]), "khiet", &mut out);
+        collect_repo_prs(
+            &repo_with(vec![pr_node(overrides)]),
+            "khiet",
+            SYNCED_AT,
+            &mut out,
+        );
         out.remove(0)
     }
 
@@ -3607,7 +3633,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert_eq!(out[0].blocked_reasons, vec![BlockedReason::Ci]);
         assert!(!out[0].is_draft);
         assert_eq!(out[1].blocked_reasons, Vec::new());
@@ -3629,7 +3655,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert!(out[0].review_requested);
         assert!(!out[1].review_requested);
     }
@@ -3649,7 +3675,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert!(out[0].is_draft);
         assert!(!out[0].review_requested);
     }
@@ -3670,7 +3696,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert!(out[0].awaiting_review);
         assert!(!out[1].awaiting_review);
     }
@@ -3693,7 +3719,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert_eq!(out[0].section, Section::Participated);
         assert!(!out[0].review_requested);
         assert!(!out[0].awaiting_review);
@@ -3716,7 +3742,7 @@ mod tests {
             }
         });
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert!(out[0].is_draft);
         assert!(!out[0].awaiting_review);
     }
@@ -3731,7 +3757,7 @@ mod tests {
             pr_node(json!({ "reviewDecision": "REVIEW_REQUIRED" })),
         ]);
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert!(out[0].approved);
         assert!(!out[1].approved);
         assert!(!out[2].approved);
@@ -3761,7 +3787,7 @@ mod tests {
             })),
         ]);
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert!(out[0].awaiting_review);
         assert!(out[0].approved);
         assert!(out[1].review_requested);
@@ -3778,10 +3804,32 @@ mod tests {
             pr_node(json!({})),
         ]);
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert_eq!(out[0].merge_queue_position, Some(3));
         assert_eq!(out[1].merge_queue_position, None);
         assert_eq!(out[2].merge_queue_position, None);
+    }
+
+    #[test]
+    fn a_queued_pr_carries_its_merge_eta_counted_from_the_sync() {
+        // GitHub gives seconds from now; the row keeps an absolute time so
+        // it can count down between syncs. No estimate, or no entry, is none.
+        let repo = repo_with(vec![
+            pr_node(json!({ "mergeQueueEntry": { "position": 2, "estimatedTimeToMerge": 1257 } })),
+            pr_node(json!({ "mergeQueueEntry": { "position": 1, "estimatedTimeToMerge": null } })),
+            pr_node(json!({ "mergeQueueEntry": null })),
+        ]);
+        let mut out = Vec::new();
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
+        assert_eq!(out[0].merge_queue_eta, Some(SYNCED_AT + 1_257_000));
+        assert_eq!(out[1].merge_queue_eta, None);
+        assert_eq!(out[2].merge_queue_eta, None);
+    }
+
+    #[test]
+    fn the_paged_query_asks_for_the_merge_estimate() {
+        let query = repo_field("r0", "acme", "widgets", None, true);
+        assert!(query.contains("mergeQueueEntry { position estimatedTimeToMerge }"));
     }
 
     #[test]
@@ -3794,7 +3842,7 @@ mod tests {
             "reviewDecision": "APPROVED"
         }))]);
         let mut out = Vec::new();
-        collect_repo_prs(&repo, "khiet", &mut out);
+        collect_repo_prs(&repo, "khiet", SYNCED_AT, &mut out);
         assert!(out[0].is_draft);
         assert!(!out[0].approved);
     }
@@ -4672,7 +4720,7 @@ mod tests {
                         pr_node(json!({
                             "number": 1,
                             "updatedAt": "2026-07-11T03:00:00Z",
-                            "mergeQueueEntry": { "position": 3 },
+                            "mergeQueueEntry": { "position": 3, "estimatedTimeToMerge": 600 },
                             "mergeable": "CONFLICTING",
                             "commits": ci_commits("FAILURE"),
                             "reviewDecision": "CHANGES_REQUESTED",
@@ -4696,9 +4744,13 @@ mod tests {
             ok(checks_answer(4999, ci_commits("FAILURE"))),
         ]);
 
+        let before = crate::sync::now_epoch_ms();
         let prs = fetch_open(&github, &["acme/widgets"]).unwrap().prs;
+        let after = crate::sync::now_epoch_ms();
 
         assert_eq!(prs[0].merge_queue_position, Some(3));
+        let eta = prs[0].merge_queue_eta.unwrap();
+        assert!((before + 600_000..=after + 600_000).contains(&eta));
         assert_eq!(
             prs[0].blocked_reasons,
             vec![

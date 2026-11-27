@@ -62,6 +62,7 @@ function pr(repo: string, number: number, unread_count: number): PullRequest {
     awaiting_review: false,
     approved: false,
     merge_queue_position: null,
+    merge_queue_eta: null,
     failing_checks: [],
     failing_checks_truncated: false,
     checks_running: false,

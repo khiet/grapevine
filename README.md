@@ -38,7 +38,7 @@ No notifications, no dashboard to keep open, and on macOS no Dock icon.
   failing, changes requested, unresolved threads, or behind base. Only
   required checks count as failing.
 - **What's ready.** Approved, ready to merge, or its position in the merge
-  queue.
+  queue with GitHub's ETA ("Queued 2nd · ETA 21m").
 - **Team requests.** PRs where your team, not just you, was asked to review.
 - **Unread activity.** New comments and reviews from people since you last
   looked. Bots never badge.

@@ -35,6 +35,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     awaiting_review: false,
     approved: false,
     merge_queue_position: null,
+    merge_queue_eta: null,
     failing_checks: [],
     failing_checks_truncated: false,
     checks_running: false,
@@ -87,7 +88,7 @@ export function demoSnapshot(avatars: Record<string, string>): Snapshot {
     prs: [
       pr("teampave/checkout-api", 1284, "Retry failed webhook deliveries", "doutatsu", "30T15:31:00", { unread_count: 3, review_requested: true, turn: "yours", turn_since: since("30T12:31:00") }),
       pr("teampave/web-app", 2317, "Add saved payment methods to checkout", "maxliddiard", "30T14:58:00", { unread_count: 1, team_review_requested: true }),
-      pr("teampave/web-app", 2320, "Upgrade to React 19 and drop legacy context", ME, "30T11:40:00", { ...mine, approved: true, merge_queue_position: 2, turn: "theirs" }),
+      pr("teampave/web-app", 2320, "Upgrade to React 19 and drop legacy context", ME, "30T11:40:00", { ...mine, approved: true, merge_queue_position: 2, merge_queue_eta: Date.parse(at("30T16:03:00")), turn: "theirs" }),
       pr("fuseinsight/ingest", 415, "Parse chapter markers from ID3 tags", ME, "29T16:05:00", { ...mine, blocked_reasons: ["ci"], failing_checks: ["unit"], turn: "yours", turn_since: since("29T14:00:00") }),
       pr("teampave/checkout-api", 1295, "Cache exchange rates for an hour", ME, "30T13:40:00", { ...mine, approved: true, ready_to_merge: true, actions: ["merge"], merge_method: "rebase", turn: "yours", turn_since: since("30T13:40:00") }),
       pr("teampave/web-app", 2322, "Spike: dark mode for receipts", ME, "30T09:30:00", { ...mine, blocked_reasons: ["conflict"], can_fix_conflict: true, turn: "yours", turn_since: since("30T09:30:00") }),
