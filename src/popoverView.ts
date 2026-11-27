@@ -2,7 +2,8 @@
 // collapse state: the placeholder choice, which sections exist and what they
 // hold, and each row's state. App, PrList, SectionHeader and PrRow render the
 // result; a rule about what appears belongs here, where a test can reach it.
-// Pure: no React, no storage, no clock; the caller passes `now`.
+// Pure: no React, no storage, no clock; the caller passes `now`. Clock times
+// are written in the system's own format, so they follow its locale and zone.
 
 import {
   prKey,
@@ -222,14 +223,16 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
+const MINUTE_MS = 60_000;
+
 // Time left until a merge queue ETA, to the nearest minute: "21m", "1h 12m",
 // "2h". Under a minute is "<1m", never "0m". Null once the ETA has passed:
 // the row drops it until a sync brings a new estimate, so it never reads
 // overdue.
 function etaLabel(eta: number, now: number): string | null {
   if (eta <= now) return null;
-  if (eta - now < 60_000) return "<1m";
-  const minutes = Math.round((eta - now) / 60_000);
+  if (eta - now < MINUTE_MS) return "<1m";
+  const minutes = Math.round((eta - now) / MINUTE_MS);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;

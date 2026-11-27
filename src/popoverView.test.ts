@@ -340,8 +340,9 @@ test("a mergeable PR with an open thread still leads with Mergeable", () => {
 
 // GitHub's wording, two words at most: the ordinal rides on "Queued" and
 // "auto-merge" is one word. Each state is read as the row shows it when it
-// leads, a named failing check included.
-test("every state reads on the row in at most two words", () => {
+// leads, a named failing check included. The merge queue's ETA is the one
+// addition beyond two words, tested on its own.
+test("every state without an ETA reads on the row in at most two words", () => {
   const leading: Partial<PullRequest>[] = [
     { review_requested: true },
     { blocked_reasons: ["conflict"] },
@@ -410,12 +411,16 @@ test("a queued row gives GitHub's merge estimate as time left", () => {
 });
 
 test("a queued row's tooltip gives the clock time of the merge", () => {
-  const eta = Date.parse("2026-07-12T15:42:00Z");
+  // 15:42 on the test machine's own clock, whatever its zone, and still
+  // ahead of now.
+  const eta = new Date(NOW + DAY).setHours(15, 42, 0, 0);
   const queued = state({ merge_queue_position: 2, merge_queue_eta: eta });
   expect(queued?.hasTip).toBe(true);
-  // The hour and its format follow the system; the minute does not.
+  // 12- or 24-hour, as the system's locale writes it.
   expect(queued?.all).toHaveLength(1);
-  expect(queued?.all[0]).toMatch(/^Queued 2nd, merges around \d{1,2}\D42\b/);
+  expect(queued?.all[0]).toMatch(
+    /^Queued 2nd, merges around (3\D42\s?pm|15\D42)$/i,
+  );
   // Without an estimate the row's words say it all.
   expect(state({ merge_queue_position: 2 })?.hasTip).toBe(false);
 });

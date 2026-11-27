@@ -261,8 +261,8 @@ pub struct PullRequest {
     /// property-not-event rule as `blocked_reasons`, so a position change
     /// never counts as unread.
     pub merge_queue_position: Option<u64>,
-    /// When GitHub expects the queued PR to merge, in epoch ms: its estimate
-    /// counted from the sync that read it. `None` when the PR is not queued
+    /// When GitHub expects the queued PR to merge, in epoch ms: the time
+    /// GitHub answered the sync plus its `estimatedTimeToMerge` seconds. `None` when the PR is not queued
     /// or GitHub has no estimate. Shown after the position as a countdown,
     /// so the row stays fresh between syncs. Same property-not-event rule as
     /// `blocked_reasons`: a new estimate never counts as unread.
