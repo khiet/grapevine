@@ -50,8 +50,8 @@ export interface PullRequest {
   /** 1-based position in the repo's merge queue as GitHub reports it; null
    * when the PR is not queued. Reads "Queued 2nd". */
   merge_queue_position: number | null;
-  /** When GitHub expects the queued PR to merge, epoch ms: its estimate
-   * counted from the sync that read it. Null when not queued or GitHub has
+  /** When GitHub expects the queued PR to merge, epoch ms: the time GitHub
+   * answered the sync plus its estimate. Null when not queued or GitHub has
    * no estimate. Reads "Queued 2nd · ETA 21m", counting down from now. */
   merge_queue_eta: number | null;
   /** Names of the failed checks behind the "ci" reason, GitHub's order; the
